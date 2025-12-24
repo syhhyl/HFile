@@ -1,0 +1,4 @@
+/Users/syh/fun/HFile/build/CMakeFiles/client.dir
+/Users/syh/fun/HFile/build/CMakeFiles/server.dir
+/Users/syh/fun/HFile/build/CMakeFiles/edit_cache.dir
+/Users/syh/fun/HFile/build/CMakeFiles/rebuild_cache.dir

@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <unistd.h>
+
 int main() {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   
@@ -26,6 +27,4 @@ int main() {
     if (n <= 0) break;
     write(sock, buf, n);
   }
-  
-
 }

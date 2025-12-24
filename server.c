@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdbool.h>
 
 int main() {
   int listen_fd = socket(AF_INET, SOCK_STREAM, 0);  
@@ -25,19 +26,24 @@ int main() {
   
   listen(listen_fd, 1);
   
-  printf("listening on port 9000...\n");
-  int conn = accept(listen_fd, NULL, NULL);
-  printf("client connected\n");
+  //TODO accepts more connection
+  int conn_flag = true;
+  while (conn_flag) {
+    printf("listening on port 9000...\n");
+    int conn = accept(listen_fd, NULL, NULL);
+    printf("client connected\n");
 
-  int out = open("out.bin", O_CREAT | O_WRONLY | O_TRUNC, 0644);
-  char buf[4096];
-  while (1) {
-    ssize_t n = read(conn, buf, sizeof(buf));
-    if (n <= 0) break;
-    write(out, buf, n);
+    int out = open("out.bin", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    char buf[4096];
+    while (1) {
+      ssize_t n = read(conn, buf, sizeof(buf));
+      if (n <= 0) break;
+      write(out, buf, n);
+    }
+
+    close(conn);
   }
 
-  close(conn);
   close(listen_fd);
   
   return 0;
