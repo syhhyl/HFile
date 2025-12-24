@@ -33,7 +33,7 @@ int main() {
     int conn = accept(listen_fd, NULL, NULL);
     printf("client connected\n");
 
-    int out = open("out.bin", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    int out = open("./output/out.bin", O_CREAT | O_WRONLY | O_TRUNC, 0644);
     char buf[4096];
     while (1) {
       ssize_t n = read(conn, buf, sizeof(buf));

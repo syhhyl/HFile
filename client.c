@@ -5,7 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-int main() {
+int main(int argc, char **argv) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   
   struct sockaddr_in addr;
@@ -20,7 +20,9 @@ int main() {
     return 1;
   }
   
-  int in = open("in.bin", O_RDONLY);
+  //TODO give a file path
+  char *file_path = argv[1];
+  int in = open(file_path, O_RDONLY);
   char buf[4096];
   while (1) {
     ssize_t n = read(in, buf, sizeof(buf));
