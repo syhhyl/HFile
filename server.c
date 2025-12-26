@@ -5,8 +5,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <string.h>
 
-int main() {
+int main(int argc, char **argv) {
   int listen_fd = socket(AF_INET, SOCK_STREAM, 0);  
   if (listen_fd < 0) {
     perror("socket");
@@ -25,7 +26,7 @@ int main() {
   }
   
   listen(listen_fd, 1);
-  
+
   //TODO accepts more connection
   int conn_flag = true;
   while (conn_flag) {
@@ -33,7 +34,23 @@ int main() {
     int conn = accept(listen_fd, NULL, NULL);
     printf("client connected\n");
 
-    int out = open("./output/out.bin", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+
+    char *file_name = "out";
+    char file_path[30];
+
+    if (argc == 1) {
+      snprintf(file_path, sizeof(file_path), "./%s", file_name);
+    } else {
+      snprintf(file_path, sizeof(file_path), "%s%s", argv[1], file_name);
+    }
+    
+    printf("file_path:%s\n", file_path);
+
+    int out = open(file_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (out < 0) {
+      perror("open");
+      return 1;
+    }
     char buf[4096];
     while (1) {
       ssize_t n = read(conn, buf, sizeof(buf));

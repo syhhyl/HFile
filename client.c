@@ -21,6 +21,11 @@ int main(int argc, char **argv) {
   }
   
   //TODO give a file path
+  if (argc == 1) {
+    printf("no path\n");
+    return 1;
+  }
+
   char *file_path = argv[1];
   int in = open(file_path, O_RDONLY);
   char buf[4096];
