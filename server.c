@@ -44,14 +44,14 @@ int main(int argc, char **argv) {
       snprintf(file_path, sizeof(file_path), "%s%s", argv[1], file_name);
     }
     
-    printf("file_path:%s\n", file_path);
+    //printf("file_path:%s\n", file_path);
 
     int out = open(file_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     if (out < 0) {
       perror("open");
       return 1;
     }
-    char buf[4096];
+    char buf[4096]; // 4096B = 4KB
     while (1) {
       ssize_t n = read(conn, buf, sizeof(buf));
       if (n <= 0) break;

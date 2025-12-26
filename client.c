@@ -4,6 +4,9 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <string.h>
+#include <stdint.h>
+
 
 int main(int argc, char **argv) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -26,7 +29,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  //TODO send file_name_len and file_name to buf
+  // file_name_len | file_name | file_content
   char *file_path = argv[1];
+  printf("file_name_len:%lu\n", strlen(file_path));
+   
+  
   int in = open(file_path, O_RDONLY);
   char buf[4096];
   while (1) {
