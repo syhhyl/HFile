@@ -56,6 +56,7 @@ int main(int argc, char **argv) {
       if (n <= 0) break;
       write(out, buf, n);
     }
+    printf("write file: %s\n", file_path);
 
     close(conn);
   }

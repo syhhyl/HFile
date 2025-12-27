@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include "utils.h"
 
 int main(int argc, char **argv) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -34,24 +35,27 @@ int main(int argc, char **argv) {
   // file_name_len | file_name | file_content
   char *file_path = argv[1];
   
-  //TODO get file_name from file_path
-  // /etc/vimrc
-  char *begin = file_path;
-  size_t offset = strlen(file_path) - 1;
-  char *end = begin + offset;
-  size_t file_name_len = 0;
-  while ((*end) != '/') {
-    file_name_len++; 
-    --end; 
-  }
-  end++;
-  char *file_name = (char *)malloc(sizeof(char) * (file_name_len + 1));
-  for (size_t i = 0; i < file_name_len; ++i) {
-    file_name[i] = (*end++);
-  }
-  file_name[file_name_len+1] = '\0';
+  // char *begin = file_path;
+  // size_t offset = strlen(file_path) - 1;
+  // char *end = file_path + offset;
+  // size_t file_name_len = 0;
+  // while ((*end) != '/') {
+  //   file_name_len++; 
+  //   --end; 
+  // }
+  // end++;
+  // char *file_name = (char *)malloc(sizeof(char) * (file_name_len + 1));
+  // for (size_t i = 0; i < file_name_len; ++i) {
+  //   file_name[i] = (*end++);
+  // }
+  // file_name[file_name_len+1] = '\0';
+  // printf("file_name: %s, file_name_len: %lu", file_name, file_name_len);
   
-  printf("file_name: %s, file_name_len: %lu", file_name, file_name_len);
+  char *file_name;
+  
+  get_file_name(file_path, &file_name);
+  
+  printf("file_name: %s\n", file_name);
   
   
    
