@@ -41,10 +41,9 @@ int main(int argc, char **argv) {
     if (argc == 1) {
       snprintf(file_path, sizeof(file_path), "./%s", file_name);
     } else {
-      snprintf(file_path, sizeof(file_path), "%s%s", argv[1], file_name);
+      snprintf(file_path, sizeof(file_path), "%s/%s", argv[1], file_name);
     }
     
-    //printf("file_path:%s\n", file_path);
 
     int out = open(file_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     if (out < 0) {

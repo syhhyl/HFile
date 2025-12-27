@@ -6,7 +6,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdint.h>
-
+#include <stdbool.h>
+#include <stdlib.h>
 
 int main(int argc, char **argv) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -32,7 +33,27 @@ int main(int argc, char **argv) {
   //TODO send file_name_len and file_name to buf
   // file_name_len | file_name | file_content
   char *file_path = argv[1];
-  printf("file_name_len:%lu\n", strlen(file_path));
+  
+  //TODO get file_name from file_path
+  // /etc/vimrc
+  char *begin = file_path;
+  size_t offset = strlen(file_path) - 1;
+  char *end = begin + offset;
+  size_t file_name_len = 0;
+  while ((*end) != '/') {
+    file_name_len++; 
+    --end; 
+  }
+  end++;
+  char *file_name = (char *)malloc(sizeof(char) * (file_name_len + 1));
+  for (size_t i = 0; i < file_name_len; ++i) {
+    file_name[i] = (*end++);
+  }
+  file_name[file_name_len+1] = '\0';
+  
+  printf("file_name: %s, file_name_len: %lu", file_name, file_name_len);
+  
+  
    
   
   int in = open(file_path, O_RDONLY);
