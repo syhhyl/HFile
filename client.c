@@ -24,16 +24,14 @@ int main(int argc, char **argv) {
   addr.sin_port = htons(9000);
   inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-  
   if (connect(sock, (struct sockaddr *)&addr,
       sizeof(addr)) < 0) {
     perror("connect");
     return 1;
   }
   
-  //TODO give a file path
   if (argc == 1) {
-    printf("no path\n");
+    perror("no file");
     return 1;
   }
 
@@ -41,15 +39,17 @@ int main(int argc, char **argv) {
   char *file_path = argv[1];
   char *file_name;
   
-  get_file_name(file_path, &file_name);
+  if (get_file_name(file_path, &file_name) != 0) {
+    perror("get_file_name");
+    return 1;
+  }
   uint16_t file_name_len = (uint16_t)strlen(file_name); 
 
   printf("name: %s len: %d\n", file_name, file_name_len);
   
-  
   int in = open(file_path, O_RDONLY);
   char buf[4096];
-  size_t offset = 0;
+  uint8_t offset = 0;
   uint16_t len_be = htons((uint16_t)file_name_len);
   memcpy(buf, &len_be, 2);
   offset += 2;

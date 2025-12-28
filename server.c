@@ -43,8 +43,9 @@ int main(int argc, char **argv) {
     uint16_t v = ntohs(tmp);
     
     //get file_name
-    char *file_name = (char *)malloc(v);
+    char *file_name = (char *)malloc(v + 1);
     read(conn, file_name, v);
+    file_name[v] = '\0';
     char file_path[30];
 
     printf("name:%s len:%d\n", file_name, v);
