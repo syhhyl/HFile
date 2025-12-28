@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdlib.h>
 
 int main(int argc, char **argv) {
   int listen_fd = socket(AF_INET, SOCK_STREAM, 0);  
@@ -27,30 +28,42 @@ int main(int argc, char **argv) {
   
   listen(listen_fd, 1);
 
-  //TODO accepts more connection
   int conn_flag = true;
   while (conn_flag) {
-    printf("listening on port 9000...\n");
+    printf("listening on %s port 9000...\n", argv[1]);
     int conn = accept(listen_fd, NULL, NULL);
     printf("client connected\n");
 
 
-    char *file_name = "out";
+    char buf[4096]; // 4096B = 4KB
+    char len[2];
+    uint16_t tmp;
+    read(conn, len, 2);
+    memcpy(&tmp, len, 2);
+    uint16_t v = ntohs(tmp);
+    
+    //get file_name
+    char *file_name = (char *)malloc(v);
+    read(conn, file_name, v);
     char file_path[30];
+
+    printf("name:%s len:%d\n", file_name, v);
 
     if (argc == 1) {
       snprintf(file_path, sizeof(file_path), "./%s", file_name);
     } else {
       snprintf(file_path, sizeof(file_path), "%s/%s", argv[1], file_name);
     }
-    
 
+
+    //TODO unpack data from client: len | file_name | content
     int out = open(file_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     if (out < 0) {
       perror("open");
       return 1;
     }
-    char buf[4096]; // 4096B = 4KB
+
+
     while (1) {
       ssize_t n = read(conn, buf, sizeof(buf));
       if (n <= 0) break;

@@ -10,6 +10,12 @@
 #include <stdlib.h>
 #include "utils.h"
 
+typedef struct {
+  char *name[30];
+  uint8_t len;
+} name_block;
+
+
 int main(int argc, char **argv) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   
@@ -31,40 +37,37 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  //TODO send file_name_len and file_name to buf
-  // file_name_len | file_name | file_content
+
   char *file_path = argv[1];
-  
-  // char *begin = file_path;
-  // size_t offset = strlen(file_path) - 1;
-  // char *end = file_path + offset;
-  // size_t file_name_len = 0;
-  // while ((*end) != '/') {
-  //   file_name_len++; 
-  //   --end; 
-  // }
-  // end++;
-  // char *file_name = (char *)malloc(sizeof(char) * (file_name_len + 1));
-  // for (size_t i = 0; i < file_name_len; ++i) {
-  //   file_name[i] = (*end++);
-  // }
-  // file_name[file_name_len+1] = '\0';
-  // printf("file_name: %s, file_name_len: %lu", file_name, file_name_len);
-  
   char *file_name;
   
   get_file_name(file_path, &file_name);
+  uint16_t file_name_len = (uint16_t)strlen(file_name); 
+
+  printf("name: %s len: %d\n", file_name, file_name_len);
   
-  printf("file_name: %s\n", file_name);
-  
-  
-   
   
   int in = open(file_path, O_RDONLY);
   char buf[4096];
-  while (1) {
-    ssize_t n = read(in, buf, sizeof(buf));
+  size_t offset = 0;
+  uint16_t len_be = htons((uint16_t)file_name_len);
+  memcpy(buf, &len_be, 2);
+  offset += 2;
+  memcpy(buf + offset, file_name, file_name_len);
+  offset += file_name_len;
+
+  
+// #ifdef SEND
+  bool first = true; 
+  for (;;) {
+    size_t off = first ? offset : 0;
+    ssize_t n = read(in, buf + off, sizeof(buf) - off);
     if (n <= 0) break;
-    write(sock, buf, n);
+    
+    size_t to_send = off + (size_t)n;
+    write(sock, buf, to_send);
+    first = 0;
   }
+// #endif
 }
+
