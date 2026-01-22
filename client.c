@@ -10,10 +10,6 @@
 #include <stdlib.h>
 #include "utils.h"
 
-typedef struct {
-  char *name[30];
-  uint8_t len;
-} name_block;
 
 
 int main(int argc, char **argv) {

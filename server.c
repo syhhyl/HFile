@@ -36,19 +36,24 @@ int main(int argc, char **argv) {
 
 
     char buf[4096]; // 4096B = 4KB
-    char len[2];
-    uint16_t tmp;
-    read(conn, len, 2);
-    memcpy(&tmp, len, 2);
-    uint16_t v = ntohs(tmp);
+    uint16_t file_len;
+    ssize_t n = read(conn, &file_len, sizeof(file_len));
+    if (n != sizeof(file_len)) {
+      perror("read len");
+      return -1;
+    }
+    
+    file_len = ntohs(file_len);
+    printf("file_len: %u\n", file_len);
+    
     
     //get file_name
-    char *file_name = (char *)malloc(v + 1);
-    read(conn, file_name, v);
-    file_name[v] = '\0';
+    char *file_name = (char *)malloc(file_len + 1);
+    read(conn, file_name, file_len+1);
+    // file_name[v] = '\0';
     char file_path[30];
 
-    printf("name:%s len:%d\n", file_name, v);
+    // printf("name:%s len:%d\n", file_name, v);
 
     if (argc == 1) {
       snprintf(file_path, sizeof(file_path), "./%s", file_name);
