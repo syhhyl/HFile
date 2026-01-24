@@ -50,13 +50,13 @@ int main(int argc, char **argv) {
     //get file_name
     char *file_name = (char *)malloc(file_len + 1);
     read(conn, file_name, file_len+1);
-    // file_name[v] = '\0';
+    // file_name[file_len] = '\0';
     char file_path[30];
 
     // printf("name:%s len:%d\n", file_name, v);
 
     if (argc == 1) {
-      snprintf(file_path, sizeof(file_path), "./%s", file_name);
+      snprintf(file_path, sizeof(file_path), "%s", file_name);
     } else {
       snprintf(file_path, sizeof(file_path), "%s/%s", argv[1], file_name);
     }

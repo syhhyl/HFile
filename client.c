@@ -47,16 +47,21 @@ int main(int argc, char **argv) {
     return 1;
   }
   printf("path:%s\tname:%s\n", file_path, file_name);
-  return 1;
-  uint16_t file_name_len = (uint16_t)strlen(file_name); 
+
+  size_t len = strlen(file_name);
+  if (len > UINT16_MAX) {
+    perror("file_name len > uint16_max");
+    return 1;
+  }
+  uint16_t file_name_len = (uint16_t)len;
 
   printf("name: %s len: %d\n", file_name, file_name_len);
   
   int in = open(file_path, O_RDONLY);
   char buf[4096];
-  uint8_t offset = 0;
-  uint16_t len_be = htons((uint16_t)file_name_len);
-  memcpy(buf, &len_be, 2);
+  size_t offset = 0;
+  uint16_t net_len = htons(file_name_len);
+  memcpy(buf, &net_len, 2);
   offset += 2;
   memcpy(buf + offset, file_name, file_name_len);
   offset += file_name_len;
