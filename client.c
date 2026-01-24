@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
-
+#include <time.h>
 
 
 /*
@@ -71,11 +71,12 @@ int main(int argc, char **argv) {
   for (;;) {
     size_t off = first ? offset : 0;
     ssize_t n = read(in, buf + off, sizeof(buf) - off);
-    if (n <= 0) break;
-    
+    if (n <= 0 && !first) break;
+  
     size_t to_send = off + (size_t)n;
     write(sock, buf, to_send);
-    first = 0;
+    first = false;
   }
+  printf("client over\n");
 }
 

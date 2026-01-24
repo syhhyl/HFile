@@ -37,23 +37,30 @@ int main(int argc, char **argv) {
 
     char buf[4096]; // 4096B = 4KB
     uint16_t file_len;
-    ssize_t n = read(conn, &file_len, sizeof(file_len));
-    if (n != sizeof(file_len)) {
+    // ssize_t n = read(conn, &file_len, sizeof(file_len));
+    ssize_t n = recv(conn, &file_len, 2, MSG_WAITALL);
+    
+    printf("n:%ld, sizeof(file_len):%zu\n", n, sizeof(file_len));
+    if (n != 2) {
       perror("read len");
-      return -1;
+      return 1;
     }
     
+    
     file_len = ntohs(file_len);
-    printf("file_len: %u\n", file_len);
+    // printf("%04x\n", file_len);
+    // uint8_t *p = (uint8_t *)&file_len;
+    // printf("%02x %02x\n", p[0], p[1]);
+    // printf("file_len: %u\n", file_len);
     
     
     //get file_name
     char *file_name = (char *)malloc(file_len + 1);
-    read(conn, file_name, file_len+1);
-    // file_name[file_len] = '\0';
-    char file_path[30];
+    read(conn, file_name, file_len);
+    file_name[file_len] = '\0';
+    char file_path[100];
+    // printf("file_name:%s\n", file_name);
 
-    // printf("name:%s len:%d\n", file_name, v);
 
     if (argc == 1) {
       snprintf(file_path, sizeof(file_path), "%s", file_name);
