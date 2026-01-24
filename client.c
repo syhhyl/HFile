@@ -8,9 +8,21 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include "utils.h"
 
 
+
+/*
+get_file_name
+find the last '/'
+and copy to return
+*/
+int get_file_name(char **file_path, char **file_name) {
+  if (*file_path == NULL) return 1;
+  char *tmp = strrchr(*file_path, '/'); 
+  if (tmp == NULL) *file_name = *file_path;
+  else *file_name = tmp + 1;
+  return *file_name ? 0 : 1;
+}
 
 int main(int argc, char **argv) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -26,19 +38,16 @@ int main(int argc, char **argv) {
     return 1;
   }
   
-  if (argc == 1) {
-    perror("no file");
-    return 1;
-  }
-
 
   char *file_path = argv[1];
   char *file_name;
   
-  if (get_file_name(file_path, &file_name) != 0) {
+  if (get_file_name(&file_path, &file_name) != 0) {
     perror("get_file_name");
     return 1;
   }
+  printf("path:%s\tname:%s\n", file_path, file_name);
+  return 1;
   uint16_t file_name_len = (uint16_t)strlen(file_name); 
 
   printf("name: %s len: %d\n", file_name, file_name_len);
@@ -53,7 +62,6 @@ int main(int argc, char **argv) {
   offset += file_name_len;
 
   
-// #ifdef SEND
   bool first = true; 
   for (;;) {
     size_t off = first ? offset : 0;
@@ -64,6 +72,5 @@ int main(int argc, char **argv) {
     write(sock, buf, to_send);
     first = 0;
   }
-// #endif
 }
 

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(HFile C)
 
-add_executable(client client.c utils.c utils.h)
+add_executable(client client.c)
 add_executable(server server.c)
 
 
