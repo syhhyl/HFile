@@ -2,19 +2,27 @@
 #include <unistd.h>
 #include <getopt.h>
 
+typedef enum {
+  server,
+  client,
+  init
+} state;
+
+state flag = init;
 
 int main(int argc, char *argv[]) {
-  int opt = getopt(argc, argv, "sc"); 
-  if (opt == -1) {
-    perror("can't find -s or -c\n");
-    return -1;
-  }
-  if (opt == 'c') {
-    printf("-c\n");
-  } else if (opt == 's'){
-    printf("-s\n");
-  } else {
-    printf("no support");
+  int opt;
+  opt = getopt(argc, argv, "sc:");
+  if (opt != -1) {
+    if (opt == 's') {
+      flag = server;
+      printf("server mode\n");
+    } else if (opt == 'c') {
+      flag = client;
+      printf("client mode\n");
+      
+      printf("optarg:%s\n", optarg);
+    }
   }
   return 0;
 }
