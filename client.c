@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
     perror("get_file_name");
     return 1;
   }
-  printf("path:%s\tname:%s\n", file_path, file_name);
+  // printf("path:%s\tname:%s\n", file_path, file_name);
 
   size_t len = strlen(file_name);
   if (len > UINT16_MAX) {
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
   }
   uint16_t file_name_len = (uint16_t)len;
 
-  printf("name: %s len: %d\n", file_name, file_name_len);
+  // printf("name: %s len: %d\n", file_name, file_name_len);
   
   int in = open(file_path, O_RDONLY);
   char buf[4096];
@@ -77,6 +77,5 @@ int main(int argc, char **argv) {
     write(sock, buf, to_send);
     first = false;
   }
-  printf("client over\n");
 }
 
