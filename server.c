@@ -7,8 +7,12 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
+#include "server.h"
 
-int main(int argc, char **argv) {
+
+
+
+int server(char *path) {
   int listen_fd = socket(AF_INET, SOCK_STREAM, 0);  
   if (listen_fd < 0) {
     perror("socket");
@@ -16,7 +20,6 @@ int main(int argc, char **argv) {
   }
   
   struct sockaddr_in addr;
-  //memset()
   addr.sin_family = AF_INET;
   addr.sin_port = htons(9000);
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -30,7 +33,7 @@ int main(int argc, char **argv) {
 
   int conn_flag = true;
   while (conn_flag) {
-    printf("listening on %s port 9000...\n", argv[1]);
+    printf("listening on %s port 9000...\n", path);
     int conn = accept(listen_fd, NULL, NULL);
     printf("client connected\n");
 
@@ -62,11 +65,13 @@ int main(int argc, char **argv) {
     // printf("file_name:%s\n", file_name);
 
 
-    if (argc == 1) {
-      snprintf(file_path, sizeof(file_path), "%s", file_name);
-    } else {
-      snprintf(file_path, sizeof(file_path), "%s/%s", argv[1], file_name);
-    }
+    // if (argc == 1) {
+    //   snprintf(file_path, sizeof(file_path), "%s", file_name);
+    // } else {
+    //   snprintf(file_path, sizeof(file_path), "%s/%s", argv[1], file_name);
+    // }
+    
+    snprintf(file_path, sizeof(file_path), "%s/%s", path, file_name);
 
 
     //TODO unpack data from client: len | file_name | content
