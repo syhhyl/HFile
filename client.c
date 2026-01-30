@@ -77,5 +77,7 @@ int client(char *path) {
     write(sock, buf, to_send);
     first = false;
   }
+  
+  return 0;
 }
 

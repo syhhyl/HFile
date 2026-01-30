@@ -3,7 +3,7 @@
 #include <getopt.h>
 #include "server.h"
 #include "client.h"
-
+#include "helper.h"
 
 
 typedef enum {
@@ -17,7 +17,8 @@ state flag = init_mode;
 int main(int argc, char *argv[]) {
   int opt;
   opt = getopt(argc, argv, "s:c:");
-  if (opt != -1) {
+  if (opt != '?') {
+    DBG("opt=%c", opt);
     if (opt == 's') {
       flag = server_mode;
       printf("server mode\n");
@@ -31,8 +32,8 @@ int main(int argc, char *argv[]) {
       printf("optarg:%s\n", optarg);
       client(optarg);
     }
+  } else {
+    DBG("opt=%c", opt);
   }
-  
-  
   return 0;
 }
