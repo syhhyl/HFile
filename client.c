@@ -24,7 +24,7 @@ int get_file_name(char **file_path, char **file_name) {
   return *file_name ? 0 : 1;
 }
 
-int client(char *path) {
+int client(char *path, const char *ip, uint16_t port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   
   struct sockaddr_in addr;
