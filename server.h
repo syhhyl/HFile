@@ -2,8 +2,12 @@
 
 
 /*
-server(char *server_path);
+server(char *server_path, uint16_t port);
+
 server_path: path to save the file
+port:        tcp port to listen on
 */
 
-int server(char *path);
+#include <stdint.h>
+
+int server(char *path, uint16_t port);

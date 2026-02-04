@@ -29,12 +29,16 @@ int client(char *path, const char *ip, uint16_t port) {
   
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(9000);
-  inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+  addr.sin_port = htons(port);
+  if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
+    fprintf(stderr, "invalid ip: %s\n", ip);
+    return 1;
+  }
 
   if (connect(sock, (struct sockaddr *)&addr,
       sizeof(addr)) < 0) {
     perror("connect");
+    fprintf(stderr, "connect failed check ip/port\n");
     return 1;
   }
   
