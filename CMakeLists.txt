@@ -3,9 +3,13 @@ cmake_minimum_required(VERSION 3.16)
 project(HFile VERSION 0.0.1 LANGUAGES C)
 
 add_executable(hf
-  main.c 
-  server.c
-  client.c
+  src/main.c
+  src/server.c
+  src/client.c
+)
+
+target_include_directories(hf PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_compile_options(hf PRIVATE -Wall -Wextra)
@@ -18,7 +22,6 @@ include(GNUInstallDirs)
 install(TARGETS hf
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-
 
 
 

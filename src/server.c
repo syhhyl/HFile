@@ -98,29 +98,21 @@ int server(char *path, uint16_t port) {
       continue;
     }
 
-    size_t file_path_len = strlen(path) + 1 + strlen(file_name) + 1;
-    char *file_path = (char *)malloc(file_path_len);
-    if (file_path == NULL) {
-      perror("malloc(file_path)");
+    // Open the output directory and create the file relative to it.
+    // This avoids manual path joining and keeps file creation scoped to the directory.
+    int dirfd = open(path, O_RDONLY | O_DIRECTORY);
+    if (dirfd < 0) {
+      perror("open(output_dir)");
       free(file_name);
       close(conn);
       continue;
     }
-    int sn = snprintf(file_path, file_path_len, "%s/%s", path, file_name);
-    free(file_name);
-    if (sn < 0 || (size_t)sn >= file_path_len) {
-      fprintf(stderr, "failed to build file path\n");
-      free(file_path);
-      close(conn);
-      continue;
-    }
 
-
-    //TODO unpack data from client: len | file_name | content
-    int out = open(file_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    int out = openat(dirfd, file_name, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    close(dirfd);
     if (out < 0) {
       perror("open");
-      free(file_path);
+      free(file_name);
       close(conn);
       continue;
     }
@@ -131,8 +123,11 @@ int server(char *path, uint16_t port) {
       if (n <= 0) break;
       write(out, buf, n);
     }
-    printf("write file: %s\n", file_path);
-    free(file_path);
+
+    size_t path_len = strlen(path);
+    const char *sep = (path_len > 0 && path[path_len - 1] == '/') ? "" : "/";
+    printf("write file: %s%s%s\n", path, sep, file_name);
+    free(file_name);
 
     close(out);
 
