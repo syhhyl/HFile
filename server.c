@@ -40,6 +40,10 @@ int server(char *path, uint16_t port) {
   while (conn_flag) {
     printf("listening on %s port %u...\n", path, (unsigned)port);
     int conn = accept(listen_fd, NULL, NULL);
+    if (conn < 0) {
+      perror("accept");
+      continue;
+    }
     printf("client connected\n");
 
 
@@ -48,9 +52,15 @@ int server(char *path, uint16_t port) {
     ssize_t n = recv(conn, &file_len, 2, MSG_WAITALL);
     
     printf("n:%ld, sizeof(file_len):%zu\n", n, sizeof(file_len));
+    if (n == 0) {
+      // Client connected and closed immediately.
+      close(conn);
+      continue;
+    }
     if (n != 2) {
-      perror("read len");
-      return 1;
+      perror("recv(file_len)");
+      close(conn);
+      continue;
     }
     
     
@@ -68,14 +78,14 @@ int server(char *path, uint16_t port) {
     if (file_name == NULL) {
       perror("malloc(file_name)");
       close(conn);
-      return 1;
+      continue;
     }
     ssize_t name_n = recv(conn, file_name, file_len, MSG_WAITALL);
     if (name_n != (ssize_t)file_len) {
       perror("recv(file_name)");
       free(file_name);
       close(conn);
-      return 1;
+      continue;
     }
     file_name[file_len] = '\0';
 
@@ -94,7 +104,7 @@ int server(char *path, uint16_t port) {
       perror("malloc(file_path)");
       free(file_name);
       close(conn);
-      return 1;
+      continue;
     }
     int sn = snprintf(file_path, file_path_len, "%s/%s", path, file_name);
     free(file_name);
@@ -102,7 +112,7 @@ int server(char *path, uint16_t port) {
       fprintf(stderr, "failed to build file path\n");
       free(file_path);
       close(conn);
-      return 1;
+      continue;
     }
 
 
@@ -111,7 +121,8 @@ int server(char *path, uint16_t port) {
     if (out < 0) {
       perror("open");
       free(file_path);
-      return 1;
+      close(conn);
+      continue;
     }
 
 
@@ -122,6 +133,8 @@ int server(char *path, uint16_t port) {
     }
     printf("write file: %s\n", file_path);
     free(file_path);
+
+    close(out);
 
     close(conn);
   }

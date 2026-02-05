@@ -1,6 +1,5 @@
 build/
 .cache/
 .DS_Store
-output/
-input/
-a
+.ruff_cache/
+test/__pycache__
