@@ -26,18 +26,25 @@ int get_file_name(char **file_path, char **file_name) {
 
 int client(char *path, const char *ip, uint16_t port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock == -1) {
+    perror("socket");
+    return 1;
+  }
   
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
   if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
     perror("inet_pton");
+    // close(sock);
+    goto CLOSE_SOCK;
     return 1;
   }
 
-  if (connect(sock, (struct sockaddr *)&addr,
-      sizeof(addr)) < 0) {
+  if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
     perror("connect");
+    // close(sock);
+    goto CLOSE_SOCK;
     return 1;
   }
   
@@ -47,18 +54,29 @@ int client(char *path, const char *ip, uint16_t port) {
   
   if (get_file_name(&file_path, &file_name) != 0) {
     perror("get_file_name");
+    // close(sock);
+    goto CLOSE_SOCK;
     return 1;
   }
 
   size_t len = strlen(file_name);
   if (len > 255) {
     perror("invalid file name len");
+    // close(sock);
+    goto CLOSE_SOCK;
     return 1;
   }
   uint16_t file_name_len = (uint16_t)len;
 
   
   int in = open(file_path, O_RDONLY);
+  if (in == -1) {
+    perror("open");
+    // close(sock);
+    goto CLOSE_SOCK;
+    return 1;
+  }
+
   char buf[4096];
   size_t offset = 0;
   uint16_t net_len = htons(file_name_len);
@@ -78,6 +96,12 @@ int client(char *path, const char *ip, uint16_t port) {
     write(sock, buf, to_send);
     first = false;
   }
+  
+
+  close(in);
+
+CLOSE_SOCK:
+  close(sock);
   
   return 0;
 }

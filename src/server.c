@@ -8,19 +8,21 @@
 #include <string.h>
 #include <stdlib.h>
 #include "server.h"
+#include "errno.h"
 
 
 
 int server(char *path, uint16_t port) {
-  int listen_fd = socket(AF_INET, SOCK_STREAM, 0);  
-  if (listen_fd < 0) {
+  int sock = socket(AF_INET, SOCK_STREAM, 0);  
+  if (sock < 0) {
     perror("socket");
     return 1;
   }
 
   int opt = 1;
-  if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+  if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
     perror("setsockopt(SO_REUSEADDR)");
+    close(sock);
     return 1;
   }
   
@@ -28,19 +30,29 @@ int server(char *path, uint16_t port) {
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  if (bind(listen_fd, (struct sockaddr *)&addr,
-      sizeof(addr)) < 0) {
+  if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
     perror("bind");
+    // close(sock);
+    goto CLOSE_SOCK;
     return 1;
   }
   
-  listen(listen_fd, 1);
+  if (listen(sock, 1) == -1) {
+    perror("listen");
+    // close(sock);
+    goto CLOSE_SOCK;
+    return 1;
+  }
+  
 
   int conn_flag = true;
+  printf("listening on %s port %u...\n", path, (unsigned)port);
+
   while (conn_flag) {
-    printf("listening on %s port %u...\n", path, (unsigned)port);
-    int conn = accept(listen_fd, NULL, NULL);
+    int conn = accept(sock, NULL, NULL);
     if (conn < 0) {
+      if (errno == EINTR)
+        continue;
       perror("accept");
       continue;
     }
@@ -54,13 +66,13 @@ int server(char *path, uint16_t port) {
     printf("n:%ld, sizeof(file_len):%zu\n", n, sizeof(file_len));
     if (n == 0) {
       // Client connected and closed immediately.
-      close(conn);
-      continue;
+      // close(conn);
+      goto CLOSE_CONN;
     }
     if (n != 2) {
       perror("recv(file_len)");
-      close(conn);
-      continue;
+      // close(conn);
+      goto CLOSE_CONN;
     }
     
     
@@ -70,21 +82,24 @@ int server(char *path, uint16_t port) {
     //get file_name
     if (file_len == 0 || file_len > 255) {
       fprintf(stderr, "invalid file name length: %u\n", (unsigned)file_len);
-      close(conn);
+      // close(conn);
+      goto CLOSE_CONN;
       continue;
     }
 
     char *file_name = (char *)malloc((size_t)file_len + 1);
     if (file_name == NULL) {
       perror("malloc(file_name)");
-      close(conn);
+      // close(conn);
+      goto CLOSE_CONN;
       continue;
     }
     ssize_t name_n = recv(conn, file_name, file_len, MSG_WAITALL);
     if (name_n != (ssize_t)file_len) {
       perror("recv(file_name)");
       free(file_name);
-      close(conn);
+      // close(conn);
+      goto CLOSE_CONN;
       continue;
     }
     file_name[file_len] = '\0';
@@ -93,7 +108,8 @@ int server(char *path, uint16_t port) {
         strstr(file_name, "..") != NULL) {
       fprintf(stderr, "invalid file name: %s\n", file_name);
       free(file_name);
-      close(conn);
+      // close(conn);
+      goto CLOSE_CONN;
       continue;
     }
 
@@ -101,7 +117,8 @@ int server(char *path, uint16_t port) {
     if (dirfd < 0) {
       perror("open(output_dir)");
       free(file_name);
-      close(conn);
+      // close(conn);
+      goto CLOSE_CONN;
       continue;
     }
 
@@ -110,7 +127,8 @@ int server(char *path, uint16_t port) {
     if (out < 0) {
       perror("open");
       free(file_name);
-      close(conn);
+      // close(conn);
+      goto CLOSE_CONN;
       continue;
     }
 
@@ -128,10 +146,12 @@ int server(char *path, uint16_t port) {
 
     close(out);
 
+CLOSE_CONN:
     close(conn);
   }
 
-  close(listen_fd);
+CLOSE_SOCK:
+  close(sock);
   
   return 0;
 
