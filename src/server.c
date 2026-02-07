@@ -89,7 +89,6 @@ int server(char *path, uint16_t port) {
     }
     file_name[file_len] = '\0';
 
-    // Reject path traversal / separators; client is supposed to send only basename.
     if (strchr(file_name, '/') != NULL || strchr(file_name, '\\') != NULL ||
         strstr(file_name, "..") != NULL) {
       fprintf(stderr, "invalid file name: %s\n", file_name);
@@ -98,8 +97,6 @@ int server(char *path, uint16_t port) {
       continue;
     }
 
-    // Open the output directory and create the file relative to it.
-    // This avoids manual path joining and keeps file creation scoped to the directory.
     int dirfd = open(path, O_RDONLY | O_DIRECTORY);
     if (dirfd < 0) {
       perror("open(output_dir)");

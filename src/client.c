@@ -31,14 +31,13 @@ int client(char *path, const char *ip, uint16_t port) {
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
   if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
-    fprintf(stderr, "invalid ip: %s\n", ip);
+    perror("inet_pton");
     return 1;
   }
 
   if (connect(sock, (struct sockaddr *)&addr,
       sizeof(addr)) < 0) {
     perror("connect");
-    fprintf(stderr, "connect failed check ip/port\n");
     return 1;
   }
   
@@ -50,16 +49,14 @@ int client(char *path, const char *ip, uint16_t port) {
     perror("get_file_name");
     return 1;
   }
-  // printf("path:%s\tname:%s\n", file_path, file_name);
 
   size_t len = strlen(file_name);
-  if (len > UINT16_MAX) {
-    perror("file_name len > uint16_max");
+  if (len > 255) {
+    perror("invalid file name len");
     return 1;
   }
   uint16_t file_name_len = (uint16_t)len;
 
-  // printf("name: %s len: %d\n", file_name, file_name_len);
   
   int in = open(file_path, O_RDONLY);
   char buf[4096];
