@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include "client.h"
+#include "helper.h"
 
 /*
 get_file_name
@@ -76,8 +77,8 @@ int client(char *path, const char *ip, uint16_t port) {
   offset += file_name_len;
 
   
-  bool first = true; 
   // TODO add write_all function
+  bool first = true; 
   for (;;) {
     size_t off = first ? offset : 0;
     ssize_t n = read(in, buf + off, sizeof(buf) - off);
@@ -85,9 +86,11 @@ int client(char *path, const char *ip, uint16_t port) {
     if (n <= 0 && !first) break;
   
     size_t to_send = off + (size_t)n;
-    write(sock, buf, to_send);
+    // write(sock, buf, to_send);
+    write_all(sock, buf, to_send);
     first = false;
   }
+  
   
 
   close(in);
