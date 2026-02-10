@@ -17,6 +17,9 @@ get_file_name
 find the last '/'
 and copy to return
 */
+
+#define CHUNK_SIZE 64 * 4096
+
 int get_file_name(char **file_path, char **file_name) {
   if (*file_path == NULL) return 1;
   char *tmp = strrchr(*file_path, '/'); 
@@ -46,9 +49,7 @@ int client(char *path, const char *ip, uint16_t port) {
   }
   
 
-  // char *file_path = path;
   char *file_name;
-  
   if (get_file_name(&path, &file_name) != 0) {
     perror("get_file_name");
     goto CLOSE_SOCK;
@@ -68,7 +69,7 @@ int client(char *path, const char *ip, uint16_t port) {
     goto CLOSE_SOCK;
   }
 
-  char buf[4096];
+  char buf[CHUNK_SIZE];
   size_t offset = 0;
   uint16_t net_len = htons(file_name_len);
   memcpy(buf, &net_len, 2);

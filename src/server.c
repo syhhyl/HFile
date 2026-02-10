@@ -12,6 +12,7 @@
 #include "helper.h"
 
 
+#define CHUNK_SIZE 64 * 4096
 
 int server(char *path, uint16_t port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);  
@@ -55,7 +56,7 @@ int server(char *path, uint16_t port) {
     printf("client connected\n");
 
 
-    char buf[4096]; // 4096B = 4KB
+    char buf[CHUNK_SIZE];
     
     //get file name len
     uint16_t file_len;
