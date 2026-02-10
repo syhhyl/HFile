@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include "server.h"
 #include "errno.h"
+#include "helper.h"
 
 
 
@@ -55,19 +56,13 @@ int server(char *path, uint16_t port) {
 
 
     char buf[4096]; // 4096B = 4KB
+    
+    //get file name len
     uint16_t file_len;
-    ssize_t n = recv(conn, &file_len, 2, MSG_WAITALL);
-    
-    printf("n:%ld, sizeof(file_len):%zu\n", n, sizeof(file_len));
-    if (n == 0) {
-      // Client connected and closed immediately.
+    if (read_all(conn, &file_len, 2) != 2) {
+      perror("read(file_len)");
       goto CLOSE_CONN;
     }
-    if (n != 2) {
-      perror("recv(file_len)");
-      goto CLOSE_CONN;
-    }
-    
     
     file_len = ntohs(file_len);
     
@@ -83,9 +78,12 @@ int server(char *path, uint16_t port) {
       perror("malloc(file_name)");
       goto CLOSE_CONN;
     }
-    ssize_t name_n = recv(conn, file_name, file_len, MSG_WAITALL);
-    if (name_n != (ssize_t)file_len) {
-      perror("recv(file_name)");
+    
+    //get file name
+    // ssize_t name_n = recv(conn, file_name, file_len, MSG_WAITALL);
+    // ssize_t name_n = read_all(conn, file_name, file_len);
+    if (read_all(conn, file_name, (size_t)file_len) != (ssize_t)file_len) {
+      perror("read(file_name)");
       free(file_name);
       goto CLOSE_CONN;
     }
@@ -116,15 +114,26 @@ int server(char *path, uint16_t port) {
 
     while (1) {
       ssize_t n = read(conn, buf, sizeof(buf));
-      if (n <= 0) break;
-      write(out, buf, n);
+      if (n > 0) {
+        if (write_all(out, buf, (size_t)n) < 0) {
+          perror("write");
+          break;
+        }
+      } else if (n == 0) break;
+      else {
+        if (errno == EINTR) continue;
+        else {
+          perror("read");
+          break;
+        }
+      }
     }
 
     size_t path_len = strlen(path);
     const char *sep = (path_len > 0 && path[path_len - 1] == '/') ? "" : "/";
     printf("write file: %s%s%s\n", path, sep, file_name);
-    free(file_name);
 
+    free(file_name);
     close(out);
 
 CLOSE_CONN:

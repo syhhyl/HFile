@@ -11,7 +11,7 @@
 #include <time.h>
 #include "client.h"
 #include "helper.h"
-
+#include "errno.h"
 /*
 get_file_name
 find the last '/'
@@ -77,18 +77,18 @@ int client(char *path, const char *ip, uint16_t port) {
   offset += file_name_len;
 
   
-  // TODO add write_all function
-  bool first = true; 
-  for (;;) {
-    size_t off = first ? offset : 0;
-    ssize_t n = read(in, buf + off, sizeof(buf) - off);
-
-    if (n <= 0 && !first) break;
+  write_all(sock, &net_len, 2);
+  write_all(sock, file_name, file_name_len);
   
-    size_t to_send = off + (size_t)n;
-    // write(sock, buf, to_send);
-    write_all(sock, buf, to_send);
-    first = false;
+  for (;;) {
+    ssize_t n = read(in, buf, sizeof(buf));
+    if (n > 0) write_all(sock, buf, (size_t)n);
+    else if (n == 0) break;
+    else {
+      if (errno == EINTR) continue;
+      perror("read");
+      break;
+    }
   }
   
   
