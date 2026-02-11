@@ -18,7 +18,7 @@ find the last '/'
 and copy to return
 */
 
-#define CHUNK_SIZE 64 * 4096
+#define CHUNK_SIZE 1024 * 1024
 
 int get_file_name(char **file_path, char **file_name) {
   if (*file_path == NULL) return 1;

@@ -12,7 +12,7 @@
 #include "helper.h"
 
 
-#define CHUNK_SIZE 64 * 4096
+#define CHUNK_SIZE 1024 * 1024
 
 int server(char *path, uint16_t port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);  
