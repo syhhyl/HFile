@@ -41,7 +41,7 @@ static int parse_port(const char *s, uint16_t *out) {
 }
 
 
-int main(int argc, char *argv[]) {
+int main(int argc, char **argv) {
   int opt;
   char *server_path = NULL;
 
