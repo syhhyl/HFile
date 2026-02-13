@@ -60,6 +60,7 @@ int main(int argc, char **argv) {
           goto BAD_USE;
         }
         st = server_mode;
+        if (*optarg == '-') goto BAD_USE;
         path = optarg;
         break;
       case 'c':
@@ -68,10 +69,13 @@ int main(int argc, char **argv) {
           goto BAD_USE;
         }
         st = client_mode;
+        if (*optarg == '-') goto BAD_USE;
         path = optarg;
         break;
       case 'i':
-        ip = optarg;
+        if (st == client_mode)
+          ip = optarg;
+        else goto BAD_USE;
         break;
       case 'p':
         if (parse_port(optarg, &port) != 0) {
@@ -85,6 +89,7 @@ int main(int argc, char **argv) {
     }
   }
 
+  DBG("path: %s port: %u", path, port);
   if (st == server_mode)
     return server(path, port);
   else if (st == client_mode)

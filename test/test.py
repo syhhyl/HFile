@@ -85,8 +85,7 @@ class Helper:
 
     @staticmethod
     def assert_files_equal(
-        testcase, src: Path, dst: Path, threshold: int = 4 * 1024 * 1024
-    ):
+        testcase, src: Path, dst: Path, threshold: int = 4 * 1024 * 1024):
         s1 = src.stat().st_size
         s2 = dst.stat().st_size
         testcase.assertEqual(s1, s2, f"size mismatch: {s1} != {s2}")

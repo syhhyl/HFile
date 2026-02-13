@@ -15,6 +15,9 @@
 #define CHUNK_SIZE 1024 * 1024
 
 int server(char *path, uint16_t port) {
+  if (path == NULL)
+    goto PATH_ERROR;
+
   int sock = socket(AF_INET, SOCK_STREAM, 0);  
   if (sock < 0) {
     perror("socket");
@@ -101,7 +104,8 @@ int server(char *path, uint16_t port) {
     if (dirfd < 0) {
       perror("open(output_dir)");
       free(file_name);
-      goto CLOSE_CONN;
+      close(conn);
+      goto CLOSE_SOCK;
     }
 
     int out = openat(dirfd, file_name, O_CREAT | O_WRONLY | O_TRUNC, 0644);
@@ -141,6 +145,7 @@ CLOSE_CONN:
     close(conn);
   }
   
+PATH_ERROR:
   return 0;
 
 CLOSE_SOCK:
