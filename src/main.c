@@ -41,68 +41,6 @@ static int parse_port(const char *s, uint16_t *out) {
 }
 
 
-
-// int main(int argc, char **argv) {
-//   int opt;
-//   char *server_path = NULL;
-
-//   while ((opt = getopt(argc, argv, "s:c:i:p:h")) != -1) {
-//     if (opt == 's') {
-//       if (flag == client_mode) {
-//         fprintf(stderr, "cannot use -s and -c together\n");
-//         usage(argv[0]);
-//         return 1;
-//       }
-//       flag = server_mode;
-//       server_path = optarg;
-//     } else if (opt == 'c') {
-//       if (flag == server_mode) {
-//         fprintf(stderr, "cannot use -s and -c together\n");
-//         usage(argv[0]);
-//         return 1;
-//       }
-//       flag = client_mode;
-//       file_path = optarg;
-//     } else if (opt == 'i') {
-//       ip = optarg;
-//     } else if (opt == 'p') {
-//       if (parse_port(optarg, &port) != 0) {
-//         fprintf(stderr, "invalid port: %s\n", optarg)
-//         return 1;
-//       }
-//     } else if (opt == 'h') {
-//       usage(argv[0]);
-//       return 0;
-//     } else {
-//       usage(argv[0]);
-//       return 1;
-//     }
-//   }
-
-//   if (flag == server_mode) {
-//     if (server_path == NULL) {
-//       fprintf(stderr, "missing -s <server_path>\n");
-//       usage(argv[0]);
-//       return 1;
-//     }
-//     return server(server_path, port);
-//   }
-
-//   if (flag == client_mode) {
-//     if (file_path == NULL) {
-//       fprintf(stderr, "missing -c <file_path>\n");
-//       usage(argv[0]);
-//       return 1;
-//     }
-//     return client(file_path, ip, port);
-//   }
-
-//   usage(argv[0]);
-//   return 1;
-// }
-
-
-//TODO rewrite main logic
 int main(int argc, char **argv) {
   int opt;
   
@@ -123,8 +61,6 @@ int main(int argc, char **argv) {
         }
         st = server_mode;
         path = optarg;
-        // if (checkpath(optarg)) path = optarg;
-        // else goto BAD_USE;
         break;
       case 'c':
         if (st == server_mode) {
@@ -133,8 +69,6 @@ int main(int argc, char **argv) {
         }
         st = client_mode;
         path = optarg;
-        // if (checkpath(optarg)) path = optarg;
-        // else goto BAD_USE;
         break;
       case 'i':
         ip = optarg;
