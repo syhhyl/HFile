@@ -17,10 +17,6 @@ typedef enum {
 
 state flag = init_mode;
 
-// const char *ip = "127.0.0.1";
-// uint16_t port = 9000;
-// char *file_path = NULL;
-
 static void usage(const char *argv0) {
   fprintf(stderr,
           "usage:\n"
@@ -50,9 +46,7 @@ int main(int argc, char **argv) {
   uint16_t port = 9000;
   
 
-  while ((opt = getopt(argc, argv, "s:c:i:p:h")) != -1) {
-    printf("opt:%c ", opt);
-    
+  while ((opt = getopt(argc, argv, "s:c:i:p:h")) != -1) { 
     switch (opt) {
       case 's':
         if (st == client_mode) {
