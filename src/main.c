@@ -50,26 +50,35 @@ int main(int argc, char **argv) {
     switch (opt) {
       case 's':
         if (st == client_mode) {
-          fprintf(stderr, "cannot use -c and -s together\n");
+          fprintf(stderr, "cannot use -s -c together\n");
           goto BAD_USE;
         }
         st = server_mode;
-        if (*optarg == '-') goto BAD_USE;
+        if (*optarg == '-') {
+          fprintf(stderr, "invalid server path\n");
+          goto BAD_USE;
+        }
         path = optarg;
         break;
       case 'c':
         if (st == server_mode) {
-          fprintf(stderr, "cannot use -s and -c together\n");
+          fprintf(stderr, "cannot use -s -c together\n");
           goto BAD_USE;
         }
         st = client_mode;
-        if (*optarg == '-') goto BAD_USE;
+        if (*optarg == '-') {
+          fprintf(stderr, "invalid client path\n");
+          goto BAD_USE;
+        }
         path = optarg;
         break;
       case 'i':
         if (st == client_mode)
           ip = optarg;
-        else goto BAD_USE;
+        else {
+          fprintf(stderr, "server mode don't need ip\n");
+          goto BAD_USE;
+        }
         break;
       case 'p':
         if (parse_port(optarg, &port) != 0) {
@@ -83,7 +92,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  DBG("path: %s port: %u", path, port);
+  // DBG("path: %s port: %u", path, port);
   if (st == server_mode)
     return server(path, port);
   else if (st == client_mode)
@@ -91,7 +100,6 @@ int main(int argc, char **argv) {
       
 
 BAD_USE:
-  usage(argv[0]);
   return 1;
   
 }
