@@ -9,14 +9,6 @@
 #include "helper.h"
 #include "stdbool.h"
 
-typedef enum {
-  server_mode,
-  client_mode,
-  init_mode
-} state;
-
-state flag = init_mode;
-
 static void usage(const char *argv0) {
   fprintf(stderr,
           "usage:\n"
@@ -40,7 +32,7 @@ static int parse_port(const char *s, uint16_t *out) {
 int main(int argc, char **argv) {
   int opt;
   
-  state st = init_mode;
+  Mode st = init_mode;
   char *path = NULL;
   char *ip = "127.0.0.1";
   uint16_t port = 9000;

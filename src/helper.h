@@ -3,6 +3,8 @@
 #define DEBUG_H
 
 #include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 #ifdef DEBUG
   #define DBG(fmt, ...) \
@@ -16,3 +18,17 @@
 
 ssize_t write_all(int fd, const void *buf, size_t len);
 ssize_t read_all(int fd, void *buf, size_t len);
+
+typedef enum {
+  server_mode,
+  client_mode,
+  init_mode
+} Mode;
+
+typedef struct {
+  Mode mode;
+  char *path;
+  char *ip;
+  uint16_t port;
+  bool help;
+} opt;
