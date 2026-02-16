@@ -17,13 +17,6 @@
 
 #endif // DEBUG_H
 
-ssize_t write_all(int fd, const void *buf, size_t len);
-ssize_t read_all(int fd, void *buf, size_t len);
-
-void usage(const char *argv0);
-int need_value(int argc, char **argv, int *i, const char *out);
-int parse_port(const char *s, uint16_t *out);
-
 typedef enum {
   server_mode,
   client_mode,
@@ -38,6 +31,17 @@ typedef struct {
   int exit_code;
   bool help;
 } Opt;
+
+ssize_t write_all(int fd, const void *buf, size_t len);
+ssize_t read_all(int fd, void *buf, size_t len);
+
+void usage(const char *argv0);
+int parse_port(const char *s, uint16_t *out);
+int need_value(int argc, char **argv, int *i, const char **out);
+int parse_args(int argc, char **argv, Opt *opt);
+
+
+
 
 
 
