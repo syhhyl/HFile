@@ -9,24 +9,6 @@
 #include "helper.h"
 #include "stdbool.h"
 
-static void usage(const char *argv0) {
-  fprintf(stderr,
-          "usage:\n"
-          "  %s -s <server_path> [-p <port>]\n"
-          "  %s -c <file_path> [-i <ip>] [-p <port>]\n",
-          argv0, argv0);
-}
-
-static int parse_port(const char *s, uint16_t *out) {
-  if (s == NULL || *s == '\0') return 1;
-  errno = 0;
-  char *end = NULL;
-  unsigned long v = strtoul(s, &end, 10);
-  if (errno != 0 || end == s || *end != '\0') return 1;
-  if (v == 0 || v > 65535UL) return 1;
-  *out = (uint16_t)v;
-  return 0;
-}
 
 
 int main(int argc, char **argv) {

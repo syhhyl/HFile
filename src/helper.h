@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #ifdef DEBUG
   #define DBG(fmt, ...) \
@@ -19,6 +20,10 @@
 ssize_t write_all(int fd, const void *buf, size_t len);
 ssize_t read_all(int fd, void *buf, size_t len);
 
+void usage(const char *argv0);
+int need_value(int argc, char **argv, int *i, const char *out);
+int parse_port(const char *s, uint16_t *out);
+
 typedef enum {
   server_mode,
   client_mode,
@@ -27,8 +32,12 @@ typedef enum {
 
 typedef struct {
   Mode mode;
-  char *path;
-  char *ip;
+  const char *path;
+  const char *ip;
   uint16_t port;
+  int exit_code;
   bool help;
-} opt;
+} Opt;
+
+
+
