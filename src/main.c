@@ -12,68 +12,76 @@
 
 
 int main(int argc, char **argv) {
-  int opt;
+  // int opt;
   
-  Mode st = init_mode;
-  char *path = NULL;
-  char *ip = "127.0.0.1";
-  uint16_t port = 9000;
+  // Mode st = init_mode;
+  // char *path = NULL;
+  // char *ip = "127.0.0.1";
+  // uint16_t port = 9000;
+  
   
 
-  while ((opt = getopt(argc, argv, "s:c:i:p:h")) != -1) { 
-    switch (opt) {
-      case 's':
-        if (st == client_mode) {
-          fprintf(stderr, "cannot use -s -c together\n");
-          goto BAD_USE;
-        }
-        st = server_mode;
-        if (*optarg == '-') {
-          fprintf(stderr, "invalid server path\n");
-          goto BAD_USE;
-        }
-        path = optarg;
-        break;
-      case 'c':
-        if (st == server_mode) {
-          fprintf(stderr, "cannot use -s -c together\n");
-          goto BAD_USE;
-        }
-        st = client_mode;
-        if (*optarg == '-') {
-          fprintf(stderr, "invalid client path\n");
-          goto BAD_USE;
-        }
-        path = optarg;
-        break;
-      case 'i':
-        if (st == client_mode)
-          ip = optarg;
-        else {
-          fprintf(stderr, "server mode don't need ip\n");
-          goto BAD_USE;
-        }
-        break;
-      case 'p':
-        if (parse_port(optarg, &port) != 0) {
-          fprintf(stderr, "invalid port: %s\n", optarg);
-          goto BAD_USE;
-        }
-        break;
-      case 'h':
-        usage(argv[0]);
-        return 0;
-    }
+  // while ((opt = getopt(argc, argv, "s:c:i:p:h")) != -1) { 
+  //   switch (opt) {
+  //     case 's':
+  //       if (st == client_mode) {
+  //         fprintf(stderr, "cannot use -s -c together\n");
+  //         goto BAD_USE;
+  //       }
+  //       st = server_mode;
+  //       if (*optarg == '-') {
+  //         fprintf(stderr, "invalid server path\n");
+  //         goto BAD_USE;
+  //       }
+  //       path = optarg;
+  //       break;
+  //     case 'c':
+  //       if (st == server_mode) {
+  //         fprintf(stderr, "cannot use -s -c together\n");
+  //         goto BAD_USE;
+  //       }
+  //       st = client_mode;
+  //       if (*optarg == '-') {
+  //         fprintf(stderr, "invalid client path\n");
+  //         goto BAD_USE;
+  //       }
+  //       path = optarg;
+  //       break;
+  //     case 'i':
+  //       if (st == client_mode)
+  //         ip = optarg;
+  //       else {
+  //         fprintf(stderr, "server mode don't need ip\n");
+  //         goto BAD_USE;
+  //       }
+  //       break;
+  //     case 'p':
+  //       if (parse_port(optarg, &port) != 0) {
+  //         fprintf(stderr, "invalid port: %s\n", optarg);
+  //         goto BAD_USE;
+  //       }
+  //       break;
+  //     case 'h':
+  //       usage(argv[0]);
+  //       return 0;
+  //   }
+  // }
+
+  Opt opt;
+  parse_args(argc, argv, &opt);
+
+  if (opt.exit_code == 1) {
+    usage(argv[0]);
+    return 1;
   }
 
   // DBG("path: %s port: %u", path, port);
-  if (st == server_mode)
-    return server(path, port);
-  else if (st == client_mode)
-    return client(path, ip, port);
+  if (opt.mode == server_mode)
+    return server(opt.path, opt.port);
+  else if (opt.mode == client_mode)
+    return client(opt.path, opt.ip, opt.port);
       
+  
 
-BAD_USE:
-  return 1;
   
 }

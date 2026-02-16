@@ -10,4 +10,4 @@ port:        tcp port to listen on
 
 #include <stdint.h>
 
-int server(char *path, uint16_t port);
+int server(const char *path, uint16_t port);

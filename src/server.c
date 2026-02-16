@@ -14,7 +14,7 @@
 
 #define CHUNK_SIZE 1024 * 1024
 
-int server(char *path, uint16_t port) {
+int server(const char *path, uint16_t port) {
   if (path == NULL)
     goto PATH_ERROR;
 

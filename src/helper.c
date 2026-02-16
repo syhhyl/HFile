@@ -119,7 +119,52 @@ int parse_args(int argc, char **argv, Opt *opt) {
       
       case 'c': {
         const char *v = NULL;
+        if (need_value(argc, argv, &i, &v) != 0) {
+          return 0; 
+        }
+        if (opt->mode == server_mode) {
+          return 0;
+        }
+        if (v[0] == '-') {
+          return 0;
+        }
+        opt->mode = client_mode;
+        opt->path = v;
+        break;
       }
+      
+      case 'i': {
+        const char *v = NULL;
+        if (need_value(argc, argv, &i, &v) != 0) {
+          return 0;
+        }
+        if (opt->mode != client_mode) {
+          return 0;
+        }
+        opt->ip = v;
+        break;
+      }
+      
+      case 'p': {
+        const char *v = NULL;
+        if (need_value(argc, argv, &i, &v) != 0) {
+          return 0;
+        }
+        if (parse_port(v, &opt->port) != 0) {
+          return 0;
+        }
+        break;
+      }
+      
+      default:
+        return 0;
     }
   }
+  
+  if (opt->mode == init_mode || opt->path == NULL) {
+    opt->exit_code = 1;
+    return 0;
+  }
+  opt->exit_code = 0;
+  return 0;
 }

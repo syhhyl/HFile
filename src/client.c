@@ -20,7 +20,7 @@ and copy to return
 
 #define CHUNK_SIZE 1024 * 1024
 
-int get_file_name(char **file_path, char **file_name) {
+int get_file_name(const char **file_path, const char **file_name) {
   if (*file_path == NULL) return 1;
   char *tmp = strrchr(*file_path, '/'); 
   if (tmp == NULL) *file_name = *file_path;
@@ -28,7 +28,7 @@ int get_file_name(char **file_path, char **file_name) {
   return *file_name ? 0 : 1;
 }
 
-int client(char *path, const char *ip, uint16_t port) {
+int client(const char *path, const char *ip, uint16_t port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock == -1) {
     perror("socket");
@@ -49,7 +49,7 @@ int client(char *path, const char *ip, uint16_t port) {
   }
   
 
-  char *file_name;
+  const char *file_name;
   if (get_file_name(&path, &file_name) != 0) {
     perror("get_file_name");
     goto CLOSE_SOCK;
