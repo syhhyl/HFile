@@ -1,142 +1,157 @@
 # AGENTS
 
 This file orients agentic coding assistants working in this repo.
-It summarizes build/test commands, style, and local conventions.
-If this file conflicts with repo behavior, prefer the repo behavior.
+It documents how to build/test and the local code conventions.
+If this file conflicts with the codebase, prefer the codebase.
 
 ## Project Overview
 
-- Language: C (build with CMake/Ninja)
+- Language: C (CMake + Ninja)
 - Binary: `hf`
-- Primary modules: `src/main.c`, `src/server.c`, `src/client.c`
+- Modules: `src/main.c`, `src/server.c`, `src/client.c`, `src/helper.c`
 - Tests: Python `unittest` in `test/test.py`
 
-## Build, Lint, Test
+## Build / Lint / Test
 
 ### Build
 
-- Configure + build (default Debug):
+Prereqs: `cmake` (>= 3.16) and `ninja`.
+
+- Configure + build + install (default Debug; also writes `build/compile_commands.json`):
   - `./build.sh`
-- Manual CMake (equivalent):
+- Release build:
+  - `BUILD_TYPE=Release ./build.sh`
+- Manual CMake (equivalent to `./build.sh`):
   - `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_INSTALL_PREFIX=$HOME/.local`
   - `cmake --build build`
   - `cmake --install build`
-- Build type override:
-  - `BUILD_TYPE=Release ./build.sh`
+
+Artifacts:
+- In-tree binary: `build/hf`
+- Installed binary (default): `$HOME/.local/bin/hf`
 
 ### Run
 
-- Server mode:
-  - `./build/hf -s ./output -p 9001`
-- Client mode:
-  - `./build/hf -c ./input/a -i 127.0.0.1 -p 9001`
+CLI (see `src/helper.c` usage):
+- Server: `hf -s <output_dir> [-p <port>]`
+- Client: `hf -c <file_path> [-i <ip>] [-p <port>]`
+
+Examples:
+- `./build/hf -s ./output -p 9001`
+- `./build/hf -c ./input/hello.txt -i 127.0.0.1 -p 9001`
+
+Defaults:
+- Port: `9000`
+- IP (client): `127.0.0.1`
 
 ### Tests (Python)
 
-- All tests (preferred):
-  - `python -m unittest -v`
-- Explicit test module:
-  - `python -m unittest -v test.test`
-- Single test case:
-  - `python -m unittest -v test.test.TestHFile.test_empty_file`
+Python requirement: 3.10+ (uses `Path | None` and `tuple[...]` typing).
+
+- All tests (discovery):
+  - `python3 -m unittest discover -s test -p 'test.py' -v`
+- Single test method (fastest iteration):
+  - `python3 -m unittest discover -s test -p 'test.py' -v -k test_empty_file`
 - Single test class:
-  - `python -m unittest -v test.test.TestHFile`
+  - `python3 -m unittest discover -s test -p 'test.py' -v -k TestHFile`
 
 Notes:
-- Tests start `hf` as a subprocess and need a built binary.
-- The test harness looks for `$HOME/.local/bin/hf` and falls back to `build/hf`.
+- Tests start a server subprocess in `setUpClass` and expect a built `hf`.
+- Binary resolution: prefers `$HOME/.local/bin/hf`; falls back to `build/hf`.
+- Tests bind port `9000`; avoid running parallel servers/tests on the same port.
+- `test_large_file` truncates a 2 GiB file; it may be slow or disk/FS dependent.
 
 ### Lint / Format
 
-- No lint or formatting tools are configured in this repo.
-- Do not introduce new tooling unless requested.
+- No formatter/linter is configured.
+- Compiler warnings are enabled: `-Wall -Wextra` (see `CMakeLists.txt`).
 
-## Code Style and Conventions
+## Known Gotchas (Current Repo State)
 
-Follow existing patterns from `src/*.c` and `src/*.h`.
+- `./build.sh` currently fails: `src/main.c` references `Opt.exit_code`, but `Opt` in `src/helper.h` has no `exit_code` field.
+- There is also at least one warning: `src/helper.c: parse_args` is `int` but does not return a value on all paths.
+
+If you are asked to "make tests pass", expect to fix build errors first.
+
+## Code Style and Conventions (C)
+
+Follow the existing structure in `src/*.c` / `src/*.h`, but prefer the rules below when touching code.
 
 ### Formatting
 
 - Indentation: 2 spaces; no tabs.
-- Braces: K&R style on the same line.
-- Blank lines: used to separate logical blocks; no excessive vertical space.
-- Line length: keep reasonable; avoid wrapping unless necessary.
+- Braces: K&R (`if (...) {` on the same line).
+- Prefer braces for multi-line blocks; keep one-statement branches on one line only when very short.
+- Blank lines: separate logical blocks; avoid large vertical gaps.
+- Keep line lengths reasonable; avoid over-wrapping function calls.
 
 ### Includes
 
-- Order: standard library headers first, then project headers.
-- Use `<...>` for standard headers and `"..."` for local headers.
-- Keep include lists minimal and file-specific.
+- Order includes as: standard library headers, then project headers.
+- Use `<...>` for standard headers (e.g. `<stdint.h>`, `<errno.h>`), and `"..."` for local (`"helper.h"`).
+- Avoid including standard headers via quotes (the current code has a few; fix opportunistically when editing nearby).
 
 ### Naming
 
-- Files: lower_snake_case for C files (`server.c`, `client.c`).
-- Functions: lower_snake_case (`get_file_name`, `parse_port`).
-- Variables: lower_snake_case; avoid single-letter names except for indexes or `n`.
-- Constants: use `const` variables; avoid macros unless needed.
+- Files: `lower_snake_case.c/.h`.
+- Functions/variables: `lower_snake_case`.
+- Types/enums: existing code uses `Mode`, `Opt`; keep consistent within the file.
+- Constants: prefer `const` variables; use `#define` only for true compile-time constants (e.g. buffer sizes).
 
 ### Types
 
-- Use fixed-width types when on-the-wire or protocol-related (`uint16_t`).
-- Use `size_t` for sizes/lengths of buffers and arrays.
-- Use `ssize_t` for return values of `read`/`recv`.
-- Keep casts minimal; cast only when required by APIs.
+- Use fixed-width integers for on-the-wire/protocol fields: `uint16_t` for ports and filename length.
+- Use `size_t` for buffer sizes/lengths; `ssize_t` for `read`/`write` return values.
+- Cast only when required by an API; keep signed/unsigned conversions explicit.
 
 ### Error Handling
 
-- Return `1` on failure, `0` on success (matches current style).
-- Use `perror()` for system call failures where `errno` applies.
+- Convention: return `0` on success, `1` on failure.
+- Use `perror("...")` for syscall failures where `errno` is meaningful.
 - Use `fprintf(stderr, ...)` for validation/usage errors.
-- Prefer early returns or `goto` cleanup labels for resource management.
-- Always close file descriptors/sockets on error paths.
+- Handle `EINTR` for blocking syscalls (`accept`, `read`, `write`).
+- Prefer early returns for simple functions; use `goto cleanup` when multiple resources must be released.
 
 ### Resource Management
 
-- Close sockets and files explicitly.
-- Free heap allocations (`malloc`) on all exit paths.
-- Use `goto` labels for centralized cleanup when multiple resources exist.
+- Always close file descriptors/sockets on all exit paths.
+- Free heap allocations on all exit paths.
+- When using `goto`, keep labels at the end and avoid jumping over initializations.
 
-### Networking Protocol
+### Networking / Protocol
 
-- Client sends:
-  1) 2-byte filename length (network byte order)
-  2) filename bytes
-  3) raw file bytes
-- Server validates filename length and rejects path traversal (`/`, `\\`, `..`).
-- Keep protocol changes backward compatible unless explicitly planned.
+Current protocol (see `src/client.c`, `src/server.c`):
+1) client sends 2-byte filename length (network byte order)
+2) client sends filename bytes (no NUL terminator; max 255)
+3) client streams raw file bytes until EOF
 
-### Logging and Debug
+Server-side validation:
+- Reject `file_len == 0` or `file_len > 255`.
+- Reject path traversal in filename (`/`, `\\`, `..`).
 
-- Runtime errors: `perror` and `fprintf(stderr, ...)`.
-- Debug macro available in `src/helper.h` (uses `DEBUG` define).
-- Avoid noisy stdout logs unless needed for user-facing output.
+I/O helpers:
+- `write_all` / `read_all` in `src/helper.c` retry on `EINTR` and attempt full transfers.
+
+### Debug / Logging
+
+- Debug macro: `DBG(...)` in `src/helper.h` (enabled via `DEBUG` compile definition in Debug builds).
+- Runtime errors: `perror`/`fprintf(stderr, ...)`.
+- Avoid noisy stdout logs unless they are part of the CLI UX (server prints connection/status today).
 
 ## Repository Structure
 
-- `src/`: C source and headers
-- `test/`: Python tests and fixtures
-- `build/`: CMake/Ninja output (generated)
-
-## Testing Guidelines
-
-- Build before running tests.
-- Tests spawn a server on port 9000; avoid running parallel servers on same port.
-- Tests write to `test/HFileTest_OUT` and may clear that directory.
-
-## Contribution Notes
-
-- Keep changes minimal and localized.
-- Match existing style and patterns; do not reformat unrelated code.
-- Avoid introducing new dependencies unless requested.
+- `src/`: C sources/headers
+- `test/`: Python tests and `fixtures/`
+- `build/`: generated CMake/Ninja output
 
 ## Cursor / Copilot Rules
 
-- No `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md` found.
+- No `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md` are present in this repo.
 
-## Quick Checklist for Agents
+## Quick Checklist For Agents
 
-- Confirm build command: `./build.sh`.
-- Run tests via `python -m unittest -v`.
-- Single test: `python -m unittest -v test.test.TestHFile.test_empty_file`.
-- Follow 2-space indentation and K&R braces.
-- Use `perror` + `stderr` for errors; clean up resources on all paths.
+- Build: `./build.sh` (or fix build errors first if it fails).
+- Run all tests: `python -m unittest -v`.
+- Run one test: `python -m unittest -v test.test.TestHFile.test_empty_file`.
+- Keep 2-space indent and K&R braces; use `<...>` for standard headers.
+- Use `perror`/`fprintf(stderr, ...)` and clean up resources on all paths.
