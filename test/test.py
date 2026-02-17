@@ -229,41 +229,60 @@ class TestHFile(unittest.TestCase):
   
   def test_cli_argument(self):
     
-    help_case = ["-h"]
 
     
     case1 = [
       ["-c", "in", "-s", "out"],
-      ["-s", "out", "-c", "in"],
+      ["-s", "out", "-c", "in"]
     ]
     
-    invalid_server_path = ["-s", "-c"]
-    invalid_client_path = ["-c", "-s"]
+    case2 = [
+      ["a"],
+      ["aa"]
+    ]
+
+    help_case = ["-h"]
+
+    invalid_server_path = [
+      ["-s"],
+      ["-s", "-c"]
+    ]
+    invalid_client_path = [
+      ["-c"],
+      ["-c", "-s"]
+    ]
     
     server_no_ip = ["-s", "out", "-i", "10.0.0.1"]
 
     invalid_port_case = [
+      ["-s", "out", "-p"],
       ["-s", "out", "-p", "hfile"],
       ["-c", "in", "-p", "hfile"]
-
     ]
+    
     # -h
-    c0 = self.run_one_case(help_case, "usage", returncode=0) 
+    self.run_one_case(help_case, "usage", returncode=0) 
 
     # use -s -c together
     for a in case1:
-      c1 = self.run_one_case(a, "cannot use -s -c together", returncode=1)
+      self.run_one_case(a, "cannot use -s -c together", returncode=1)
 
     # invalid path
-    c2 = self.run_one_case(invalid_server_path, "invalid server path", returncode=1)
-    c3 = self.run_one_case(invalid_client_path, "invalid client path", returncode=1)
+    for a in invalid_server_path:
+      self.run_one_case(a, "invalid server path", returncode=1)
+
+    for a in invalid_client_path:
+      self.run_one_case(a, "invalid client path", returncode=1)
 
     # server no ip
-    c4 = self.run_one_case(server_no_ip, "server mode don't need ip", returncode=1)
+    self.run_one_case(server_no_ip, "server mode don't need ip", returncode=1)
     
     for a in invalid_port_case:
-      c5 = self.run_one_case(a, "invalid port", returncode=1)
+      self.run_one_case(a, "invalid port", returncode=1)
         
+    
+    for a in case2:
+      self.run_one_case(a, "invalid argument", returncode=1)
 
 if __name__ == "__main__":
   unittest.main(verbosity=2)
