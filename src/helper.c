@@ -1,7 +1,9 @@
 #include "helper.h"
-#include "stdint.h"
-#include "unistd.h"
-#include "errno.h"
+
+#include <errno.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 
 ssize_t write_all(int fd, const void *buf, size_t len) {
@@ -74,97 +76,73 @@ int need_value(int argc, char **argv, int *i, const char **out) {
 }
 
 
-int parse_args(int argc, char **argv, Opt *opt) {
+parse_result_t parse_args(int argc, char **argv, Opt *opt) {
+  if (opt == NULL) return PARSE_ERR;
+
   opt->mode = init_mode;
   opt->path = NULL;
   opt->ip = "127.0.0.1";
   opt->port = 9000;
-  opt->exit_code = 1;
-  opt->help = false;
-  
+
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
-    if (a[0] != '-') {
-      return 0;
+    if (a == NULL || a[0] != '-' || a[1] == '\0' || a[2] != '\0') {
+      return PARSE_ERR;
     }
-    if (a[1] == '\0') {
-      return 0;
-    }
-    
-    if (a[2] != '\0') {
-      return 0;
-    }
-    
+
     switch (a[1]) {
       case 'h':
-        opt->help = true;
-        opt->exit_code = 0;
-        return 0;
-      
+        return PARSE_HELP;
+
       case 's': {
+        if (opt->mode == client_mode) return PARSE_ERR;
+
         const char *v = NULL;
-        if (need_value(argc, argv, &i, &v) != 0) {
-          return 0;
-        }
-        if (opt->mode == client_mode) {
-          return 0;
-        }
-        if (v[0] == '-') {
-          return 0;
-        }
+        if (need_value(argc, argv, &i, &v) != 0) return PARSE_ERR;
+        if (v[0] == '-') return PARSE_ERR;
+
         opt->mode = server_mode;
         opt->path = v;
         break;
       }
-      
+
       case 'c': {
+        if (opt->mode == server_mode) return PARSE_ERR;
+
         const char *v = NULL;
-        if (need_value(argc, argv, &i, &v) != 0) {
-          return 0; 
-        }
-        if (opt->mode == server_mode) {
-          return 0;
-        }
-        if (v[0] == '-') {
-          return 0;
-        }
+        if (need_value(argc, argv, &i, &v) != 0) return PARSE_ERR;
+        if (v[0] == '-') return PARSE_ERR;
+
         opt->mode = client_mode;
         opt->path = v;
         break;
       }
-      
+
       case 'i': {
+        if (opt->mode != client_mode) return PARSE_ERR;
+
         const char *v = NULL;
-        if (need_value(argc, argv, &i, &v) != 0) {
-          return 0;
-        }
-        if (opt->mode != client_mode) {
-          return 0;
-        }
+        if (need_value(argc, argv, &i, &v) != 0) return PARSE_ERR;
+        if (v[0] == '-') return PARSE_ERR;
+
         opt->ip = v;
         break;
       }
-      
+
       case 'p': {
         const char *v = NULL;
-        if (need_value(argc, argv, &i, &v) != 0) {
-          return 0;
-        }
-        if (parse_port(v, &opt->port) != 0) {
-          return 0;
-        }
+        if (need_value(argc, argv, &i, &v) != 0) return PARSE_ERR;
+        if (parse_port(v, &opt->port) != 0) return PARSE_ERR;
         break;
       }
-      
+
       default:
-        return 0;
+        return PARSE_ERR;
     }
   }
-  
-  if (opt->mode == init_mode || opt->path == NULL) {
-    opt->exit_code = 1;
-    return 0;
-  }
-  opt->exit_code = 0;
-  return 0;
+
+  if (opt->mode == init_mode) return PARSE_ERR;
+  if (opt->path == NULL) return PARSE_ERR;
+
+  return PARSE_OK;
 }
