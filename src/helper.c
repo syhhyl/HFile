@@ -87,6 +87,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
     if (a == NULL || a[0] != '-' || a[1] == '\0' || a[2] != '\0') {
+      fprintf(stderr, "invalid argument\n");
       return PARSE_ERR;
     }
 
@@ -95,11 +96,20 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         return PARSE_HELP;
 
       case 's': {
-        if (opt->mode == client_mode) return PARSE_ERR;
+        if (opt->mode == client_mode) {
+          fprintf(stderr, "cannot use -s -c together\n");
+          return PARSE_ERR;
+        }
 
         const char *v = NULL;
-        if (need_value(argc, argv, &i, &v) != 0) return PARSE_ERR;
-        if (v[0] == '-') return PARSE_ERR;
+        if (need_value(argc, argv, &i, &v) != 0) {
+          fprintf(stderr, "invalid server path\n");
+          return PARSE_ERR;
+        }
+        if (v[0] == '-') {
+          fprintf(stderr, "invalid server path\n");
+          return PARSE_ERR;
+        }
 
         opt->mode = server_mode;
         opt->path = v;
@@ -107,11 +117,20 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
       }
 
       case 'c': {
-        if (opt->mode == server_mode) return PARSE_ERR;
+        if (opt->mode == server_mode) {
+          fprintf(stderr, "cannot use -s -c together\n");
+          return PARSE_ERR;
+        }
 
         const char *v = NULL;
-        if (need_value(argc, argv, &i, &v) != 0) return PARSE_ERR;
-        if (v[0] == '-') return PARSE_ERR;
+        if (need_value(argc, argv, &i, &v) != 0) {
+          fprintf(stderr, "invalid client path\n");
+          return PARSE_ERR;
+        }
+        if (v[0] == '-') {
+          fprintf(stderr, "invalid client path\n");
+          return PARSE_ERR;
+        }
 
         opt->mode = client_mode;
         opt->path = v;
@@ -119,11 +138,20 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
       }
 
       case 'i': {
-        if (opt->mode != client_mode) return PARSE_ERR;
+        if (opt->mode != client_mode) {
+          fprintf(stderr, "server mode don't need ip\n");
+          return PARSE_ERR;
+        }
 
         const char *v = NULL;
-        if (need_value(argc, argv, &i, &v) != 0) return PARSE_ERR;
-        if (v[0] == '-') return PARSE_ERR;
+        if (need_value(argc, argv, &i, &v) != 0) {
+          fprintf(stderr, "invalid argument\n");
+          return PARSE_ERR;
+        }
+        if (v[0] == '-') {
+          fprintf(stderr, "invalid argument\n");
+          return PARSE_ERR;
+        }
 
         opt->ip = v;
         break;
@@ -131,8 +159,14 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
       case 'p': {
         const char *v = NULL;
-        if (need_value(argc, argv, &i, &v) != 0) return PARSE_ERR;
-        if (parse_port(v, &opt->port) != 0) return PARSE_ERR;
+        if (need_value(argc, argv, &i, &v) != 0) {
+          fprintf(stderr, "invalid port\n");
+          return PARSE_ERR;
+        }
+        if (parse_port(v, &opt->port) != 0) {
+          fprintf(stderr, "invalid port\n");
+          return PARSE_ERR;
+        }
         break;
       }
 
@@ -141,8 +175,12 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
   }
 
-  if (opt->mode == init_mode) return PARSE_ERR;
-  if (opt->path == NULL) return PARSE_ERR;
+  if (opt->mode == init_mode) {
+    return PARSE_ERR;
+  }
+  if (opt->path == NULL) {
+    return PARSE_ERR;
+  }
 
   return PARSE_OK;
 }
