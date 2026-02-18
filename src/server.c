@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -117,7 +118,9 @@ int server(const char *path, uint16_t port) {
     }
 
 
-    while (1) {
+    //start send
+    clock_t start = clock(); 
+    for (;;) {
       ssize_t n = read(conn, buf, sizeof(buf));
       if (n > 0) {
         if (write_all(out, buf, (size_t)n) < 0) {
@@ -133,10 +136,13 @@ int server(const char *path, uint16_t port) {
         }
       }
     }
+    clock_t end = clock();
+    
+    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
 
     size_t path_len = strlen(path);
     const char *sep = (path_len > 0 && path[path_len - 1] == '/') ? "" : "/";
-    printf("write file: %s%s%s\n", path, sep, file_name);
+    printf("write file: %s%s%s\t%lfs\n", path, sep, file_name, elapsed);
 
     free(file_name);
     close(out);
