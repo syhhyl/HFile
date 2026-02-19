@@ -12,11 +12,7 @@
 #include "client.h"
 #include "helper.h"
 #include "errno.h"
-/*
-get_file_name
-find the last '/'
-and copy to return
-*/
+
 
 #define CHUNK_SIZE 1024 * 1024
 
