@@ -23,6 +23,3 @@ include(GNUInstallDirs)
 install(TARGETS hf
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-
-
-
