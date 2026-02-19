@@ -228,9 +228,7 @@ class TestHFile(unittest.TestCase):
     Helper.assert_files_equal(self, src, dst)
   
   def test_cli_argument(self):
-    
 
-    
     case1 = [
       ["-c", "in", "-s", "out"],
       ["-s", "out", "-c", "in"]
@@ -247,6 +245,7 @@ class TestHFile(unittest.TestCase):
       ["-s"],
       ["-s", "-c"]
     ]
+
     invalid_client_path = [
       ["-c"],
       ["-c", "-s"]

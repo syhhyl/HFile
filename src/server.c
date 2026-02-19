@@ -55,6 +55,7 @@ int server(const char *path, uint16_t port) {
       continue;
     }
     printf("client connected\n");
+  
 
 
     char buf[CHUNK_SIZE];
@@ -69,7 +70,6 @@ int server(const char *path, uint16_t port) {
     file_len = ntohs(file_len);
     
     
-    //get file_name
     if (file_len == 0 || file_len > 255) {
       fprintf(stderr, "invalid file name length: %u\n", (unsigned)file_len);
       goto CLOSE_CONN;
@@ -81,9 +81,6 @@ int server(const char *path, uint16_t port) {
       goto CLOSE_CONN;
     }
     
-    //get file name
-    // ssize_t name_n = recv(conn, file_name, file_len, MSG_WAITALL);
-    // ssize_t name_n = read_all(conn, file_name, file_len);
     if (read_all(conn, file_name, (size_t)file_len) != (ssize_t)file_len) {
       perror("read(file_name)");
       free(file_name);
@@ -133,6 +130,7 @@ int server(const char *path, uint16_t port) {
         }
       }
     }
+
     clock_t end = clock();
     
     double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
