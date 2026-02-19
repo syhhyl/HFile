@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdbool.h>
