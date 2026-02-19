@@ -1,6 +1,4 @@
-#include "client.h"
 #include "helper.h"
-#include "server.h"
 
 int main(int argc, char **argv) {
   Opt opt;

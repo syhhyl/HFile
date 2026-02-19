@@ -9,12 +9,10 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <time.h>
-#include "client.h"
 #include "helper.h"
 #include "errno.h"
 
 
-#define CHUNK_SIZE 1024 * 1024
 
 int get_file_name(const char **file_path, const char **file_name) {
   if (*file_path == NULL) return 1;

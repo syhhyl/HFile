@@ -7,12 +7,10 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
-#include "server.h"
 #include "errno.h"
 #include "helper.h"
 
 
-#define CHUNK_SIZE 1024 * 1024
 
 int server(const char *path, uint16_t port) {
   if (path == NULL)

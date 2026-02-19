@@ -13,6 +13,8 @@
 #define DBG(...) ((void)0)
 #endif
 
+#define CHUNK_SIZE 1024 * 1024
+
 typedef enum {
   server_mode,
   client_mode,
@@ -31,6 +33,11 @@ typedef struct {
   const char *ip;
   uint16_t port;
 } Opt;
+
+
+int client(const char *path, const char *ip, uint16_t port);
+int server(const char *path, uint16_t port);
+
 
 ssize_t write_all(int fd, const void *buf, size_t len);
 ssize_t read_all(int fd, void *buf, size_t len);
