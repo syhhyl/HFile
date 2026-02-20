@@ -1,4 +1,4 @@
-build/
+build*/
 .cache/
 .DS_Store
 .ruff_cache/
