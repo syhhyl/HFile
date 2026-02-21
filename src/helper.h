@@ -65,6 +65,7 @@ void usage(const char *argv0);
 int parse_port(const char *s, uint16_t *out);
 int need_value(int argc, char **argv, int *i, const char **out);
 parse_result_t parse_args(int argc, char **argv, Opt *opt);
+int get_file_name(const char **file_path, const char **file_name);
 
 #endif
 
