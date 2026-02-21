@@ -1,15 +1,6 @@
 #include "helper.h"
 
 
-
-int get_file_name(const char **file_path, const char **file_name) {
-  if (*file_path == NULL) return 1;
-  char *tmp = strrchr(*file_path, '/'); 
-  if (tmp == NULL) *file_name = *file_path;
-  else *file_name = tmp + 1;
-  return *file_name ? 0 : 1;
-}
-
 int client(const char *path, const char *ip, uint16_t port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock == -1) {
