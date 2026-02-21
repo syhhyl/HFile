@@ -13,7 +13,11 @@ int server(const char *path, uint16_t port) {
     return 1;
   }
 
+#ifdef _WIN32
+  char opt = 1;
+#else
   int opt = 1;
+#endif
   if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
     perror("setsockopt(SO_REUSEADDR)");
     goto CLOSE_SOCK;
