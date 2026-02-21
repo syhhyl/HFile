@@ -72,8 +72,6 @@ int client(const char *path, const char *ip, uint16_t port) {
   offset += file_name_len;
 
   
-  clock_t start = clock();
-  
   write_all(sock, &net_len, 2);
   write_all(sock, file_name, file_name_len);
   
@@ -87,12 +85,6 @@ int client(const char *path, const char *ip, uint16_t port) {
       break;
     }
   }
-  
-  clock_t end = clock();
-  double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
-  
-  printf("%lf\n", elapsed);
-  
   
 
   close(in);
