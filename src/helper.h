@@ -3,8 +3,6 @@
 
 #include <stdint.h>
 #include <stdio.h>
-#include <sys/types.h>
-#include <time.h>
 
 #ifdef DEBUG
 #define DBG(fmt, ...) \
