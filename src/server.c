@@ -86,21 +86,17 @@ int server(const char *path, uint16_t port) {
       goto CLOSE_CONN;
     }
 
-    int dirfd = open(path, O_RDONLY | O_DIRECTORY);
-    if (dirfd < 0) {
-      perror("open(output_dir)");
-      free(file_name);
-      close(conn);
-      goto CLOSE_SOCK;
-    }
-
-    int out = openat(dirfd, file_name, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    close(dirfd);
-    if (out < 0) {
-      perror("open");
-      free(file_name);
-      goto CLOSE_CONN;
-    }
+#ifdef _WIN32
+    char full_path[MAX_PATH];
+    const char *sep = (path[strlen(path)-1] == '\\' || path[strlen(path)-1] == '/') ? "" : "\\";
+    snprintf(full_path, sizeof(full_path), "%s%s%s", path, sep, file_name);
+    int out = _open(full_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+#else
+    char full_path[4096];
+    const char *sep = (path[strlen(path)-1] == '/') ? "" : "/";
+    snprintf(full_path, sizeof(full_path), "%s%s%s", path, sep, file_name);
+    int out = open(full_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+#endif
 
 
     for (;;) {
