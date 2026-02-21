@@ -14,6 +14,7 @@
   #define read _read
   #define write _write
   #define close _close
+  #define open _open
 #else
   #include <sys/socket.h>
   #include <netinet/in.h>
