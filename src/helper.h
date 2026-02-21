@@ -11,6 +11,9 @@
   #include <ws2tcpip.h>
   #include <io.h>
   typedef int socklen_t;
+  #define read _read
+  #define write _write
+  #define close _close
 #else
   #include <sys/socket.h>
   #include <netinet/in.h>
