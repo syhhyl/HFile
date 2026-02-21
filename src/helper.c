@@ -1,8 +1,4 @@
 #include "helper.h"
-#include <errno.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <unistd.h>
 
 
 ssize_t write_all(int fd, const void *buf, size_t len) {

@@ -1,13 +1,4 @@
-#include <sys/socket.h>
-#include <stdio.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <stdbool.h>
-#include <string.h>
 #include <stdlib.h>
-#include "errno.h"
 #include "helper.h"
 
 
@@ -43,7 +34,7 @@ int server(const char *path, uint16_t port) {
   }
   
 
-  int conn_flag = true;
+  int conn_flag = 1;
   printf("listening on %s port %u...\n", path, (unsigned)port);
 
   while (conn_flag) {

@@ -3,6 +3,23 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef _WIN32
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #include <io.h>
+  typedef int socklen_t;
+#else
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+  #include <errno.h>
+  #include <fcntl.h>
+  #include <unistd.h>
+  #include <sys/types.h>
+#endif
 
 #ifdef DEBUG
 #define DBG(fmt, ...) \
