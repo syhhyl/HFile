@@ -1,46 +1,41 @@
 #include "helper.h"
+#include <corecrt.h>
+#include <psdk_inc/_socket_types.h>
+#include <stddef.h>
+#include <windows.h>
+#include <winsock2.h>
 
 
-ssize_t write_all(int fd, const void *buf, size_t len) {
-  const uint8_t *p = (const uint8_t *)buf;
-  size_t left = len;
-  
-  while (left > 0) {
-    ssize_t n = write(fd, p, left);
-    if (n > 0) {
-      p += (size_t)n;
-      left -= (size_t)n;
-      continue;
-    }
-    if (n == 0) return -1;
-    if (errno == EINTR) continue;
-    
-    return -1;
-  }
-  
-  return (ssize_t)len;
-}
 
-ssize_t read_all(int fd, void *buf, size_t len) {
-  uint8_t *p = (uint8_t *)buf;
-  size_t left = len;
-  
-  while (left > 0) {
-    ssize_t n = read(fd, p, left);
-    if (n > 0) {
-      p += (size_t)n;
-      left -= (size_t)n;
-      continue;
-    }
-    if (n == 0) {
-      errno = ECONNRESET;
+ssize_t send_all(
+#ifdef _WIN32
+  SOCKET sock,
+#else
+  int sock,
+#endif
+  const void *data, size_t len) {
+  size_t total = 0;
+  const char *p = data;
+  while (total < len) {
+#ifdef _WIN32
+    int n = send(sock, p+total, (int)(len-total), 0);
+    if (n == SOCKET_ERROR) {
+      int err = WSAGetLastError();
+      if (err == WSAEINTR || err == WSAEWOULDBLOCK) continue;
       return -1;
     }
-    if (errno == EINTR) continue;
-    return -1;
+#else
+    ssize_t n = send(sock, p+total, len-total, 0);
+    if (n < 0) {
+      if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) continue;
+      return -1;
+    }
+#endif
+    if (n == 0) return (ssize_t)total;
+    total += (size_t)n;
   }
-
-  return (ssize_t)len;
+  
+  return (ssize_t)total;
 }
 
 void usage(const char *argv0) {

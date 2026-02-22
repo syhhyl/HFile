@@ -1,6 +1,7 @@
 #ifndef HELPER_H
 #define HELPER_H
 
+#include <corecrt.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,11 +12,13 @@
   #include <winsock2.h>
   #include <ws2tcpip.h>
   #include <io.h>
-  typedef int socklen_t;
   #define read _read
-  #define write _write
-  #define close _close
+  // #define write _write
   #define open _open
+  #define close _close
+  // #define SSIZE_T ssize_t
+  // #define SOCKET_TYPE SOCKET
+  
 #else
   #include <sys/socket.h>
   #include <netinet/in.h>
@@ -23,6 +26,7 @@
   #include <errno.h>
   #include <unistd.h>
   #include <sys/types.h>
+  // #define SOCKET_TYPE int
 #endif
 
 #ifdef DEBUG
@@ -39,6 +43,7 @@ typedef enum {
   client_mode,
   init_mode
 } Mode;
+
 
 typedef enum {
   PARSE_OK,
@@ -58,8 +63,16 @@ int client(const char *path, const char *ip, uint16_t port);
 int server(const char *path, uint16_t port);
 
 
-ssize_t write_all(int fd, const void *buf, size_t len);
-ssize_t read_all(int fd, void *buf, size_t len);
+// ssize_t write_all(int fd, const void *buf, size_t len);
+// ssize_t read_all(int fd, void *buf, size_t len);
+
+ssize_t send_all(
+#ifdef _WIN32
+  SOCKET sock,
+#else
+  int sock,
+#endif
+  const void *data, size_t len);
 
 void usage(const char *argv0);
 int parse_port(const char *s, uint16_t *out);
