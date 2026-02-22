@@ -1,9 +1,4 @@
 #include "helper.h"
-#include <corecrt.h>
-#include <psdk_inc/_socket_types.h>
-#include <stddef.h>
-#include <windows.h>
-#include <winsock2.h>
 
 
 
@@ -37,6 +32,44 @@ ssize_t send_all(
   
   return (ssize_t)total;
 }
+
+ssize_t recv_all(
+#ifdef _WIN32
+  SOCKET sock,
+#else
+  int sock,
+#endif
+  void *buf, size_t len) {
+  uint8_t *p = (uint8_t *)buf;
+  size_t total = 0;
+  
+  while (total < len) {
+#ifdef _WIN32
+    int n = recv(sock, (char *)p+total, (int)(len-total), 0);
+    if (n == SOCKET_ERROR) {
+      int err = WSAGetLastError();
+      if (err == WSAEINTR || err == WSAEWOULDBLOCK) continue;
+      return -1;
+    }
+#else
+    ssize_t n = recv(sock, p+total, len-total, 0);
+    if (n < 0) {
+      if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) return -1;
+      continue;
+    }
+#endif
+    if (n == 0)
+      return (ssize_t)total;
+    total += (size_t)n;
+  }
+  return (ssize_t)total;
+}
+
+ssize_t write_all() {
+
+}
+
+
 
 void usage(const char *argv0) {
   fprintf(stderr,
