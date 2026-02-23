@@ -1,6 +1,4 @@
 #include "helper.h"
-#include <corecrt.h>
-#include <windows.h>
 
 
 
@@ -14,7 +12,7 @@ int client(const char *path, const char *ip, uint16_t port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock == -1) {
 #endif
-    perror("socket");
+    sock_perror("socket");
     exit_code = 1;
     return exit_code;
   }
@@ -35,7 +33,7 @@ int client(const char *path, const char *ip, uint16_t port) {
 #else
   if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 #endif
-    perror("connect");
+    sock_perror("connect");
     exit_code = 1;
     goto CLOSE_SOCK;
   }
@@ -43,7 +41,7 @@ int client(const char *path, const char *ip, uint16_t port) {
 
   const char *file_name;
   if (get_file_name(&path, &file_name) != 0) {
-    perror("get_file_name");
+    fprintf(stderr, "invalid file path\n");
     exit_code = 1;
     goto CLOSE_SOCK;
   }
@@ -57,7 +55,12 @@ int client(const char *path, const char *ip, uint16_t port) {
   uint16_t file_name_len = (uint16_t)len;
 
 
-  int in = open(path, O_RDONLY);
+  int in;
+#ifdef _WIN32
+  in = open(path, O_RDONLY | O_BINARY);
+#else
+  in = open(path, O_RDONLY);
+#endif
   if (in == -1) {
     perror("open");
     exit_code = 1;
@@ -72,7 +75,7 @@ int client(const char *path, const char *ip, uint16_t port) {
   
   size_t pos = sizeof(net_len) + file_name_len;
 
-  while (1) {
+  for (;;) {
     while (pos < CHUNK_SIZE) {
       ssize_t tmp = read(in, buf+pos, CHUNK_SIZE-pos);
       if (tmp < 0) {
@@ -86,7 +89,7 @@ int client(const char *path, const char *ip, uint16_t port) {
     if (pos > 0) {
       ssize_t sent = send_all(sock, buf, pos);
       if (sent != (ssize_t)pos) {
-        fprintf(stderr, "send failed\n");
+        sock_perror("send");
         exit_code = 1;
         break;
       }
@@ -98,17 +101,17 @@ SEND_LAST:
   if (pos > 0) {
     ssize_t sent = send_all(sock, buf, pos);
     if (sent != (ssize_t)pos) {
-      fprintf(stderr, "send failed\n");
+      sock_perror("send");
       exit_code = 1;
     }
   }
 
   
 CLOSE_FILE:
-  close(in);
+  fd_close(in);
 
 CLOSE_SOCK:
-  close(sock);
+  socket_close(sock);
 
   return exit_code;
 }
