@@ -1,32 +1,52 @@
 #ifndef HELPER_H
 #define HELPER_H
 
-#include <corecrt.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #ifdef _WIN32
   #include <winsock2.h>
   #include <ws2tcpip.h>
   #include <io.h>
+
+  #ifndef O_BINARY
+    #ifdef _O_BINARY
+      #define O_BINARY _O_BINARY
+    #else
+      #define O_BINARY 0
+    #endif
+  #endif
+
+  // ssize_t is POSIX; provide it on Windows toolchains that lack it.
+  #if defined(__MINGW32__) || defined(__MINGW64__)
+    #include <sys/types.h>
+  #else
+    #include <BaseTsd.h>
+    typedef SSIZE_T ssize_t;
+  #endif
+
   #define read _read
-  // #define write _write
+  #define write _write
   #define open _open
-  #define close _close
-  // #define SSIZE_T ssize_t
-  // #define SOCKET_TYPE SOCKET
-  
+
+  // Keep SOCKET and file descriptors separate on Windows.
+  static inline int socket_close(SOCKET s) { return closesocket(s); }
+  static inline int fd_close(int fd) { return _close(fd); }
+   
 #else
   #include <sys/socket.h>
   #include <netinet/in.h>
   #include <arpa/inet.h>
-  #include <errno.h>
   #include <unistd.h>
   #include <sys/types.h>
-  // #define SOCKET_TYPE int
+
+  static inline int socket_close(int s) { return close(s); }
+  static inline int fd_close(int fd) { return close(fd); }
 #endif
 
 #ifdef DEBUG
@@ -62,10 +82,6 @@ typedef struct {
 int client(const char *path, const char *ip, uint16_t port);
 int server(const char *path, uint16_t port);
 
-
-// ssize_t write_all(int fd, const void *buf, size_t len);
-// ssize_t read_all(int fd, void *buf, size_t len);
-
 ssize_t send_all(
 #ifdef _WIN32
   SOCKET sock,
@@ -74,6 +90,18 @@ ssize_t send_all(
 #endif
   const void *data, size_t len);
 
+ssize_t recv_all(
+#ifdef _WIN32
+  SOCKET sock,
+#else
+  int sock,
+#endif
+  void *buf, size_t len);
+
+ssize_t write_all(int fd, const void *buf, size_t len);
+
+void sock_perror(const char *msg);
+
 void usage(const char *argv0);
 int parse_port(const char *s, uint16_t *out);
 int need_value(int argc, char **argv, int *i, const char **out);
@@ -81,7 +109,3 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt);
 int get_file_name(const char **file_path, const char **file_name);
 
 #endif
-
-
-
-
