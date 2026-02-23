@@ -1,51 +1,126 @@
 #include "helper.h"
-#include <errno.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <unistd.h>
 
 
-ssize_t write_all(int fd, const void *buf, size_t len) {
-  const uint8_t *p = (const uint8_t *)buf;
-  size_t left = len;
-  
-  while (left > 0) {
-    ssize_t n = write(fd, p, left);
-    if (n > 0) {
-      p += (size_t)n;
-      left -= (size_t)n;
-      continue;
-    }
-    if (n == 0) return -1;
-    if (errno == EINTR) continue;
-    
-    return -1;
-  }
-  
-  return (ssize_t)len;
-}
 
-ssize_t read_all(int fd, void *buf, size_t len) {
-  uint8_t *p = (uint8_t *)buf;
-  size_t left = len;
-  
-  while (left > 0) {
-    ssize_t n = read(fd, p, left);
-    if (n > 0) {
-      p += (size_t)n;
-      left -= (size_t)n;
-      continue;
-    }
-    if (n == 0) {
-      errno = ECONNRESET;
+ssize_t send_all(
+#ifdef _WIN32
+  SOCKET sock,
+#else
+  int sock,
+#endif
+  const void *data, size_t len) {
+  size_t total = 0;
+  const char *p = data;
+
+#ifndef _WIN32
+  int flags = 0;
+  #ifdef MSG_NOSIGNAL
+    flags = MSG_NOSIGNAL;
+  #endif
+#endif
+
+  while (total < len) {
+#ifdef _WIN32
+    int n = send(sock, p+total, (int)(len-total), 0);
+    if (n == SOCKET_ERROR) {
+      int err = WSAGetLastError();
+      if (err == WSAEINTR) continue;
       return -1;
     }
-    if (errno == EINTR) continue;
-    return -1;
+#else
+    ssize_t n = send(sock, p+total, len-total, flags);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+#endif
+    if (n == 0) return (ssize_t)total;
+    total += (size_t)n;
   }
-
-  return (ssize_t)len;
+  
+  return (ssize_t)total;
 }
+
+ssize_t recv_all(
+#ifdef _WIN32
+  SOCKET sock,
+#else
+  int sock,
+#endif
+  void *buf, size_t len) {
+  uint8_t *p = (uint8_t *)buf;
+  size_t total = 0;
+
+  while (total < len) {
+#ifdef _WIN32
+    int n = recv(sock, (char *)p + total, (int)(len - total), 0);
+    if (n == SOCKET_ERROR) {
+      int err = WSAGetLastError();
+      if (err == WSAEINTR) continue;
+      return -1;
+    }
+#else
+    ssize_t n = recv(sock, p + total, len - total, 0);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+#endif
+    if (n == 0) return (ssize_t)total;
+    total += (size_t)n;
+  }
+  return (ssize_t)total;
+}
+
+ssize_t write_all(int fd, const void *buf, size_t len) {
+  const char *p = buf;
+  size_t total = 0;
+   
+  while (total < len) {
+#ifdef _WIN32
+    int n = write(fd, p+total, (unsigned)(len-total));
+    if (n == -1) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+#else
+    ssize_t n = write(fd, p+total, len-total);
+    if (n == -1) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+#endif
+    if (n == 0) return (ssize_t)total;
+    total += (size_t)n;
+  }
+  return (ssize_t)total;
+}
+
+void sock_perror(const char *msg) {
+#ifdef _WIN32
+  int err = WSAGetLastError();
+  char *sys = NULL;
+  DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                FORMAT_MESSAGE_IGNORE_INSERTS;
+  DWORD n = FormatMessageA(flags, NULL, (DWORD)err,
+                           MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                           (LPSTR)&sys, 0, NULL);
+  if (n != 0 && sys != NULL) {
+    while (n > 0 && (sys[n - 1] == '\r' || sys[n - 1] == '\n')) {
+      sys[n - 1] = '\0';
+      n--;
+    }
+    fprintf(stderr, "%s: %s (WSA=%d)\n", msg, sys, err);
+    LocalFree(sys);
+  } else {
+    fprintf(stderr, "%s: WSA error %d\n", msg, err);
+  }
+#else
+  perror(msg);
+#endif
+}
+
+
 
 void usage(const char *argv0) {
   fprintf(stderr,
@@ -182,4 +257,17 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   }
 
   return PARSE_OK;
+}
+
+int get_file_name(const char **file_path, const char **file_name) {
+  if (*file_path == NULL) return 1;
+  char *tmp;
+#ifdef _WIN32
+  tmp = strrchr(*file_path, '\\');
+#else
+  tmp = strrchr(*file_path, '/');
+#endif
+  if (tmp == NULL) *file_name = *file_path;
+  else *file_name = tmp + 1;
+  return *file_name ? 0 : 1;
 }

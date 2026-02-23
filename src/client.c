@@ -1,106 +1,117 @@
-#include <stdio.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include <time.h>
 #include "helper.h"
-#include "errno.h"
 
 
-
-int get_file_name(const char **file_path, const char **file_name) {
-  if (*file_path == NULL) return 1;
-  char *tmp = strrchr(*file_path, '/'); 
-  if (tmp == NULL) *file_name = *file_path;
-  else *file_name = tmp + 1;
-  return *file_name ? 0 : 1;
-}
 
 int client(const char *path, const char *ip, uint16_t port) {
+  int exit_code = 0;
+
+#ifdef _WIN32
+  SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock == INVALID_SOCKET) {
+#else
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock == -1) {
-    perror("socket");
-    return 1;
+#endif
+    sock_perror("socket");
+    exit_code = 1;
+    return exit_code;
   }
   
   struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
+
   if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
     perror("inet_pton");
+    exit_code = 1;
     goto CLOSE_SOCK;
   }
 
+#ifdef _WIN32
+  if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
+#else
   if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    perror("connect");
+#endif
+    sock_perror("connect");
+    exit_code = 1;
     goto CLOSE_SOCK;
   }
   
 
   const char *file_name;
   if (get_file_name(&path, &file_name) != 0) {
-    perror("get_file_name");
+    fprintf(stderr, "invalid file path\n");
+    exit_code = 1;
     goto CLOSE_SOCK;
   }
 
   size_t len = strlen(file_name);
   if (len > 255) {
     fprintf(stderr, "file name len > 255");
+    exit_code = 1;
     goto CLOSE_SOCK;
   }
   uint16_t file_name_len = (uint16_t)len;
 
-  
-  int in = open(path, O_RDONLY);
+
+  int in;
+#ifdef _WIN32
+  in = open(path, O_RDONLY | O_BINARY);
+#else
+  in = open(path, O_RDONLY);
+#endif
   if (in == -1) {
     perror("open");
+    exit_code = 1;
     goto CLOSE_SOCK;
   }
 
   char buf[CHUNK_SIZE];
-  size_t offset = 0;
   uint16_t net_len = htons(file_name_len);
-  memcpy(buf, &net_len, 2);
-  offset += 2;
-  memcpy(buf + offset, file_name, file_name_len);
-  offset += file_name_len;
+  
+  memcpy(buf, &net_len, sizeof(net_len));
+  memcpy(buf+sizeof(net_len), file_name, file_name_len);
+  
+  size_t pos = sizeof(net_len) + file_name_len;
 
-  
-  clock_t start = clock();
-  
-  write_all(sock, &net_len, 2);
-  write_all(sock, file_name, file_name_len);
-  
   for (;;) {
-    ssize_t n = read(in, buf, sizeof(buf));
-    if (n > 0) write_all(sock, buf, (size_t)n);
-    else if (n == 0) break;
-    else {
-      if (errno == EINTR) continue;
-      perror("read");
-      break;
+    while (pos < CHUNK_SIZE) {
+      ssize_t tmp = read(in, buf+pos, CHUNK_SIZE-pos);
+      if (tmp < 0) {
+        perror("read");
+        exit_code = 1;
+        goto CLOSE_FILE;
+      }
+      if (tmp == 0) goto SEND_LAST;
+      pos += (size_t)tmp;
+    }
+    if (pos > 0) {
+      ssize_t sent = send_all(sock, buf, pos);
+      if (sent != (ssize_t)pos) {
+        sock_perror("send");
+        exit_code = 1;
+        break;
+      }
+      pos = 0;
     }
   }
-  
-  clock_t end = clock();
-  double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
-  
-  printf("%lf\n", elapsed);
-  
-  
 
-  close(in);
+SEND_LAST:
+  if (pos > 0) {
+    ssize_t sent = send_all(sock, buf, pos);
+    if (sent != (ssize_t)pos) {
+      sock_perror("send");
+      exit_code = 1;
+    }
+  }
 
-  return 0;
+  
+CLOSE_FILE:
+  fd_close(in);
 
 CLOSE_SOCK:
-  close(sock);
-  return 1; 
-}
+  socket_close(sock);
 
+  return exit_code;
+}

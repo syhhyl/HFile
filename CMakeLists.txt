@@ -14,6 +14,11 @@ target_include_directories(hf PRIVATE
 )
 
 target_compile_options(hf PRIVATE -Wall -Wextra)
+
+if(WIN32)
+  target_link_libraries(hf PRIVATE ws2_32)
+endif()
+
 target_compile_definitions(hf PRIVATE
   $<$<CONFIG:Debug>:DEBUG>
 )

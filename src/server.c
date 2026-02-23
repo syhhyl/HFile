@@ -1,69 +1,92 @@
-#include <sys/socket.h>
-#include <stdio.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <stdbool.h>
-#include <string.h>
-#include <stdlib.h>
-#include "errno.h"
 #include "helper.h"
+#include <stdio.h>
 
 
 
 int server(const char *path, uint16_t port) {
-  if (path == NULL)
-    goto PATH_ERROR;
+  int exit_code = 0;
 
+  if (path == NULL || strlen(path) == 0) {
+    exit_code = 1;
+    goto PATH_ERROR;
+  }
+
+#ifdef _WIN32
+  SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock == INVALID_SOCKET) {
+#else
   int sock = socket(AF_INET, SOCK_STREAM, 0);  
   if (sock < 0) {
-    perror("socket");
-    return 1;
+#endif
+    sock_perror("socket");
+    exit_code = 1;
+    return exit_code;
   }
 
   int opt = 1;
+
+#ifdef _WIN32
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt)) == SOCKET_ERROR) {
+#else
   if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-    perror("setsockopt(SO_REUSEADDR)");
+#endif
+    sock_perror("setsockopt(SO_REUSEADDR)");
+    exit_code = 1;
     goto CLOSE_SOCK;
   }
   
   struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+#ifdef _WIN32
+  if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
+#else
   if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    perror("bind");
+#endif
+    sock_perror("bind");
+    exit_code = 1;
     goto CLOSE_SOCK;
   }
   
+#ifdef _WIN32
+  if (listen(sock, 1) == SOCKET_ERROR) {
+#else
   if (listen(sock, 1) == -1) {
-    perror("listen");
+#endif
+    sock_perror("listen");
+    exit_code = 1;
     goto CLOSE_SOCK;
   }
   
 
-  int conn_flag = true;
   printf("listening on %s port %u...\n", path, (unsigned)port);
 
+  int conn_flag = 1;
   while (conn_flag) {
+#ifdef _WIN32
+    SOCKET conn = accept(sock, NULL, NULL);
+    if (conn == INVALID_SOCKET) {
+      if (WSAGetLastError() == WSAEINTR) continue;
+#else
     int conn = accept(sock, NULL, NULL);
     if (conn < 0) {
-      if (errno == EINTR)
-        continue;
-      perror("accept");
+      if (errno == EINTR) continue;
+#endif
+      sock_perror("accept");
       continue;
     }
     printf("client connected\n");
   
 
-
-    char buf[CHUNK_SIZE];
     
-    //get file name len
     uint16_t file_len;
-    if (read_all(conn, &file_len, 2) != 2) {
-      perror("read(file_len)");
+    
+    if (recv_all(conn, &file_len, sizeof(file_len)) != sizeof(file_len)) {
+      sock_perror("recv_all(file_len)");
+      exit_code = 1;
       goto CLOSE_CONN;
     }
     
@@ -78,14 +101,17 @@ int server(const char *path, uint16_t port) {
     char *file_name = (char *)malloc((size_t)file_len + 1);
     if (file_name == NULL) {
       perror("malloc(file_name)");
+      exit_code = 1;
       goto CLOSE_CONN;
     }
     
-    if (read_all(conn, file_name, (size_t)file_len) != (ssize_t)file_len) {
-      perror("read(file_name)");
+    if (recv_all(conn, file_name, (size_t)file_len) != (ssize_t)file_len) {
+      sock_perror("recv_all(file_name)");
       free(file_name);
+      exit_code = 1;
       goto CLOSE_CONN;
     }
+
     file_name[file_len] = '\0';
 
     if (strchr(file_name, '/') != NULL || strchr(file_name, '\\') != NULL ||
@@ -95,61 +121,77 @@ int server(const char *path, uint16_t port) {
       goto CLOSE_CONN;
     }
 
-    int dirfd = open(path, O_RDONLY | O_DIRECTORY);
-    if (dirfd < 0) {
-      perror("open(output_dir)");
-      free(file_name);
-      close(conn);
-      goto CLOSE_SOCK;
-    }
+    char full_path[4096];
+#ifdef _WIN32
+    const char *sep = (path[strlen(path)-1] == '\\' || path[strlen(path)-1] == '/') ? "" : "\\";
+#else
+    const char *sep = (path[strlen(path)-1] == '/') ? "" : "/";
+#endif
+    snprintf(full_path, sizeof(full_path), "%s%s%s", path, sep, file_name);
+    free(file_name);
+    
 
-    int out = openat(dirfd, file_name, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    close(dirfd);
-    if (out < 0) {
+    int out;
+#ifdef _WIN32
+    out = open(full_path, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, 0644);
+#else
+    out = open(full_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+#endif
+    if (out == -1) {
       perror("open");
-      free(file_name);
+      exit_code = 1;
       goto CLOSE_CONN;
     }
 
+    char *buf = (char *)malloc(CHUNK_SIZE);
+    if (buf == NULL) {
+      perror("malloc(buf)");
+      exit_code = 1;
+      fd_close(out);
+      goto CLOSE_CONN;
+    }
 
-    //start send
-    clock_t start = clock(); 
     for (;;) {
-      ssize_t n = read(conn, buf, sizeof(buf));
-      if (n > 0) {
-        if (write_all(out, buf, (size_t)n) < 0) {
-          perror("write");
-          break;
-        }
-      } else if (n == 0) break;
-      else {
-        if (errno == EINTR) continue;
-        else {
-          perror("read");
-          break;
-        }
+      ssize_t n = 0;
+#ifdef _WIN32
+      int tmp = recv(conn, buf, (int)CHUNK_SIZE, 0);
+      if (tmp == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        if (err == WSAEINTR) continue;
+        sock_perror("recv");
+        exit_code = 1;
+        break;
+      }
+      n = (ssize_t)tmp;
+#else
+      n = recv(conn, buf, CHUNK_SIZE, 0);
+      if (n < 0) {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+        sock_perror("recv");
+        exit_code = 1;
+        break;
+      }
+#endif
+      if (n == 0) break;
+      ssize_t nw = write_all(out, buf, (size_t)n);
+      if (nw != (ssize_t)n) {
+        perror("write_all");
+        exit_code = 1;
+        break;
       }
     }
 
-    clock_t end = clock();
-    
-    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
-
-    size_t path_len = strlen(path);
-    const char *sep = (path_len > 0 && path[path_len - 1] == '/') ? "" : "/";
-    printf("write file: %s%s%s\t%lfs\n", path, sep, file_name, elapsed);
-
-    free(file_name);
-    close(out);
+    free(buf);
+    fd_close(out);
 
 CLOSE_CONN:
-    close(conn);
+    socket_close(conn);
   }
   
-PATH_ERROR:
-  return 0;
 
 CLOSE_SOCK:
-  close(sock);
-  return 1;
+  socket_close(sock);
+  
+PATH_ERROR:
+  return exit_code;
 }
