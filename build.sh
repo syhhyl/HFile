@@ -1,13 +1,30 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 set -e
 
 BUILD_TYPE=${BUILD_TYPE:-Debug}
 USE_WINDOWS=0
+DO_INSTALL=0
+
+need_value() {
+  if [ -z "${2:-}" ]; then
+    echo "Missing value for $1" >&2
+    usage >&2
+    exit 1
+  fi
+  printf '%s' "$2"
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
     -w|--windows)
       USE_WINDOWS=1
+      ;;
+    -i|--install)
+      DO_INSTALL=1
+      ;;
+    -t|--build-type)
+      BUILD_TYPE=$(need_value "$1" "${2:-}")
+      shift
       ;;
     -h|--help)
       echo "Usage: $0 [-w|--windows]"
@@ -61,4 +78,11 @@ fi
 
 cmake "${CMAKE_OPTS[@]}"
 cmake --build build
-cmake --install build
+
+if [ "$DO_INSTALL" = "1" ]; then
+  if [ "$USE_WINDOWS" != "1" ]; then
+    cmake --install build
+  else
+    echo "Windows skip install"
+  fi
+fi
