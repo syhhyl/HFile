@@ -15,7 +15,7 @@ target_include_directories(hf PRIVATE
 
 target_compile_options(hf PRIVATE -Wall -Wextra)
 
-if(WIN32)
+if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
   target_link_libraries(hf PRIVATE ws2_32)
 endif()
 
