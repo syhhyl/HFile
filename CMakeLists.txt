@@ -8,6 +8,7 @@ add_executable(hf
   src/client.c
   src/helper.c
   src/cli.c
+  src/net.c
 )
 
 target_include_directories(hf PRIVATE

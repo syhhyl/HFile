@@ -1,5 +1,6 @@
 #include "helper.h"
 #include "cli.h"
+#include "net.h"
 
 int main(int argc, char **argv) {
 
