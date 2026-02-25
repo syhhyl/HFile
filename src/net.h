@@ -1,6 +1,9 @@
-#include <stdio.h>
+#ifndef HF_NET_H
+#define HF_NET_H
+
+#include <stddef.h>
 #include <stdint.h>
-#include <errno.h>
+#include <fcntl.h>
 
 #ifdef _WIN32
   #include <winsock2.h>
@@ -61,5 +64,8 @@ ssize_t recv_all(
 #endif
   void *buf, size_t len);
 
+ssize_t write_all(int fd, const void *buf, size_t len);
 
 void sock_perror(const char *msg);
+
+#endif  // HF_NET_H

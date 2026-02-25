@@ -1,6 +1,8 @@
-#include "helper.h"
 #include "cli.h"
 #include "net.h"
+#include "server.h"
+#include "client.h"
+#include <stdio.h>
 
 int main(int argc, char **argv) {
 

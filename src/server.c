@@ -1,7 +1,6 @@
 #include "helper.h"
 #include "net.h"
-
-
+#include "server.h"
 
 int server(const char *path, uint16_t port) {
   int exit_code = 0;

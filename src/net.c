@@ -1,5 +1,8 @@
 #include "net.h"
 
+#include <errno.h>
+#include <stdio.h>
+
 
 ssize_t send_all(
 #ifdef _WIN32
@@ -61,6 +64,30 @@ ssize_t recv_all(
 #else
     ssize_t n = recv(sock, p + total, len - total, 0);
     if (n < 0) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+#endif
+    if (n == 0) return (ssize_t)total;
+    total += (size_t)n;
+  }
+  return (ssize_t)total;
+}
+
+ssize_t write_all(int fd, const void *buf, size_t len) {
+  const char *p = buf;
+  size_t total = 0;
+   
+  while (total < len) {
+#ifdef _WIN32
+    int n = write(fd, p+total, (unsigned)(len-total));
+    if (n == -1) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+#else
+    ssize_t n = write(fd, p+total, len-total);
+    if (n == -1) {
       if (errno == EINTR) continue;
       return -1;
     }

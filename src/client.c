@@ -1,6 +1,6 @@
 #include "helper.h"
 #include "net.h"
-
+#include "client.h"
 
 int client(const char *path, const char *ip, uint16_t port) {
   int exit_code = 0;
