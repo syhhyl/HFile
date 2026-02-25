@@ -56,6 +56,7 @@ int client(const char *path, const char *ip, uint16_t port) {
 
 
   int in;
+  char *buf = NULL;
 #ifdef _WIN32
   in = open(path, O_RDONLY | O_BINARY);
 #else
@@ -67,7 +68,13 @@ int client(const char *path, const char *ip, uint16_t port) {
     goto CLOSE_SOCK;
   }
 
-  char *buf = (char *)malloc(CHUNK_SIZE);
+  if (sizeof(uint16_t) + file_name_len > CHUNK_SIZE) {
+    fprintf(stderr, "file name too long for buffer\n");
+    exit_code = 1;
+    goto CLOSE_FILE;
+  }
+
+  buf = (char *)malloc(CHUNK_SIZE);
   if (buf == NULL) {
     perror("malloc(buf)");
     exit_code = 1;
@@ -83,7 +90,7 @@ int client(const char *path, const char *ip, uint16_t port) {
 
   for (;;) {
     while (pos < CHUNK_SIZE) {
-      ssize_t tmp = read(in, buf+pos, CHUNK_SIZE-pos);
+      ssize_t tmp = read(in, buf + pos, CHUNK_SIZE - pos);
       if (tmp < 0) {
         perror("read");
         exit_code = 1;
@@ -97,7 +104,7 @@ int client(const char *path, const char *ip, uint16_t port) {
       if (sent != (ssize_t)pos) {
         sock_perror("send");
         exit_code = 1;
-        break;
+        goto CLOSE_FILE;
       }
       pos = 0;
     }
@@ -112,10 +119,10 @@ SEND_LAST:
     }
   }
   
-  free(buf);
-
-  
 CLOSE_FILE:
+  if (buf != NULL) {
+    free(buf);
+  }
   fd_close(in);
 
 CLOSE_SOCK:
