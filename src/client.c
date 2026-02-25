@@ -67,7 +67,13 @@ int client(const char *path, const char *ip, uint16_t port) {
     goto CLOSE_SOCK;
   }
 
-  char buf[CHUNK_SIZE];
+  char *buf = (char *)malloc(CHUNK_SIZE);
+  if (buf == NULL) {
+    perror("malloc(buf)");
+    exit_code = 1;
+    goto CLOSE_FILE;
+  }
+
   uint16_t net_len = htons(file_name_len);
   
   memcpy(buf, &net_len, sizeof(net_len));
@@ -105,6 +111,8 @@ SEND_LAST:
       exit_code = 1;
     }
   }
+  
+  free(buf);
 
   
 CLOSE_FILE:
