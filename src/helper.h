@@ -58,26 +58,6 @@
 
 #define CHUNK_SIZE 1024 * 1024
 
-typedef enum {
-  server_mode,
-  client_mode,
-  init_mode
-} Mode;
-
-
-typedef enum {
-  PARSE_OK,
-  PARSE_HELP,
-  PARSE_ERR
-} parse_result_t;
-
-typedef struct {
-  Mode mode;
-  const char *path;
-  const char *ip;
-  uint16_t port;
-} Opt;
-
 
 int client(const char *path, const char *ip, uint16_t port);
 int server(const char *path, uint16_t port);
@@ -102,10 +82,6 @@ ssize_t write_all(int fd, const void *buf, size_t len);
 
 void sock_perror(const char *msg);
 
-void usage(const char *argv0);
-int parse_port(const char *s, uint16_t *out);
-int need_value(int argc, char **argv, int *i, const char **out);
-parse_result_t parse_args(int argc, char **argv, Opt *opt);
 int get_file_name(const char **file_path, const char **file_name);
 
 #endif

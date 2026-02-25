@@ -7,6 +7,7 @@ add_executable(hf
   src/server.c
   src/client.c
   src/helper.c
+  src/cli.c
 )
 
 target_include_directories(hf PRIVATE
