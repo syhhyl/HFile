@@ -146,8 +146,7 @@ int server(const char *path, uint16_t port) {
     if (buf == NULL) {
       perror("malloc(buf)");
       exit_code = 1;
-      fd_close(out);
-      goto CLOSE_CONN;
+      goto CLOSE_FILE;
     }
 
     for (;;) {
@@ -181,6 +180,8 @@ int server(const char *path, uint16_t port) {
     }
 
     free(buf);
+
+CLOSE_FILE:
     fd_close(out);
 
 CLOSE_CONN:
