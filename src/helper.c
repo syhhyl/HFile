@@ -1,4 +1,5 @@
 #include "helper.h"
+#include <string.h>
 
 int get_file_name(const char **file_path, const char **file_name) {
   if (*file_path == NULL) return 1;

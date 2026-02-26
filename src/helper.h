@@ -1,9 +1,6 @@
 #ifndef HELPER_H
 #define HELPER_H
 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 
 #ifdef DEBUG
 #define DBG(fmt, ...) \
