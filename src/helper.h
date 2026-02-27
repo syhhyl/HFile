@@ -14,4 +14,6 @@
 
 int get_file_name(const char **file_path, const char **file_name);
 
-#endif
+double now_sec();
+
+#endif //HELPER_H

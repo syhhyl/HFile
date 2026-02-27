@@ -1,6 +1,13 @@
 #include "helper.h"
 #include <string.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <time.h>
+#endif
+
+
 int get_file_name(const char **file_path, const char **file_name) {
   if (*file_path == NULL) return 1;
   char *tmp;
@@ -12,4 +19,18 @@ int get_file_name(const char **file_path, const char **file_name) {
   if (tmp == NULL) *file_name = *file_path;
   else *file_name = tmp + 1;
   return *file_name ? 0 : 1;
+}
+
+double now_sec() {
+#ifdef _WIN32
+  static LARGE_INTEGER freq = {0};
+  LARGE_INTEGER t;
+  if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+  QueryPerformanceCounter(&t);
+  return (double)t.QuadPart / (double)freq.QuadPart;
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+#endif
 }
