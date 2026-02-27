@@ -1,6 +1,7 @@
 #include "helper.h"
 #include "net.h"
 #include "client.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -93,10 +94,19 @@ int client(const char *path, const char *ip, uint16_t port) {
   memcpy(buf+sizeof(net_len), file_name, file_name_len);
   
   size_t pos = sizeof(net_len) + file_name_len;
+  
+  //time test
+  double t_read = 0.0;
+  double t_send = 0.0;
+  size_t bytes_read = 0;
+  size_t bytes_sent = 0;
 
   for (;;) {
     while (pos < CHUNK_SIZE) {
+      double t0 = now_sec();
       ssize_t tmp = read(in, buf + pos, CHUNK_SIZE - pos);
+      t_read += now_sec() - t0;
+      
       if (tmp < 0) {
         perror("read");
         exit_code = 1;
@@ -104,27 +114,38 @@ int client(const char *path, const char *ip, uint16_t port) {
       }
       if (tmp == 0) goto SEND_LAST;
       pos += (size_t)tmp;
+      bytes_read += (size_t)tmp;
     }
     if (pos > 0) {
+      double t0 = now_sec();
       ssize_t sent = send_all(sock, buf, pos);
+      t_send += now_sec() - t0;
       if (sent != (ssize_t)pos) {
         sock_perror("send");
         exit_code = 1;
         goto CLOSE_FILE;
       }
+      bytes_sent += (size_t)sent;
       pos = 0;
     }
   }
 
 SEND_LAST:
   if (pos > 0) {
+    double t0 = now_sec();
     ssize_t sent = send_all(sock, buf, pos);
+    t_send += now_sec() - t0;
     if (sent != (ssize_t)pos) {
       sock_perror("send");
       exit_code = 1;
-    }
+    } else bytes_sent += (size_t)sent; 
   }
-  
+
+  fprintf(stderr,
+      "[timing] read: %.6fs (%.2f MiB/s), send: %.6fs (%.2f MiB/s)\n",
+      t_read, t_read > 0 ? (bytes_read / (1024.0*1024.0)) / t_read : 0.0,
+      t_send, t_send > 0 ? (bytes_sent / (1024.0*1024.0)) / t_send : 0.0);   
+
 CLOSE_FILE:
   if (buf != NULL) {
     free(buf);
@@ -133,6 +154,8 @@ CLOSE_FILE:
 
 CLOSE_SOCK:
   socket_close(sock);
+
+
 
   return exit_code;
 }
