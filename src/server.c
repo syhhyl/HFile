@@ -1,4 +1,3 @@
-#include "helper.h"
 #include "net.h"
 #include "server.h"
 #include <string.h>
@@ -6,7 +5,9 @@
 #include <stdio.h>
 #include "fs.h"
 #include <fcntl.h>
+#include "helper.h"
 
+#include <errno.h>
 #ifdef _WIN32
   #include <process.h>
 #else
