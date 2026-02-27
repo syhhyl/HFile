@@ -1,6 +1,17 @@
 #include "helper.h"
 #include "net.h"
 #include "server.h"
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "fs.h"
+#include <fcntl.h>
+
+#ifdef _WIN32
+  #include <process.h>
+#else
+  #include <unistd.h>
+#endif
 
 int server(const char *path, uint16_t port) {
   int exit_code = 0;
@@ -126,28 +137,59 @@ int server(const char *path, uint16_t port) {
 #else
     const char *sep = (path[strlen(path)-1] == '/') ? "" : "/";
 #endif
-    snprintf(full_path, sizeof(full_path), "%s%s%s", path, sep, file_name);
+    int full_n = snprintf(full_path, sizeof(full_path), "%s%s%s", path, sep, file_name);
     free(file_name);
-    
 
-    int out;
-#ifdef _WIN32
-    out = open(full_path, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, 0644);
-#else
-    out = open(full_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-#endif
-    if (out == -1) {
-      perror("open");
+    if (full_n < 0 || (size_t)full_n >= sizeof(full_path)) {
+      fprintf(stderr, "output path too long\n");
       exit_code = 1;
       goto CLOSE_CONN;
     }
 
+    char tmp_path[4096];
+    tmp_path[0] = '\0';
+
+    int out = -1;
+    for (int attempt = 0; attempt < 16; attempt++) {
+#ifdef _WIN32
+      int pid = _getpid();
+#else
+      int pid = (int)getpid();
+#endif
+      int tmp_n = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%d.%d", full_path, pid, attempt);
+      if (tmp_n < 0 || (size_t)tmp_n >= sizeof(tmp_path)) {
+        fprintf(stderr, "temp path too long\n");
+        exit_code = 1;
+        goto CLOSE_CONN;
+      }
+
+#ifdef _WIN32
+      out = open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL | O_BINARY, 0644);
+#else
+      out = open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL, 0644);
+#endif
+      if (out != -1) break;
+      if (errno == EEXIST) continue;
+      perror("open(temp)");
+      exit_code = 1;
+      goto CLOSE_CONN;
+    }
+
+    if (out == -1) {
+      fprintf(stderr, "failed to create temp file\n");
+      exit_code = 1;
+      goto CLOSE_CONN;
+    }
+    
+
+    int ok = 1;
     char *buf = (char *)malloc(CHUNK_SIZE);
     if (buf == NULL) {
       perror("malloc(buf)");
       exit_code = 1;
       goto CLOSE_FILE;
     }
+
 
     for (;;) {
       ssize_t n = 0;
@@ -158,6 +200,7 @@ int server(const char *path, uint16_t port) {
         if (err == WSAEINTR) continue;
         sock_perror("recv");
         exit_code = 1;
+        ok = 0;
         break;
       }
       n = (ssize_t)tmp;
@@ -167,6 +210,7 @@ int server(const char *path, uint16_t port) {
         if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
         sock_perror("recv");
         exit_code = 1;
+        ok = 0;
         break;
       }
 #endif
@@ -175,6 +219,7 @@ int server(const char *path, uint16_t port) {
       if (nw != (ssize_t)n) {
         perror("write_all");
         exit_code = 1;
+        ok = 0;
         break;
       }
     }
@@ -183,6 +228,26 @@ int server(const char *path, uint16_t port) {
 
 CLOSE_FILE:
     fd_close(out);
+
+    if (ok) {
+#ifdef _WIN32
+      if (!MoveFileExA(tmp_path, full_path,
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DWORD err = GetLastError();
+        fprintf(stderr, "MoveFileExA failed (err=%lu)\n", (unsigned long)err);
+        (void)remove(tmp_path);
+        exit_code = 1;
+      }
+#else
+      if (rename(tmp_path, full_path) != 0) {
+        perror("rename");
+        (void)remove(tmp_path);
+        exit_code = 1;
+      }
+#endif
+    } else {
+      (void)remove(tmp_path);
+    }
 
 CLOSE_CONN:
     socket_close(conn);

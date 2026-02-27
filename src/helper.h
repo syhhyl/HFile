@@ -10,7 +10,7 @@
 #endif
 
 
-
+#define CHUNK_SIZE 1024 * 1024
 
 int get_file_name(const char **file_path, const char **file_name);
 

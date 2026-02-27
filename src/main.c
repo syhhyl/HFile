@@ -2,34 +2,23 @@
 #include "net.h"
 #include "server.h"
 #include "client.h"
-#include <stdio.h>
 
 int main(int argc, char **argv) {
-
-#ifdef _WIN32
-  WSADATA wsa;
-  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-    fprintf(stderr, "WSAStartup failed\n");
-    return 1;
-  }
-#endif
+  
+  net_init();
 
   Opt opt;
   parse_result_t res = parse_args(argc, argv, &opt);
 
   if (res == PARSE_HELP) {
     usage(argv[0]);
-#ifdef _WIN32
-    WSACleanup();
-#endif
+    net_cleanup();
     return 0;
   }
 
   if (res != PARSE_OK) {
     usage(argv[0]);
-#ifdef _WIN32
-    WSACleanup();
-#endif
+    net_cleanup();
     return 1;
   }
 
@@ -40,8 +29,6 @@ int main(int argc, char **argv) {
     ret = client(opt.path, opt.ip, opt.port);
   } else usage(argv[0]);
 
-#ifdef _WIN32
-  WSACleanup();
-#endif
+  net_cleanup();
   return ret;
 }

@@ -2,7 +2,25 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <unistd.h>
 
+
+int net_init() {
+#ifdef _WIN32
+  WSADATA wsa;
+  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+    fprintf(stderr, "WSAStartup failed\n");
+    return 1;
+  }
+#endif
+  return 0;
+}
+
+void net_cleanup() {
+#ifdef _WIN32
+  WSACleanup();
+#endif
+}
 
 ssize_t send_all(
 #ifdef _WIN32
@@ -119,5 +137,13 @@ void sock_perror(const char *msg) {
   }
 #else
   perror(msg);
+#endif
+}
+
+int socket_close(socket_t s) {
+#ifdef _WIN32
+  return closesocket(s);
+#else
+  return close(s);
 #endif
 }
