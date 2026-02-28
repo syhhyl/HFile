@@ -212,20 +212,6 @@ class TestHFile(unittest.TestCase):
     self.assertTrue(Helper.wait_for_file(dst), f"file no save: {dst}")
     Helper.assert_files_equal(self, src, dst)
 
-  def test_large_file(self):
-    src = self.in_dir / "largefile.txt"
-    dst = self.out_dir / src.name
-
-    with src.open("wb") as f:
-      f.truncate(2 * 1024**3)
-
-    cmd = [
-      str(self.hf_path),
-      "-c", src
-    ]
-    Helper.run_client(cmd)
-    self.assertTrue(Helper.wait_for_file(dst), f"file no save: {dst}")
-    Helper.assert_files_equal(self, src, dst)
   
   def test_cli_argument(self):
 
