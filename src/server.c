@@ -224,7 +224,10 @@ int server(const char *path, uint16_t port) {
       }
       t_recv += now_sec() - t0;
 #endif
-      if (n == 0) break;
+      if (n == 0) {
+        ok = 1;
+        break;
+      }
       bytes_recv += (size_t)n;
 
       double t1 = now_sec(); 
