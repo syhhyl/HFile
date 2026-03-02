@@ -75,6 +75,7 @@ int server(const char *path, uint16_t port) {
   
 
   printf("listening on %s port %u...\n", path, (unsigned)port);
+  fflush(stdout);
 
   int conn_flag = 1;
   while (conn_flag) {
