@@ -4,30 +4,41 @@ import sys
 import unittest
 from pathlib import Path
 
-TEST_FILES = [
-  "test_cli",
-  # 后续加文件就追加在这里，比如：
-  # "test_transfer.py",
-  # "test_protocol.py",
+TEST_MODULES = [
+    "test.test_cli",
+    "test.test_transfer",
+    # 后续加模块就追加在这里，比如：
+    # "test.test_protocol",
 ]
 
 
+def run_all() -> int:
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    loader = unittest.TestLoader()
+    runner = unittest.TextTestRunner(verbosity=2)
+
+    for mod_name in TEST_MODULES:
+        suite = loader.loadTestsFromName(mod_name)
+        result = runner.run(suite)
+        if not result.wasSuccessful():
+            return 1
+
+    return 0
 
 
-def Test_All() -> int:
+def load_tests(loader: unittest.TestLoader, tests, pattern):
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
 
-  loader = unittest.TestLoader()
-  runner = unittest.TextTestRunner(verbosity=2)
-
-  for filename in TEST_FILES:
-    suite = loader.loadTestsFromName(filename)
-    result = runner.run(suite)
-    if not result.wasSuccessful():
-      return 1
-
-  return 0
+    suite = unittest.TestSuite()
+    for mod_name in TEST_MODULES:
+        suite.addTests(loader.loadTestsFromName(mod_name))
+    return suite
 
 
 if __name__ == "__main__":
-  raise SystemExit(Test_All())
-  
+    raise SystemExit(run_all())

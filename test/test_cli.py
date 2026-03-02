@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from util_hf import resolve_hf_path, run_hf
+from test.util_hf import resolve_hf_path, run_hf
 
 
 class TestCLI(unittest.TestCase):

@@ -8,7 +8,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 
 def resolve_hf_path() -> Path:
@@ -168,6 +168,7 @@ def assert_files_equal(
             sha256_file(src), sha256_file(dst), "content mismatch (sha256)"
         )
 
+
 def make_temp_dir(prefix: str = "hf_test_") -> tempfile.TemporaryDirectory[str]:
     return tempfile.TemporaryDirectory(prefix=prefix)
 
@@ -176,7 +177,7 @@ class HFileServer:
     """Manage an hf server process.
 
     The server is started with stdout/stderr redirected to a log file. Readiness
-    is determined by the TCP port accepting connections.
+    is determined by waiting for the "listening on ..." server log line.
     """
 
     def __init__(
@@ -229,6 +230,7 @@ class HFileServer:
 
     def wait_ready(self, *, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout
+        needle = "listening on "
         last_err: Exception | None = None
 
         while time.monotonic() < deadline:
@@ -238,15 +240,15 @@ class HFileServer:
                     f"hf server exited early (rc={self._proc.returncode}). log tail:\n{tail}"
                 )
 
+            if self.log_path is not None:
+                log_text = tail_text_file(self.log_path)
+                if needle in log_text:
+                    return
+
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
                 s.settimeout(0.2)
                 s.connect((self.host, self.port))
-                # Close immediately; this is only a readiness probe.
-                try:
-                    s.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
                 return
             except OSError as e:
                 last_err = e
@@ -261,7 +263,8 @@ class HFileServer:
         tail = tail_text_file(self.log_path or Path(""))
         raise TimeoutError(
             f"hf server not ready after {timeout:.1f}s on {self.host}:{self.port}. "
-            f"last_error={last_err!r}. log tail:\n{tail}"
+            f"expected log line containing {needle!r}; last_error={last_err!r}. "
+            f"log tail:\n{tail}"
         )
 
     def stop(self, *, timeout: float = 3.0) -> None:
@@ -293,6 +296,3 @@ class HFileServer:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.stop()
-
-
-
