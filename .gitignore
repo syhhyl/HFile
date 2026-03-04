@@ -4,6 +4,4 @@ build*/
 .ruff_cache/
 .build_platform
 test/__pycache__/
-test/HFileTest_OUT/
-test/HFileTest_IN/largefile.txt
 AGENTS.md
