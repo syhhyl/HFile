@@ -7,8 +7,6 @@ from pathlib import Path
 TEST_MODULES = [
     "test.test_cli",
     "test.test_transfer",
-    # 后续加模块就追加在这里，比如：
-    # "test.test_protocol",
 ]
 
 
