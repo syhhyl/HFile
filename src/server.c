@@ -193,15 +193,9 @@ int server(const char *path, uint16_t port) {
       goto CLOSE_FILE;
     }
 
-    //time test
-    double t_recv = 0.0;
-    double t_write = 0.0;
-    size_t bytes_recv = 0;
-    size_t bytes_write = 0;
 
     for (;;) {
       ssize_t n = 0;
-      double t0 = now_sec();
 #ifdef _WIN32
       int tmp = recv(conn, buf, (int)CHUNK_SIZE, 0);
       if (tmp == SOCKET_ERROR) {
@@ -213,7 +207,6 @@ int server(const char *path, uint16_t port) {
         break;
       }
       n = (ssize_t)tmp;
-      t_recv += now_sec() - t0;
 #else
       n = recv(conn, buf, CHUNK_SIZE, 0);
       if (n < 0) {
@@ -223,32 +216,22 @@ int server(const char *path, uint16_t port) {
         ok = 0;
         break;
       }
-      t_recv += now_sec() - t0;
 #endif
       if (n == 0) {
         ok = 1;
         break;
       }
-      bytes_recv += (size_t)n;
 
-      double t1 = now_sec(); 
       ssize_t nw = write_all(out, buf, (size_t)n);
-      t_write += now_sec() - t1;
       if (nw != (ssize_t)n) {
         perror("write_all");
         exit_code = 1;
         ok = 0;
         break;
       }
-      bytes_write += (size_t)nw;
     }
 
     free(buf);
-  
-    fprintf(stderr,
-      "[timing] recv: %.6fs (%.2f MiB/s), write: %.6fs (%.2f MiB/s)\n",
-      t_recv, t_recv > 0 ? (bytes_recv / (1024.0*1024.0)) / t_recv : 0.0,
-      t_write, t_write > 0 ? (bytes_write / (1024.0*1024.0)) / t_write : 0.0);   
 
 CLOSE_FILE:
     fd_close(out);
