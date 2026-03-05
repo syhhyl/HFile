@@ -2,12 +2,13 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 
 void usage(const char *argv0) {
   fprintf(stderr,
           "usage:\n"
-          "  %s -s <server_path> [-p <port>]\n"
-          "  %s -c <file_path> [-i <ip>] [-p <port>]\n",
+          "  %s -s <server_path> [-p <port>] [--perf]\n"
+          "  %s -c <file_path> [-i <ip>] [-p <port>] [--perf]\n",
           argv0, argv0);
 }
 
@@ -36,10 +37,24 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->path = NULL;
   opt->ip = "127.0.0.1";
   opt->port = 9000;
+  opt->perf = 0;
 
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
-    if (a == NULL || a[0] != '-' || a[1] == '\0' || a[2] != '\0') {
+    if (a == NULL || a[0] != '-' || a[1] == '\0') {
+      fprintf(stderr, "invalid argument\n");
+      return PARSE_ERR;
+    }
+
+    if (a[1] == '-') {
+      if (strcmp(a, "--perf") == 0) {
+        opt->perf = 1;
+        continue;
+      }
+      return PARSE_ERR;
+    }
+
+    if (a[2] != '\0') {
       fprintf(stderr, "invalid argument\n");
       return PARSE_ERR;
     }

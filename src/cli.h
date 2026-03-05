@@ -20,6 +20,7 @@ typedef struct {
   const char *path;
   const char *ip;
   uint16_t port;
+  int perf;
 } Opt;
 
 void usage(const char *argv0);
