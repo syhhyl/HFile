@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <inttypes.h>
 #include "fs.h"
 #include <fcntl.h>
 #include "helper.h"
@@ -15,9 +16,9 @@
   #include <unistd.h>
 #endif
 
-int server(const char *path, uint16_t port) {
+
+int server(const char *path, uint16_t port, int perf) {
   int exit_code = 0;
-  uint8_t ack = 1;
 
   if (path == NULL || strlen(path) == 0) {
     exit_code = 1;
@@ -94,14 +95,25 @@ int server(const char *path, uint16_t port) {
     }
     printf("client connected\n");
 
+    uint8_t ack = 1;
+    uint64_t perf_conn_start_ns = now_ns();
+    uint64_t perf_io_ns = 0;
+    uint64_t perf_net_ns = 0;
+    uint64_t perf_file_bytes = 0;
+    uint64_t perf_wire_bytes = 0;
+    uint64_t t_ack_start = 0;
+
 
     uint16_t file_len;
-    
+
+    uint64_t t_recv_len_start = now_ns();
     if (recv_all(conn, &file_len, sizeof(file_len)) != sizeof(file_len)) {
+      perf_net_ns += now_ns() - t_recv_len_start;
       sock_perror("recv_all(file_len)");
       exit_code = 1;
       goto CLOSE_CONN;
     }
+    perf_net_ns += now_ns() - t_recv_len_start;
     
     file_len = ntohs(file_len);
     
@@ -118,13 +130,16 @@ int server(const char *path, uint16_t port) {
       exit_code = 1;
       goto CLOSE_CONN;
     }
-    
+
+    uint64_t t_recv_name_start = now_ns();
     if (recv_all(conn, file_name, (size_t)file_len) != (ssize_t)file_len) {
+      perf_net_ns += now_ns() - t_recv_name_start;
       sock_perror("recv_all(file_name)");
       free(file_name);
       exit_code = 1;
       goto CLOSE_CONN;
     }
+    perf_net_ns += now_ns() - t_recv_name_start;
 
     file_name[file_len] = '\0';
 
@@ -135,15 +150,21 @@ int server(const char *path, uint16_t port) {
       exit_code = 1;
       goto CLOSE_CONN;
     }
-    
+
     uint8_t szbuf[8];
+    uint64_t t_recv_size_start = now_ns();
     if (recv_all(conn, szbuf, sizeof(szbuf)) != sizeof(szbuf)) {
+      perf_net_ns += now_ns() - t_recv_size_start;
       sock_perror("recv_all(file_content_size)");
       exit_code = 1;
       free(file_name);
       goto CLOSE_CONN;
     }
+    perf_net_ns += now_ns() - t_recv_size_start;
     uint64_t content_size = decode_u64_be(szbuf);
+    perf_file_bytes = content_size;
+    perf_wire_bytes = (uint64_t)sizeof(uint16_t) + (uint64_t)file_len +
+                      (uint64_t)sizeof(uint64_t) + content_size;
 
     char full_path[4096];
 #ifdef _WIN32
@@ -178,10 +199,13 @@ int server(const char *path, uint16_t port) {
       }
 
 #ifdef _WIN32
+      uint64_t t_open_start = now_ns();
       out = open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL | O_BINARY, 0644);
 #else
+      uint64_t t_open_start = now_ns();
       out = open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL, 0644);
 #endif
+      perf_io_ns += now_ns() - t_open_start;
       if (out != -1) break;
       if (errno == EEXIST) continue;
       perror("open(temp)");
@@ -212,8 +236,10 @@ int server(const char *path, uint16_t port) {
       if (remaining < (uint64_t)want) want = (size_t)remaining;
 
 #ifdef _WIN32
+      uint64_t t_recv_chunk_start = now_ns();
       int tmp = recv(conn, buf, (int)want, 0);
       if (tmp == SOCKET_ERROR) {
+        perf_net_ns += now_ns() - t_recv_chunk_start;
         int err = WSAGetLastError();
         if (err == WSAEINTR) continue;
         sock_perror("recv");
@@ -221,16 +247,20 @@ int server(const char *path, uint16_t port) {
         ok = 0;
         break;
       }
+      perf_net_ns += now_ns() - t_recv_chunk_start;
       n = (ssize_t)tmp;
 #else
+      uint64_t t_recv_chunk_start = now_ns();
       n = recv(conn, buf, want, 0);
       if (n < 0) {
+        perf_net_ns += now_ns() - t_recv_chunk_start;
         if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
         sock_perror("recv");
         exit_code = 1;
         ok = 0;
         break;
       }
+      perf_net_ns += now_ns() - t_recv_chunk_start;
 #endif
       if (n == 0) {
         fprintf(stderr, "unexpected EOF while receiving file\n");
@@ -239,7 +269,9 @@ int server(const char *path, uint16_t port) {
         break;
       }
 
+      uint64_t t_write_start = now_ns();
       ssize_t nw = write_all(out, buf, (size_t)n);
+      perf_io_ns += now_ns() - t_write_start;
       if (nw != (ssize_t)n) {
         perror("write_all");
         exit_code = 1;
@@ -260,21 +292,27 @@ CLOSE_FILE:
 
     if (ok) {
 #ifdef _WIN32
+      uint64_t t_rename_start = now_ns();
       if (!MoveFileExA(tmp_path, full_path,
                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        perf_io_ns += now_ns() - t_rename_start;
         DWORD err = GetLastError();
         fprintf(stderr, "MoveFileExA failed (err=%lu)\n", (unsigned long)err);
         (void)remove(tmp_path);
         exit_code = 1;
       } else {
+        perf_io_ns += now_ns() - t_rename_start;
         ack = 0;
       }
 #else
+      uint64_t t_rename_start = now_ns();
       if (rename(tmp_path, full_path) != 0) {
+        perf_io_ns += now_ns() - t_rename_start;
         perror("rename");
         (void)remove(tmp_path);
         exit_code = 1;
       } else {
+        perf_io_ns += now_ns() - t_rename_start;
         ack = 0;
       }
 #endif
@@ -283,10 +321,26 @@ CLOSE_FILE:
     }
 
 CLOSE_CONN:
-    if (send_all(conn, &ack, sizeof(ack)) != (ssize_t)sizeof(ack)) {
+    t_ack_start = now_ns();
+    ssize_t ack_sent = send_all(conn, &ack, sizeof(ack));
+    perf_net_ns += now_ns() - t_ack_start;
+    if (ack_sent != (ssize_t)sizeof(ack)) {
       sock_perror("send_all(ack)");
     }
-     
+
+    if (perf) {
+      uint64_t perf_total_ns = now_ns() - perf_conn_start_ns;
+      fprintf(stderr,
+              "perf mode=server ok=%d total_s=%.6f io_s=%.6f net_s=%.6f "
+              "file_bytes=%" PRIu64 " wire_bytes=%" PRIu64 "\n",
+              ack == 0 ? 1 : 0,
+              ns_to_s(perf_total_ns),
+              ns_to_s(perf_io_ns),
+              ns_to_s(perf_net_ns),
+              perf_file_bytes,
+              perf_wire_bytes);
+    }
+      
     socket_close(conn);
   }
   

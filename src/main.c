@@ -24,9 +24,9 @@ int main(int argc, char **argv) {
 
   int ret = 1;
   if (opt.mode == server_mode) {
-    ret = server(opt.path, opt.port);
+    ret = server(opt.path, opt.port, opt.perf);
   } else if (opt.mode == client_mode) {
-    ret = client(opt.path, opt.ip, opt.port);
+    ret = client(opt.path, opt.ip, opt.port, opt.perf);
   } else usage(argv[0]);
 
   net_cleanup();

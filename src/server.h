@@ -3,6 +3,6 @@
 
 #include <stdint.h>
 
-int server(const char *path, uint16_t port);
+int server(const char *path, uint16_t port, int perf);
 
 #endif  // HF_SERVER_H

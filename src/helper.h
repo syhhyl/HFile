@@ -1,6 +1,8 @@
 #ifndef HELPER_H
 #define HELPER_H
 
+#include <stdint.h>
+
 
 #ifdef DEBUG
 #define DBG(fmt, ...) \
@@ -14,6 +16,7 @@
 
 int get_file_name(const char **file_path, const char **file_name);
 
-double now_sec();
+uint64_t now_ns();
+double ns_to_s(uint64_t ns);
 
 #endif //HELPER_H

@@ -3,6 +3,6 @@
 
 #include <stdint.h>
 
-int client(const char *path, const char *ip, uint16_t port);
+int client(const char *path, const char *ip, uint16_t port, int perf);
 
 #endif  // HF_CLIENT_H
