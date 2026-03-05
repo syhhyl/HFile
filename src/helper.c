@@ -35,3 +35,7 @@ uint64_t now_ns() {
   return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 #endif
 }
+
+double ns_to_s(uint64_t ns) {
+  return (double)ns * 1e-9;
+}

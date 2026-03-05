@@ -17,5 +17,6 @@
 int get_file_name(const char **file_path, const char **file_name);
 
 uint64_t now_ns();
+double ns_to_s(uint64_t ns);
 
 #endif //HELPER_H

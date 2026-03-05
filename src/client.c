@@ -5,13 +5,20 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <inttypes.h>
 #include <fcntl.h>
 #include "fs.h"
 #include <unistd.h>
 #include <sys/stat.h>
 
-int client(const char *path, const char *ip, uint16_t port) {
+
+int client(const char *path, const char *ip, uint16_t port, int perf) {
   int exit_code = 0;
+  uint64_t perf_start_ns = now_ns();
+  uint64_t perf_io_ns = 0;
+  uint64_t perf_net_ns = 0;
+  uint64_t perf_file_bytes = 0;
+  uint64_t perf_wire_bytes = 0;
 
 #ifdef _WIN32
   SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -22,6 +29,13 @@ int client(const char *path, const char *ip, uint16_t port) {
 #endif
     sock_perror("socket");
     exit_code = 1;
+    if (perf) {
+      uint64_t perf_total_ns = now_ns() - perf_start_ns;
+      fprintf(stderr,
+              "perf mode=client ok=0 total_s=%.6f io_s=0.000000 net_s=0.000000 "
+              "file_bytes=0 wire_bytes=0 throughput_mib_s=0.000\n",
+              ns_to_s(perf_total_ns));
+    }
     return exit_code;
   }
   
@@ -37,14 +51,19 @@ int client(const char *path, const char *ip, uint16_t port) {
   }
 
 #ifdef _WIN32
+  uint64_t t_connect_start = now_ns();
   if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
+    perf_net_ns += now_ns() - t_connect_start;
 #else
+  uint64_t t_connect_start = now_ns();
   if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    perf_net_ns += now_ns() - t_connect_start;
 #endif
     sock_perror("connect");
     exit_code = 1;
     goto CLOSE_SOCK;
   }
+  perf_net_ns += now_ns() - t_connect_start;
   
 
   const char *file_name;
@@ -56,7 +75,7 @@ int client(const char *path, const char *ip, uint16_t port) {
 
   size_t len = strlen(file_name);
   if (len > 255) {
-    fprintf(stderr, "file name len > 255");
+    fprintf(stderr, "file name len > 255\n");
     exit_code = 1;
     goto CLOSE_SOCK;
   }
@@ -66,10 +85,13 @@ int client(const char *path, const char *ip, uint16_t port) {
   int in;
   char *buf = NULL;
 #ifdef _WIN32
+  uint64_t t_open_start = now_ns();
   in = open(path, O_RDONLY | O_BINARY);
 #else
+  uint64_t t_open_start = now_ns();
   in = open(path, O_RDONLY);
 #endif
+  perf_io_ns += now_ns() - t_open_start;
   if (in == -1) {
     perror("open");
     exit_code = 1;
@@ -92,16 +114,20 @@ int client(const char *path, const char *ip, uint16_t port) {
   uint64_t content_size = 0;
 #ifdef _WIN32
   struct _stat64 st;
+  uint64_t t_stat_start = now_ns();
   if (_fstat64(in, &st) != 0) {
     perror("_fstat64");
 #else
   struct stat st;
+  uint64_t t_stat_start = now_ns();
   if (fstat(in, &st) != 0) {
     perror("fstat");
 #endif
+    perf_io_ns += now_ns() - t_stat_start;
     exit_code = 1;
     goto CLOSE_FILE;
   }
+  perf_io_ns += now_ns() - t_stat_start;
   if (st.st_size < 0) {
     fprintf(stderr, "invalid file size\n");
     exit_code = 1;
@@ -109,6 +135,9 @@ int client(const char *path, const char *ip, uint16_t port) {
   }
 
   content_size = (uint64_t)st.st_size;
+  perf_file_bytes = content_size;
+  perf_wire_bytes = (uint64_t)sizeof(uint16_t) + (uint64_t)file_name_len +
+                    (uint64_t)sizeof(uint64_t) + content_size;
   uint8_t szbuf[8];
   encode_u64_be(content_size, szbuf);
 
@@ -128,7 +157,9 @@ int client(const char *path, const char *ip, uint16_t port) {
         want = (size_t)remaining;
       }
 
+      uint64_t t_read_start = now_ns();
       ssize_t tmp = read(in, buf + pos, want);
+      perf_io_ns += now_ns() - t_read_start;
       if (tmp < 0) {
         perror("read");
         exit_code = 1;
@@ -144,7 +175,9 @@ int client(const char *path, const char *ip, uint16_t port) {
     }
 
     if (pos > 0) {
+      uint64_t t_send_start = now_ns();
       ssize_t sent = send_all(sock, buf, pos);
+      perf_net_ns += now_ns() - t_send_start;
       if (sent != (ssize_t)pos) {
         sock_perror("send");
         exit_code = 1;
@@ -167,11 +200,14 @@ int client(const char *path, const char *ip, uint16_t port) {
 #endif
 
   uint8_t ack = 1;
+  uint64_t t_ack_start = now_ns();
   if (recv_all(sock, &ack, sizeof(ack)) != (ssize_t)sizeof(ack)) {
+    perf_net_ns += now_ns() - t_ack_start;
     sock_perror("recv_all(ack)");
     exit_code = 1;
     goto CLOSE_FILE;
   }
+  perf_net_ns += now_ns() - t_ack_start;
   if (ack != 0) {
     fprintf(stderr, "server returned error ack: %u\n", (unsigned)ack);
     exit_code = 1;
@@ -187,6 +223,25 @@ CLOSE_FILE:
 
 CLOSE_SOCK:
   socket_close(sock);
+
+  if (perf) {
+    uint64_t perf_total_ns = now_ns() - perf_start_ns;
+    double total_s = ns_to_s(perf_total_ns);
+    double throughput_mib_s = 0.0;
+    if (total_s > 0.0) {
+      throughput_mib_s = ((double)perf_file_bytes / (1024.0 * 1024.0)) / total_s;
+    }
+    fprintf(stderr,
+            "perf mode=client ok=%d total_s=%.6f io_s=%.6f net_s=%.6f "
+            "file_bytes=%" PRIu64 " wire_bytes=%" PRIu64 " throughput_mib_s=%.3f\n",
+            exit_code == 0 ? 1 : 0,
+            total_s,
+            ns_to_s(perf_io_ns),
+            ns_to_s(perf_net_ns),
+            perf_file_bytes,
+            perf_wire_bytes,
+            throughput_mib_s);
+  }
 
 
 
