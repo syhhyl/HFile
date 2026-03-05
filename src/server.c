@@ -17,6 +17,7 @@
 
 int server(const char *path, uint16_t port) {
   int exit_code = 0;
+  uint8_t ack = 1;
 
   if (path == NULL || strlen(path) == 0) {
     exit_code = 1;
@@ -92,9 +93,8 @@ int server(const char *path, uint16_t port) {
       continue;
     }
     printf("client connected\n");
-  
 
-    
+
     uint16_t file_len;
     
     if (recv_all(conn, &file_len, sizeof(file_len)) != sizeof(file_len)) {
@@ -108,6 +108,7 @@ int server(const char *path, uint16_t port) {
     
     if (file_len == 0 || file_len > 255) {
       fprintf(stderr, "invalid file name length: %u\n", (unsigned)file_len);
+      exit_code = 1;
       goto CLOSE_CONN;
     }
 
@@ -131,8 +132,18 @@ int server(const char *path, uint16_t port) {
         strstr(file_name, "..") != NULL) {
       fprintf(stderr, "invalid file name: %s\n", file_name);
       free(file_name);
+      exit_code = 1;
       goto CLOSE_CONN;
     }
+    
+    uint8_t szbuf[8];
+    if (recv_all(conn, szbuf, sizeof(szbuf)) != sizeof(szbuf)) {
+      sock_perror("recv_all(file_content_size)");
+      exit_code = 1;
+      free(file_name);
+      goto CLOSE_CONN;
+    }
+    uint64_t content_size = decode_u64_be(szbuf);
 
     char full_path[4096];
 #ifdef _WIN32
@@ -193,11 +204,15 @@ int server(const char *path, uint16_t port) {
       goto CLOSE_FILE;
     }
 
+    uint64_t remaining = content_size;
 
-    for (;;) {
+    while (remaining > 0) {
       ssize_t n = 0;
+      size_t want = CHUNK_SIZE;
+      if (remaining < (uint64_t)want) want = (size_t)remaining;
+
 #ifdef _WIN32
-      int tmp = recv(conn, buf, (int)CHUNK_SIZE, 0);
+      int tmp = recv(conn, buf, (int)want, 0);
       if (tmp == SOCKET_ERROR) {
         int err = WSAGetLastError();
         if (err == WSAEINTR) continue;
@@ -208,7 +223,7 @@ int server(const char *path, uint16_t port) {
       }
       n = (ssize_t)tmp;
 #else
-      n = recv(conn, buf, CHUNK_SIZE, 0);
+      n = recv(conn, buf, want, 0);
       if (n < 0) {
         if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
         sock_perror("recv");
@@ -218,7 +233,9 @@ int server(const char *path, uint16_t port) {
       }
 #endif
       if (n == 0) {
-        ok = 1;
+        fprintf(stderr, "unexpected EOF while receiving file\n");
+        exit_code = 1;
+        ok = 0;
         break;
       }
 
@@ -229,12 +246,17 @@ int server(const char *path, uint16_t port) {
         ok = 0;
         break;
       }
+      remaining -= (uint64_t)n;
+    }
+    if (remaining == 0) {
+      ok = 1;
     }
 
     free(buf);
 
 CLOSE_FILE:
     fd_close(out);
+
 
     if (ok) {
 #ifdef _WIN32
@@ -244,12 +266,16 @@ CLOSE_FILE:
         fprintf(stderr, "MoveFileExA failed (err=%lu)\n", (unsigned long)err);
         (void)remove(tmp_path);
         exit_code = 1;
+      } else {
+        ack = 0;
       }
 #else
       if (rename(tmp_path, full_path) != 0) {
         perror("rename");
         (void)remove(tmp_path);
         exit_code = 1;
+      } else {
+        ack = 0;
       }
 #endif
     } else {
@@ -257,6 +283,10 @@ CLOSE_FILE:
     }
 
 CLOSE_CONN:
+    if (send_all(conn, &ack, sizeof(ack)) != (ssize_t)sizeof(ack)) {
+      sock_perror("send_all(ack)");
+    }
+     
     socket_close(conn);
   }
   
