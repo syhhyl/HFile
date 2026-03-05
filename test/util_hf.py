@@ -14,28 +14,15 @@ from typing import Sequence
 def resolve_hf_path() -> Path:
     """Resolve the hf binary path.
 
-    Resolution order:
-      1) $HF_BIN
-      2) $HOME/.local/bin/hf
-      3) build/hf (repo-local)
+       build/hf (repo-local)
     """
-
-    env_bin = os.environ.get("HF_BIN")
-    if env_bin:
-        p = Path(env_bin)
-        if p.exists():
-            return p
-
-    home_bin = Path.home() / ".local" / "bin" / "hf"
-    if home_bin.exists():
-        return home_bin
 
     build_bin = Path("build") / "hf"
     if build_bin.exists():
         return build_bin
 
     raise FileNotFoundError(
-        "hf binary not found. Build with ./build.sh or set HF_BIN=/path/to/hf"
+        "hf binary not found. Build with ./build.sh"
     )
 
 
