@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include "fs.h"
 #include <unistd.h>
+#include <sys/stat.h>
 
 int client(const char *path, const char *ip, uint16_t port) {
   int exit_code = 0;
@@ -75,7 +76,7 @@ int client(const char *path, const char *ip, uint16_t port) {
     goto CLOSE_SOCK;
   }
 
-  if (sizeof(uint16_t) + file_name_len > CHUNK_SIZE) {
+  if (sizeof(uint16_t) + file_name_len + sizeof(uint64_t)> CHUNK_SIZE) {
     fprintf(stderr, "file name too long for buffer\n");
     exit_code = 1;
     goto CLOSE_FILE;
@@ -86,27 +87,62 @@ int client(const char *path, const char *ip, uint16_t port) {
     perror("malloc(buf)");
     exit_code = 1;
     goto CLOSE_FILE;
+  } 
+
+  uint64_t content_size = 0;
+#ifdef _WIN32
+  struct _stat64 st;
+  if (_fstat64(in, &st) != 0) {
+    perror("_fstat64");
+#else
+  struct stat st;
+  if (fstat(in, &st) != 0) {
+    perror("fstat");
+#endif
+    exit_code = 1;
+    goto CLOSE_FILE;
   }
+  if (st.st_size < 0) {
+    fprintf(stderr, "invalid file size\n");
+    exit_code = 1;
+    goto CLOSE_FILE;
+  }
+
+  content_size = (uint64_t)st.st_size;
+  uint8_t szbuf[8];
+  encode_u64_be(content_size, szbuf);
 
   uint16_t net_len = htons(file_name_len);
   
   memcpy(buf, &net_len, sizeof(net_len));
   memcpy(buf+sizeof(net_len), file_name, file_name_len);
+  memcpy(buf+sizeof(net_len)+file_name_len, szbuf, sizeof(szbuf));
   
-  size_t pos = sizeof(net_len) + file_name_len;
+  size_t pos = sizeof(net_len) + file_name_len + sizeof(szbuf);
+  uint64_t remaining = content_size;
   
   for (;;) {
-    while (pos < CHUNK_SIZE) {
-      ssize_t tmp = read(in, buf + pos, CHUNK_SIZE - pos);
-      
+    while (pos < CHUNK_SIZE && remaining > 0) {
+      size_t want = CHUNK_SIZE - pos;
+      if ((uint64_t)want > remaining) {
+        want = (size_t)remaining;
+      }
+
+      ssize_t tmp = read(in, buf + pos, want);
       if (tmp < 0) {
         perror("read");
         exit_code = 1;
         goto CLOSE_FILE;
       }
-      if (tmp == 0) goto SEND_LAST;
+      if (tmp == 0) {
+        fprintf(stderr, "source file truncated while reading\n");
+        exit_code = 1;
+        goto CLOSE_FILE;
+      }
       pos += (size_t)tmp;
+      remaining -= (uint64_t)tmp;
     }
+
     if (pos > 0) {
       ssize_t sent = send_all(sock, buf, pos);
       if (sent != (ssize_t)pos) {
@@ -116,17 +152,9 @@ int client(const char *path, const char *ip, uint16_t port) {
       }
       pos = 0;
     }
+    
+    if (remaining == 0) break;
   }
-
-SEND_LAST:
-  if (pos > 0) {
-    ssize_t sent = send_all(sock, buf, pos);
-    if (sent != (ssize_t)pos) {
-      sock_perror("send");
-      exit_code = 1;
-    }
-  }
-
   
 
 CLOSE_FILE:
