@@ -21,16 +21,17 @@ int get_file_name(const char **file_path, const char **file_name) {
   return *file_name ? 0 : 1;
 }
 
-double now_sec() {
+uint64_t now_ns() {
 #ifdef _WIN32
   static LARGE_INTEGER freq = {0};
   LARGE_INTEGER t;
   if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
   QueryPerformanceCounter(&t);
-  return (double)t.QuadPart / (double)freq.QuadPart;
+  return (uint64_t)(((long double)t.QuadPart * 1000000000.0L) /
+                    (long double)freq.QuadPart);
 #else
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+  return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 #endif
 }
