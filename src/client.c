@@ -155,7 +155,29 @@ int client(const char *path, const char *ip, uint16_t port) {
     
     if (remaining == 0) break;
   }
-  
+
+#ifdef _WIN32
+  if (shutdown(sock, SD_SEND) == SOCKET_ERROR) {
+    sock_perror("shutdown(SD_SEND)");
+  }
+#else
+  if (shutdown(sock, SHUT_WR) < 0) {
+    sock_perror("shutdown(SHUT_WR)");
+  }
+#endif
+
+  uint8_t ack = 1;
+  if (recv_all(sock, &ack, sizeof(ack)) != (ssize_t)sizeof(ack)) {
+    sock_perror("recv_all(ack)");
+    exit_code = 1;
+    goto CLOSE_FILE;
+  }
+  if (ack != 0) {
+    fprintf(stderr, "server returned error ack: %u\n", (unsigned)ack);
+    exit_code = 1;
+    goto CLOSE_FILE;
+  }
+   
 
 CLOSE_FILE:
   if (buf != NULL) {
