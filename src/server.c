@@ -134,16 +134,6 @@ int server(const char *path, uint16_t port) {
       goto CLOSE_CONN;
     }
 
-    uint8_t szbuf[8];
-    if (recv_all(conn, szbuf, sizeof(szbuf)) != sizeof(szbuf)) {
-      sock_perror("recv_all(file_content_size)");
-      exit_code = 1;
-      goto CLOSE_CONN;
-    }
-    uint64_t content_size = decode_u64_be(szbuf);
-
-
-
     char full_path[4096];
 #ifdef _WIN32
     const char *sep = (path[strlen(path)-1] == '\\' || path[strlen(path)-1] == '/') ? "" : "\\";
@@ -158,7 +148,6 @@ int server(const char *path, uint16_t port) {
       exit_code = 1;
       goto CLOSE_CONN;
     }
-    
 
     char tmp_path[4096];
     tmp_path[0] = '\0';
@@ -196,7 +185,7 @@ int server(const char *path, uint16_t port) {
     }
     
 
-    int ok = 1;
+    int ok = 0;
     char *buf = (char *)malloc(CHUNK_SIZE);
     if (buf == NULL) {
       perror("malloc(buf)");
@@ -205,18 +194,10 @@ int server(const char *path, uint16_t port) {
     }
 
 
-    
-    uint64_t remaining = content_size;
-
-    while (remaining > 0) {
+    for (;;) {
       ssize_t n = 0;
-      size_t want = CHUNK_SIZE;
-      if (remaining < (uint64_t)want) {
-        want = (size_t)remaining;
-      }
-
 #ifdef _WIN32
-      int tmp = recv(conn, buf, (int)want, 0);
+      int tmp = recv(conn, buf, (int)CHUNK_SIZE, 0);
       if (tmp == SOCKET_ERROR) {
         int err = WSAGetLastError();
         if (err == WSAEINTR) continue;
@@ -227,7 +208,7 @@ int server(const char *path, uint16_t port) {
       }
       n = (ssize_t)tmp;
 #else
-      n = recv(conn, buf, want, 0);
+      n = recv(conn, buf, CHUNK_SIZE, 0);
       if (n < 0) {
         if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
         sock_perror("recv");
@@ -237,9 +218,7 @@ int server(const char *path, uint16_t port) {
       }
 #endif
       if (n == 0) {
-        fprintf(stderr, "unexpected EOF while receiving file\n");
-        exit_code = 1;
-        ok = 0;
+        ok = 1;
         break;
       }
 
@@ -250,10 +229,7 @@ int server(const char *path, uint16_t port) {
         ok = 0;
         break;
       }
-      remaining -= (uint64_t)n;
     }
-
-    if (remaining != 0) ok = 0;
 
     free(buf);
 
