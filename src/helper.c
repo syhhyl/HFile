@@ -1,5 +1,7 @@
 #include "helper.h"
 #include <string.h>
+#include <stdio.h>
+#include <inttypes.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -38,4 +40,15 @@ uint64_t now_ns() {
 
 double ns_to_s(uint64_t ns) {
   return (double)ns * 1e-9;
+}
+
+void report_transfer_perf(
+    const char *mode, int ok, double total_s,
+    double io_s, double net_s, uint64_t file_bytes,
+    uint64_t wire_bytes) {
+
+  fprintf(stderr,
+    "perf mode=%s ok=%d total=%.4fs io=%.4fs net=%.4fs "
+    "file_bytes=%" PRIu64 "B wire_bytes=%" PRIu64 "B\n", 
+    mode, ok, total_s, io_s, net_s, file_bytes, wire_bytes);
 }
