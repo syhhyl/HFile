@@ -31,10 +31,15 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
     exit_code = 1;
     if (perf) {
       uint64_t perf_total_ns = now_ns() - perf_start_ns;
-      fprintf(stderr,
-              "perf mode=client ok=0 total_s=%.6f io_s=0.000000 net_s=0.000000 "
-              "file_bytes=0 wire_bytes=0 throughput_mib_s=0.000\n",
-              ns_to_s(perf_total_ns));
+      report_transfer_perf(
+        "client",
+        0,
+        ns_to_s(perf_total_ns),
+        0,
+        0,
+        0,
+        0
+        );
     }
     return exit_code;
   }
@@ -227,20 +232,15 @@ CLOSE_SOCK:
   if (perf) {
     uint64_t perf_total_ns = now_ns() - perf_start_ns;
     double total_s = ns_to_s(perf_total_ns);
-    double throughput_mib_s = 0.0;
-    if (total_s > 0.0) {
-      throughput_mib_s = ((double)perf_file_bytes / (1024.0 * 1024.0)) / total_s;
-    }
-    fprintf(stderr,
-            "perf mode=client ok=%d total_s=%.6f io_s=%.6f net_s=%.6f "
-            "file_bytes=%" PRIu64 " wire_bytes=%" PRIu64 " throughput_mib_s=%.3f\n",
-            exit_code == 0 ? 1 : 0,
-            total_s,
-            ns_to_s(perf_io_ns),
-            ns_to_s(perf_net_ns),
-            perf_file_bytes,
-            perf_wire_bytes,
-            throughput_mib_s);
+    report_transfer_perf(
+      "client",
+      exit_code == 0 ? 1 : 0,
+      total_s,
+      ns_to_s(perf_io_ns),
+      ns_to_s(perf_net_ns),
+      perf_file_bytes,
+      perf_wire_bytes);
+
   }
 
 

@@ -330,17 +330,15 @@ CLOSE_CONN:
 
     if (perf) {
       uint64_t perf_total_ns = now_ns() - perf_conn_start_ns;
-      fprintf(stderr,
-              "perf mode=server ok=%d total_s=%.6f io_s=%.6f net_s=%.6f "
-              "file_bytes=%" PRIu64 " wire_bytes=%" PRIu64 "\n",
-              ack == 0 ? 1 : 0,
-              ns_to_s(perf_total_ns),
-              ns_to_s(perf_io_ns),
-              ns_to_s(perf_net_ns),
-              perf_file_bytes,
-              perf_wire_bytes);
+      report_transfer_perf(
+        "server",
+        ack == 0 ? 1 : 0, 
+        ns_to_s(perf_total_ns),
+        ns_to_s(perf_io_ns), 
+        ns_to_s(perf_net_ns), 
+        perf_file_bytes, 
+        perf_wire_bytes);
     }
-      
     socket_close(conn);
   }
   
