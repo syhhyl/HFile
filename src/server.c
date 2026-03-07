@@ -8,6 +8,7 @@
 #include "fs.h"
 #include <fcntl.h>
 #include "helper.h"
+#include "save.h"
 
 #include <errno.h>
 #ifdef _WIN32
@@ -143,8 +144,7 @@ int server(const char *path, uint16_t port, int perf) {
 
     file_name[file_len] = '\0';
 
-    if (strchr(file_name, '/') != NULL || strchr(file_name, '\\') != NULL ||
-        strstr(file_name, "..") != NULL) {
+    if (save_validate_file_name(file_name) != 0) {
       fprintf(stderr, "invalid file name: %s\n", file_name);
       free(file_name);
       exit_code = 1;
@@ -167,12 +167,12 @@ int server(const char *path, uint16_t port, int perf) {
                       (uint64_t)sizeof(uint64_t) + content_size;
 
     char full_path[4096];
-#ifdef _WIN32
-    const char *sep = (path[strlen(path)-1] == '\\' || path[strlen(path)-1] == '/') ? "" : "\\";
-#else
-    const char *sep = (path[strlen(path)-1] == '/') ? "" : "/";
-#endif
-    int full_n = snprintf(full_path, sizeof(full_path), "%s%s%s", path, sep, file_name);
+    int full_n = 0;
+    if (save_join_path(full_path, sizeof(full_path), path, file_name) != 0) {
+      full_n = -1;
+    } else {
+      full_n = (int)strlen(full_path);
+    }
     free(file_name);
 
     if (full_n < 0 || (size_t)full_n >= sizeof(full_path)) {
@@ -185,26 +185,20 @@ int server(const char *path, uint16_t port, int perf) {
     tmp_path[0] = '\0';
 
     int out = -1;
-    for (int attempt = 0; attempt < 16; attempt++) {
 #ifdef _WIN32
-      int pid = _getpid();
+    int pid = _getpid();
 #else
-      int pid = (int)getpid();
+    int pid = (int)getpid();
 #endif
-      int tmp_n = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%d.%d", full_path, pid, attempt);
-      if (tmp_n < 0 || (size_t)tmp_n >= sizeof(tmp_path)) {
+    for (int attempt = 0; attempt < 16; attempt++) {
+      if (save_make_temp_path(tmp_path, sizeof(tmp_path), full_path, pid, attempt) != 0) {
         fprintf(stderr, "temp path too long\n");
         exit_code = 1;
         goto CLOSE_CONN;
       }
 
-#ifdef _WIN32
       uint64_t t_open_start = now_ns();
-      out = hf_open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL | O_BINARY, 0644);
-#else
-      uint64_t t_open_start = now_ns();
-      out = hf_open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL, 0644);
-#endif
+      out = save_open_temp_file(tmp_path);
       perf_io_ns += now_ns() - t_open_start;
       if (out != -1) break;
       if (errno == EEXIST) continue;
@@ -291,33 +285,23 @@ CLOSE_FILE:
 
 
     if (ok) {
+      unsigned long win_err = 0;
+      uint64_t t_rename_start = now_ns();
+      if (save_finalize_temp_file(tmp_path, full_path, &win_err) != 0) {
+        perf_io_ns += now_ns() - t_rename_start;
 #ifdef _WIN32
-      uint64_t t_rename_start = now_ns();
-      if (!MoveFileExA(tmp_path, full_path,
-                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        perf_io_ns += now_ns() - t_rename_start;
-        DWORD err = GetLastError();
-        fprintf(stderr, "MoveFileExA failed (err=%lu)\n", (unsigned long)err);
-        (void)remove(tmp_path);
-        exit_code = 1;
-      } else {
-        perf_io_ns += now_ns() - t_rename_start;
-        ack = 0;
-      }
+        fprintf(stderr, "MoveFileExA failed (err=%lu)\n", (unsigned long)win_err);
 #else
-      uint64_t t_rename_start = now_ns();
-      if (rename(tmp_path, full_path) != 0) {
-        perf_io_ns += now_ns() - t_rename_start;
         perror("rename");
-        (void)remove(tmp_path);
+#endif
+        save_remove_quiet(tmp_path);
         exit_code = 1;
       } else {
         perf_io_ns += now_ns() - t_rename_start;
         ack = 0;
       }
-#endif
     } else {
-      (void)remove(tmp_path);
+      save_remove_quiet(tmp_path);
     }
 
 CLOSE_CONN:
