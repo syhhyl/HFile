@@ -1,4 +1,5 @@
 #include "net.h"
+#include "protocol.h"
 #include "server.h"
 #include <stddef.h>
 #include <string.h>
@@ -105,44 +106,29 @@ int server(const char *path, uint16_t port, int perf) {
     uint64_t t_ack_start = 0;
 
 
-    uint16_t file_len;
+    char *file_name = NULL;
+    uint64_t content_size = 0;
+    uint16_t file_len = 0;
 
-    uint64_t t_recv_len_start = now_ns();
-    if (recv_all(conn, &file_len, sizeof(file_len)) != sizeof(file_len)) {
-      perf_net_ns += now_ns() - t_recv_len_start;
-      sock_perror("recv_all(file_len)");
-      exit_code = 1;
-      goto CLOSE_CONN;
-    }
-    perf_net_ns += now_ns() - t_recv_len_start;
-    
-    file_len = ntohs(file_len);
-    
-    
-    if (file_len == 0 || file_len > 255) {
-      fprintf(stderr, "invalid file name length: %u\n", (unsigned)file_len);
-      exit_code = 1;
-      goto CLOSE_CONN;
-    }
-
-    char *file_name = (char *)malloc((size_t)file_len + 1);
-    if (file_name == NULL) {
-      perror("malloc(file_name)");
+    uint64_t t_recv_header_start = now_ns();
+    protocol_result_t header_res =
+      protocol_recv_header(conn, &file_name, &content_size);
+    perf_net_ns += now_ns() - t_recv_header_start;
+    if (header_res != PROTOCOL_OK) {
+      if (header_res == PROTOCOL_ERR_FILE_NAME_LEN) {
+        fprintf(stderr, "invalid file name length\n");
+      } else if (header_res == PROTOCOL_ERR_ALLOC) {
+        perror("malloc(file_name)");
+      } else if (header_res == PROTOCOL_ERR_EOF) {
+        fprintf(stderr, "unexpected EOF while receiving header\n");
+      } else {
+        sock_perror("protocol_recv_header");
+      }
       exit_code = 1;
       goto CLOSE_CONN;
     }
 
-    uint64_t t_recv_name_start = now_ns();
-    if (recv_all(conn, file_name, (size_t)file_len) != (ssize_t)file_len) {
-      perf_net_ns += now_ns() - t_recv_name_start;
-      sock_perror("recv_all(file_name)");
-      free(file_name);
-      exit_code = 1;
-      goto CLOSE_CONN;
-    }
-    perf_net_ns += now_ns() - t_recv_name_start;
-
-    file_name[file_len] = '\0';
+    file_len = (uint16_t)strlen(file_name);
 
     if (save_validate_file_name(file_name) != 0) {
       fprintf(stderr, "invalid file name: %s\n", file_name);
@@ -150,18 +136,6 @@ int server(const char *path, uint16_t port, int perf) {
       exit_code = 1;
       goto CLOSE_CONN;
     }
-
-    uint8_t szbuf[8];
-    uint64_t t_recv_size_start = now_ns();
-    if (recv_all(conn, szbuf, sizeof(szbuf)) != sizeof(szbuf)) {
-      perf_net_ns += now_ns() - t_recv_size_start;
-      sock_perror("recv_all(file_content_size)");
-      exit_code = 1;
-      free(file_name);
-      goto CLOSE_CONN;
-    }
-    perf_net_ns += now_ns() - t_recv_size_start;
-    uint64_t content_size = decode_u64_be(szbuf);
     perf_file_bytes = content_size;
     perf_wire_bytes = (uint64_t)sizeof(uint16_t) + (uint64_t)file_len +
                       (uint64_t)sizeof(uint64_t) + content_size;
@@ -224,6 +198,7 @@ int server(const char *path, uint16_t port, int perf) {
 
     uint64_t remaining = content_size;
 
+    //recv loop
     while (remaining > 0) {
       ssize_t n = 0;
       size_t want = CHUNK_SIZE;

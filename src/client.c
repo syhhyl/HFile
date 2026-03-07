@@ -1,5 +1,6 @@
 #include "helper.h"
 #include "net.h"
+#include "protocol.h"
 #include "client.h"
 #include <stddef.h>
 #include <stdio.h>
@@ -78,13 +79,12 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
     goto CLOSE_SOCK;
   }
 
-  size_t len = strlen(file_name);
-  if (len > 255) {
+  uint16_t file_name_len = 0;
+  if (protocol_get_file_name_len(file_name, &file_name_len) != 0) {
     fprintf(stderr, "file name len > 255\n");
     exit_code = 1;
     goto CLOSE_SOCK;
   }
-  uint16_t file_name_len = (uint16_t)len;
 
 
   int in;
@@ -103,7 +103,7 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
     goto CLOSE_SOCK;
   }
 
-  if (sizeof(uint16_t) + file_name_len + sizeof(uint64_t)> CHUNK_SIZE) {
+  if (protocol_header_size(file_name_len) > CHUNK_SIZE) {
     fprintf(stderr, "file name too long for buffer\n");
     exit_code = 1;
     goto CLOSE_FILE;
@@ -141,20 +141,27 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
 
   content_size = (uint64_t)st.st_size;
   perf_file_bytes = content_size;
-  perf_wire_bytes = (uint64_t)sizeof(uint16_t) + (uint64_t)file_name_len +
-                    (uint64_t)sizeof(uint64_t) + content_size;
-  uint8_t szbuf[8];
-  encode_u64_be(content_size, szbuf);
+  perf_wire_bytes = (uint64_t)protocol_header_size(file_name_len) +
+                    content_size;
 
-  uint16_t net_len = htons(file_name_len);
-  
-  memcpy(buf, &net_len, sizeof(net_len));
-  memcpy(buf+sizeof(net_len), file_name, file_name_len);
-  memcpy(buf+sizeof(net_len)+file_name_len, szbuf, sizeof(szbuf));
-  
-  size_t pos = sizeof(net_len) + file_name_len + sizeof(szbuf);
+  uint64_t t_header_start = now_ns();
+  protocol_result_t header_res =
+    protocol_send_header(sock, file_name, content_size);
+  perf_net_ns += now_ns() - t_header_start;
+  if (header_res != PROTOCOL_OK) {
+    if (header_res == PROTOCOL_ERR_FILE_NAME_LEN) {
+      fprintf(stderr, "file name len > 255\n");
+    } else {
+      sock_perror("protocol_send_header");
+    }
+    exit_code = 1;
+    goto CLOSE_FILE;
+  }
+
+  size_t pos = 0;
   uint64_t remaining = content_size;
   
+  //send loop
   for (;;) {
     while (pos < CHUNK_SIZE && remaining > 0) {
       size_t want = CHUNK_SIZE - pos;
