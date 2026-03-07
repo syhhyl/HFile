@@ -91,10 +91,10 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
   char *buf = NULL;
 #ifdef _WIN32
   uint64_t t_open_start = now_ns();
-  in = open(path, O_RDONLY | O_BINARY);
+  in = hf_open(path, O_RDONLY | O_BINARY, 0);
 #else
   uint64_t t_open_start = now_ns();
-  in = open(path, O_RDONLY);
+  in = hf_open(path, O_RDONLY, 0);
 #endif
   perf_io_ns += now_ns() - t_open_start;
   if (in == -1) {
@@ -163,7 +163,7 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
       }
 
       uint64_t t_read_start = now_ns();
-      ssize_t tmp = read(in, buf + pos, want);
+      ssize_t tmp = hf_read(in, buf + pos, want);
       perf_io_ns += now_ns() - t_read_start;
       if (tmp < 0) {
         perror("read");
@@ -224,7 +224,7 @@ CLOSE_FILE:
   if (buf != NULL) {
     free(buf);
   }
-  fd_close(in);
+  hf_close(in);
 
 CLOSE_SOCK:
   socket_close(sock);

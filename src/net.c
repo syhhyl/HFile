@@ -1,8 +1,12 @@
 #include "net.h"
+#include "fs.h"
 
 #include <errno.h>
 #include <stdio.h>
-#include <unistd.h>
+
+#ifndef _WIN32
+  #include <unistd.h>
+#endif
 
 
 int net_init() {
@@ -97,19 +101,11 @@ ssize_t write_all(int fd, const void *buf, size_t len) {
   size_t total = 0;
    
   while (total < len) {
-#ifdef _WIN32
-    int n = write(fd, p+total, (unsigned)(len-total));
+    ssize_t n = hf_write(fd, p+total, len-total);
     if (n == -1) {
       if (errno == EINTR) continue;
       return -1;
     }
-#else
-    ssize_t n = write(fd, p+total, len-total);
-    if (n == -1) {
-      if (errno == EINTR) continue;
-      return -1;
-    }
-#endif
     if (n == 0) return (ssize_t)total;
     total += (size_t)n;
   }

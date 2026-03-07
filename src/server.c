@@ -200,10 +200,10 @@ int server(const char *path, uint16_t port, int perf) {
 
 #ifdef _WIN32
       uint64_t t_open_start = now_ns();
-      out = open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL | O_BINARY, 0644);
+      out = hf_open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL | O_BINARY, 0644);
 #else
       uint64_t t_open_start = now_ns();
-      out = open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL, 0644);
+      out = hf_open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL, 0644);
 #endif
       perf_io_ns += now_ns() - t_open_start;
       if (out != -1) break;
@@ -287,7 +287,7 @@ int server(const char *path, uint16_t port, int perf) {
     free(buf);
 
 CLOSE_FILE:
-    fd_close(out);
+    hf_close(out);
 
 
     if (ok) {
