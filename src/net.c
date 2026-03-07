@@ -1,6 +1,4 @@
 #include "net.h"
-#include "fs.h"
-
 #include <errno.h>
 #include <stdio.h>
 
@@ -96,21 +94,6 @@ ssize_t recv_all(
   return (ssize_t)total;
 }
 
-ssize_t write_all(int fd, const void *buf, size_t len) {
-  const char *p = buf;
-  size_t total = 0;
-   
-  while (total < len) {
-    ssize_t n = hf_write(fd, p+total, len-total);
-    if (n == -1) {
-      if (errno == EINTR) continue;
-      return -1;
-    }
-    if (n == 0) return (ssize_t)total;
-    total += (size_t)n;
-  }
-  return (ssize_t)total;
-}
 
 void encode_u64_be(uint64_t v, uint8_t out[8]) {
   out[0] = (uint8_t)((v >> 56) & 0xFFu);

@@ -32,7 +32,6 @@ ssize_t hf_read(int fd, void *buf, size_t len);
 ssize_t hf_write(int fd, const void *buf, size_t len);
 int hf_close(int fd);
 
-// Backward-compatible wrapper.
-// int fd_close(int fd);
+ssize_t write_all(int fd, const void *buf, size_t len);
 
 #endif  // HF_FS_H

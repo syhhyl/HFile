@@ -50,7 +50,6 @@ ssize_t recv_all(
 #endif
   void *buf, size_t len);
 
-ssize_t write_all(int fd, const void *buf, size_t len);
 
 void encode_u64_be(uint64_t v, uint8_t out[8]);
 uint64_t decode_u64_be(const uint8_t in[8]);
@@ -58,8 +57,6 @@ uint64_t decode_u64_be(const uint8_t in[8]);
 void sock_perror(const char *msg);
 
 int socket_close(socket_t s);
-
-//uint64_t encode/decode
 
 
 #endif  // HF_NET_H

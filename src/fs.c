@@ -1,4 +1,5 @@
 #include "fs.h"
+#include <errno.h>
 
 #ifdef _WIN32
   #include <io.h>
@@ -41,6 +42,19 @@ int hf_close(int fd) {
 #endif
 }
 
-// int fd_close(int fd) {
-//   return hf_close(fd);
-// }
+
+ssize_t write_all(int fd, const void *buf, size_t len) {
+  const char *p = buf;
+  size_t total = 0;
+   
+  while (total < len) {
+    ssize_t n = hf_write(fd, p+total, len-total);
+    if (n == -1) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+    if (n == 0) return (ssize_t)total;
+    total += (size_t)n;
+  }
+  return (ssize_t)total;
+}
