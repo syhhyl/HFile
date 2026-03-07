@@ -14,16 +14,14 @@ from typing import Sequence
 def resolve_hf_path() -> Path:
     """Resolve the hf binary path.
 
-       build/hf (repo-local)
+    build/hf (repo-local)
     """
 
     build_bin = Path("build") / "hf"
     if build_bin.exists():
         return build_bin
 
-    raise FileNotFoundError(
-        "hf binary not found. Build with ./build.sh"
-    )
+    raise FileNotFoundError("hf binary not found. Build with ./build.sh")
 
 
 def reserve_free_port(host: str = "127.0.0.1", attempts: int = 32) -> int:
@@ -218,7 +216,6 @@ class HFileServer:
     def wait_ready(self, *, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout
         needle = "listening on "
-        last_err: Exception | None = None
 
         while time.monotonic() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
@@ -232,25 +229,12 @@ class HFileServer:
                 if needle in log_text:
                     return
 
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                s.settimeout(0.2)
-                s.connect((self.host, self.port))
-                return
-            except OSError as e:
-                last_err = e
-            finally:
-                try:
-                    s.close()
-                except Exception:
-                    pass
-
             time.sleep(0.05)
 
         tail = tail_text_file(self.log_path or Path(""))
         raise TimeoutError(
             f"hf server not ready after {timeout:.1f}s on {self.host}:{self.port}. "
-            f"expected log line containing {needle!r}; last_error={last_err!r}. "
+            f"expected log line containing {needle!r}. "
             f"log tail:\n{tail}"
         )
 
