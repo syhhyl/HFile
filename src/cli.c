@@ -40,6 +40,10 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->perf = 0;
   opt->compress = 0;
 
+  int seen_s = 0;
+  int seen_c = 0;
+  int ip_set = 0;
+
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
     if (a == NULL || a[0] != '-' || a[1] == '\0') {
@@ -68,11 +72,6 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         return PARSE_HELP;
 
       case 's': {
-        if (opt->mode == client_mode) {
-          fprintf(stderr, "cannot use -s -c together\n");
-          return PARSE_ERR;
-        }
-
         const char *v = NULL;
         if (need_value(argc, argv, &i, &v) != 0) {
           fprintf(stderr, "invalid server path\n");
@@ -85,15 +84,11 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
         opt->mode = server_mode;
         opt->path = v;
+        seen_s = 1;
         break;
       }
 
       case 'c': {
-        if (opt->mode == server_mode) {
-          fprintf(stderr, "cannot use -s -c together\n");
-          return PARSE_ERR;
-        }
-
         const char *v = NULL;
         if (need_value(argc, argv, &i, &v) != 0) {
           fprintf(stderr, "invalid client path\n");
@@ -106,15 +101,11 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
         opt->mode = client_mode;
         opt->path = v;
+        seen_c = 1;
         break;
       }
 
       case 'i': {
-        if (opt->mode != client_mode) {
-          fprintf(stderr, "server mode don't need ip\n");
-          return PARSE_ERR;
-        }
-
         const char *v = NULL;
         if (need_value(argc, argv, &i, &v) != 0) {
           fprintf(stderr, "invalid argument\n");
@@ -126,6 +117,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         }
 
         opt->ip = v;
+        ip_set = 1;
         break;
       }
 
@@ -147,10 +139,22 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
   }
 
-  if (opt->mode == init_mode) {
+  if (seen_s && seen_c) {
+    fprintf(stderr, "cannot use -s -c together\n");
     return PARSE_ERR;
   }
-  if (opt->path == NULL) {
+
+  if (!seen_s && !seen_c) {
+    if (ip_set) {
+      fprintf(stderr, "server mode don't need ip\n");
+    }
+    return PARSE_ERR;
+  }
+
+  opt->mode = seen_s ? server_mode : client_mode;
+  if (opt->path == NULL) return PARSE_ERR;
+  if (ip_set && opt->mode != client_mode) {
+    fprintf(stderr, "server mode don't need ip\n");
     return PARSE_ERR;
   }
 
