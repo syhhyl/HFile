@@ -7,6 +7,7 @@ add_executable(hf
   src/server.c
   src/client.c
   src/helper.c
+  src/save.c
   src/cli.c
   src/net.c
   src/fs.c
@@ -31,6 +32,5 @@ include(GNUInstallDirs)
 install(TARGETS hf
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-
 
 
