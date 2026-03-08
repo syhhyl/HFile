@@ -70,7 +70,7 @@ int server(const char *path, uint16_t port, int perf) {
 #ifdef _WIN32
   if (listen(sock, 4) == SOCKET_ERROR) {
 #else
-  if (listen(sock, 1) == -1) {
+  if (listen(sock, 4) == -1) {
 #endif
     sock_perror("listen");
     exit_code = 1;
