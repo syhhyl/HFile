@@ -21,28 +21,32 @@
 
 int server(const char *path, uint16_t port, int perf) {
   int exit_code = 0;
+  int opt = 1;
+#ifdef _WIN32
+  SOCKET sock = INVALID_SOCKET;
+#else
+  int sock = -1;
+#endif
 
   if (path == NULL || strlen(path) == 0) {
     exit_code = 1;
-    goto PATH_ERROR;
+    goto CLOSE_SOCK;
   }
 
 #ifdef _WIN32
-  SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+  sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock == INVALID_SOCKET) {
 #else
-  int sock = socket(AF_INET, SOCK_STREAM, 0);  
+  sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock < 0) {
 #endif
     sock_perror("socket");
     exit_code = 1;
-    return exit_code;
+    goto CLOSE_SOCK;
   }
 
-  int opt = 1;
-
 #ifdef _WIN32
-    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt)) == SOCKET_ERROR) {
+  if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt)) == SOCKET_ERROR) {
 #else
   if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
 #endif
@@ -104,16 +108,20 @@ int server(const char *path, uint16_t port, int perf) {
     uint64_t perf_file_bytes = 0;
     uint64_t perf_wire_bytes = 0;
     uint64_t t_ack_start = 0;
-
-
     char *file_name = NULL;
+    char *buf = NULL;
     uint64_t content_size = 0;
     uint16_t file_len = 0;
+    char tmp_path[4096];
+    tmp_path[0] = '\0';
+    int out = -1;
+    int ok = 0;
 
     uint64_t t_recv_header_start = now_ns();
     protocol_result_t header_res =
       protocol_recv_header(conn, &file_name, &content_size);
     perf_net_ns += now_ns() - t_recv_header_start;
+
     if (header_res != PROTOCOL_OK) {
       if (header_res == PROTOCOL_ERR_FILE_NAME_LEN) {
         fprintf(stderr, "invalid file name length\n");
@@ -125,16 +133,15 @@ int server(const char *path, uint16_t port, int perf) {
         sock_perror("protocol_recv_header");
       }
       exit_code = 1;
-      goto CLOSE_CONN;
+      goto CLEANUP_CONN;
     }
 
     file_len = (uint16_t)strlen(file_name);
 
     if (save_validate_file_name(file_name) != 0) {
       fprintf(stderr, "invalid file name: %s\n", file_name);
-      free(file_name);
       exit_code = 1;
-      goto CLOSE_CONN;
+      goto CLEANUP_CONN;
     }
     perf_file_bytes = content_size;
     perf_wire_bytes = (uint64_t)sizeof(uint16_t) + (uint64_t)file_len +
@@ -148,17 +155,13 @@ int server(const char *path, uint16_t port, int perf) {
       full_n = (int)strlen(full_path);
     }
     free(file_name);
+    file_name = NULL;
 
     if (full_n < 0 || (size_t)full_n >= sizeof(full_path)) {
       fprintf(stderr, "output path too long\n");
       exit_code = 1;
-      goto CLOSE_CONN;
+      goto CLEANUP_CONN;
     }
-
-    char tmp_path[4096];
-    tmp_path[0] = '\0';
-
-    int out = -1;
 #ifdef _WIN32
     int pid = _getpid();
 #else
@@ -168,7 +171,7 @@ int server(const char *path, uint16_t port, int perf) {
       if (save_make_temp_path(tmp_path, sizeof(tmp_path), full_path, pid, attempt) != 0) {
         fprintf(stderr, "temp path too long\n");
         exit_code = 1;
-        goto CLOSE_CONN;
+        goto CLEANUP_CONN;
       }
 
       uint64_t t_open_start = now_ns();
@@ -178,22 +181,20 @@ int server(const char *path, uint16_t port, int perf) {
       if (errno == EEXIST) continue;
       perror("open(temp)");
       exit_code = 1;
-      goto CLOSE_CONN;
+      goto CLEANUP_CONN;
     }
 
     if (out == -1) {
       fprintf(stderr, "failed to create temp file\n");
       exit_code = 1;
-      goto CLOSE_CONN;
+      goto CLEANUP_CONN;
     }
-    
 
-    int ok = 0;
-    char *buf = (char *)malloc(CHUNK_SIZE);
+    buf = (char *)malloc(CHUNK_SIZE);
     if (buf == NULL) {
       perror("malloc(buf)");
       exit_code = 1;
-      goto CLOSE_FILE;
+      goto CLEANUP_CONN;
     }
 
     uint64_t remaining = content_size;
@@ -249,15 +250,15 @@ int server(const char *path, uint16_t port, int perf) {
       }
       remaining -= (uint64_t)n;
     }
+
     if (remaining == 0) {
       ok = 1;
     }
 
     free(buf);
-
-CLOSE_FILE:
+    buf = NULL;
     hf_close(out);
-
+    out = -1;
 
     if (ok) {
       unsigned long win_err = 0;
@@ -275,11 +276,17 @@ CLOSE_FILE:
         perf_io_ns += now_ns() - t_rename_start;
         ack = 0;
       }
-    } else {
+    }
+
+CLEANUP_CONN:
+    if (ack != 0 && tmp_path[0] != '\0') {
       save_remove_quiet(tmp_path);
     }
 
-CLOSE_CONN:
+    if (buf != NULL) free(buf);
+    if (out != -1) hf_close(out);
+    if (file_name != NULL) free(file_name);
+
     t_ack_start = now_ns();
     ssize_t ack_sent = send_all(conn, &ack, sizeof(ack));
     perf_net_ns += now_ns() - t_ack_start;
@@ -291,20 +298,27 @@ CLOSE_CONN:
       uint64_t perf_total_ns = now_ns() - perf_conn_start_ns;
       report_transfer_perf(
         "server",
-        ack == 0 ? 1 : 0, 
+        ack == 0 ? 1 : 0,
         ns_to_s(perf_total_ns),
-        ns_to_s(perf_io_ns), 
-        ns_to_s(perf_net_ns), 
-        perf_file_bytes, 
+        ns_to_s(perf_io_ns),
+        ns_to_s(perf_net_ns),
+        perf_file_bytes,
         perf_wire_bytes);
     }
     socket_close(conn);
+
   }
-  
 
 CLOSE_SOCK:
-  socket_close(sock);
-  
-PATH_ERROR:
+  if (sock !=
+#ifdef _WIN32
+      INVALID_SOCKET
+#else
+      -1
+#endif
+  ) {
+    socket_close(sock);
+  }
+
   return exit_code;
 }
