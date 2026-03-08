@@ -2,8 +2,6 @@
 #include "net.h"
 #include "protocol.h"
 #include "client.h"
-#include <joystickapi.h>
-#include <psdk_inc/_socket_types.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
