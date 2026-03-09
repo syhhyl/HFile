@@ -27,11 +27,28 @@
   #include <sys/types.h>
 #endif
 
-int hf_open(const char *path, int flags, int mode);
-ssize_t hf_read(int fd, void *buf, size_t len);
-ssize_t hf_write(int fd, const void *buf, size_t len);
-int hf_close(int fd);
+int fs_get_file_name(const char **file_path, const char **file_name);
 
-ssize_t write_all(int fd, const void *buf, size_t len);
+int fs_open(const char *path, int flags, int mode);
+ssize_t fs_read(int fd, void *buf, size_t len);
+ssize_t fs_write(int fd, const void *buf, size_t len);
+int fs_close(int fd);
+
+ssize_t fs_write_all(int fd, const void *buf, size_t len);
+
+int fs_validate_file_name(const char *file_name);
+int fs_join_path(char *out, size_t out_cap, const char *dir, const char *file);
+int fs_make_temp_path(
+  char *out,
+  size_t out_cap,
+  const char *final_path,
+  int pid,
+  int attempt);
+int fs_open_temp_file(const char *tmp_path);
+int fs_finalize_temp_file(
+  const char *tmp_path,
+  const char *final_path,
+  unsigned long *win_err);
+void fs_remove_quiet(const char *path);
 
 #endif  // HF_FS_H
