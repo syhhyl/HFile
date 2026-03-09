@@ -29,7 +29,7 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
 #endif
 
   const char *file_name;
-  if (get_file_name(&path, &file_name) != 0) {
+  if (fs_get_file_name(&path, &file_name) != 0) {
     fprintf(stderr, "invalid file path\n");
     exit_code = 1;
     goto CLEANUP;
@@ -43,10 +43,10 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
   }
 #ifdef _WIN32
   uint64_t t_open_start = now_ns();
-  in = hf_open(path, O_RDONLY | O_BINARY, 0);
+  in = fs_open(path, O_RDONLY | O_BINARY, 0);
 #else
   uint64_t t_open_start = now_ns();
-  in = hf_open(path, O_RDONLY, 0);
+  in = fs_open(path, O_RDONLY, 0);
 #endif
   perf_io_ns += now_ns() - t_open_start;
   if (in == -1) {
@@ -159,7 +159,7 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
       }
 
       uint64_t t_read_start = now_ns();
-      ssize_t tmp = hf_read(in, buf + pos, want);
+      ssize_t tmp = fs_read(in, buf + pos, want);
       perf_io_ns += now_ns() - t_read_start;
       if (tmp < 0) {
         perror("read");
@@ -224,7 +224,7 @@ CLEANUP:
     socket_close(sock);
 #endif
   if (buf != NULL) free(buf);
-  if (in != -1) hf_close(in);
+  if (in != -1) fs_close(in);
   if (perf) {
     uint64_t perf_total_ns = now_ns() - perf_start_ns;
     double total_s = ns_to_s(perf_total_ns);

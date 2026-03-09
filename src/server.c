@@ -137,7 +137,7 @@ int server(const char *path, uint16_t port, int perf) {
 
     file_len = (uint16_t)strlen(file_name);
 
-    if (hf_validate_file_name(file_name) != 0) {
+    if (fs_validate_file_name(file_name) != 0) {
       fprintf(stderr, "invalid file name: %s\n", file_name);
       exit_code = 1;
       goto CLEANUP_CONN;
@@ -148,7 +148,7 @@ int server(const char *path, uint16_t port, int perf) {
 
     char full_path[4096];
     int full_n = 0;
-    if (hf_join_path(full_path, sizeof(full_path), path, file_name) != 0) {
+    if (fs_join_path(full_path, sizeof(full_path), path, file_name) != 0) {
       full_n = -1;
     } else {
       full_n = (int)strlen(full_path);
@@ -167,7 +167,7 @@ int server(const char *path, uint16_t port, int perf) {
     int pid = (int)getpid();
 #endif
     for (int attempt = 0; attempt < 16; attempt++) {
-      if (hf_make_temp_path(tmp_path, sizeof(tmp_path), full_path, pid,
+      if (fs_make_temp_path(tmp_path, sizeof(tmp_path), full_path, pid,
                             attempt) != 0) {
         fprintf(stderr, "temp path too long\n");
         exit_code = 1;
@@ -175,7 +175,7 @@ int server(const char *path, uint16_t port, int perf) {
       }
 
       uint64_t t_open_start = now_ns();
-      out = hf_open_temp_file(tmp_path);
+      out = fs_open_temp_file(tmp_path);
       perf_io_ns += now_ns() - t_open_start;
       if (out != -1) break;
       if (errno == EEXIST) continue;
@@ -240,7 +240,7 @@ int server(const char *path, uint16_t port, int perf) {
       }
 
       uint64_t t_write_start = now_ns();
-      ssize_t nw = write_all(out, buf, (size_t)n);
+      ssize_t nw = fs_write_all(out, buf, (size_t)n);
       perf_io_ns += now_ns() - t_write_start;
       if (nw != (ssize_t)n) {
         perror("write_all");
@@ -257,20 +257,20 @@ int server(const char *path, uint16_t port, int perf) {
 
     free(buf);
     buf = NULL;
-    hf_close(out);
+    fs_close(out);
     out = -1;
 
     if (ok) {
       unsigned long win_err = 0;
       uint64_t t_rename_start = now_ns();
-      if (hf_finalize_temp_file(tmp_path, full_path, &win_err) != 0) {
+      if (fs_finalize_temp_file(tmp_path, full_path, &win_err) != 0) {
         perf_io_ns += now_ns() - t_rename_start;
 #ifdef _WIN32
         fprintf(stderr, "MoveFileExA failed (err=%lu)\n", (unsigned long)win_err);
 #else
         perror("rename");
 #endif
-        hf_remove_quiet(tmp_path);
+        fs_remove_quiet(tmp_path);
         exit_code = 1;
       } else {
         perf_io_ns += now_ns() - t_rename_start;
@@ -280,11 +280,11 @@ int server(const char *path, uint16_t port, int perf) {
 
 CLEANUP_CONN:
     if (ack != 0 && tmp_path[0] != '\0') {
-      hf_remove_quiet(tmp_path);
+      fs_remove_quiet(tmp_path);
     }
 
     if (buf != NULL) free(buf);
-    if (out != -1) hf_close(out);
+    if (out != -1) fs_close(out);
     if (file_name != NULL) free(file_name);
 
     t_ack_start = now_ns();
