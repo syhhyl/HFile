@@ -15,8 +15,7 @@ If these notes conflict with the code or tests, trust the code and keep diffs mi
 - Client/server: `src/client.c`, `src/client.h`, `src/server.c`, `src/server.h`
 - Protocol framing: `src/protocol.c`, `src/protocol.h`
 - Platform/socket helpers: `src/net.c`, `src/net.h`
-- File I/O wrappers: `src/fs.c`, `src/fs.h`
-- Save/path helpers: `src/save.c`, `src/save.h`
+- File and path helpers: `src/fs.c`, `src/fs.h`
 - Shared helpers and perf output: `src/helper.c`, `src/helper.h`
 - Test helpers: `test/util_hf.py`
 - Main test modules: `test/test_cli.py`, `test/test_transfer.py`, `test/test_hf.py`
@@ -26,7 +25,7 @@ If these notes conflict with the code or tests, trust the code and keep diffs mi
 - Debug build: `./build.sh`
 - Release build: `BUILD_TYPE=Release ./build.sh`
 - Custom build type: `./build.sh --build-type RelWithDebInfo`
-- Build and install natively: `./build.sh --install`
+- Native build and install: `./build.sh --install`
 
 ### Manual native build
 - Configure: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_INSTALL_PREFIX=$HOME/.local`
@@ -78,7 +77,7 @@ If these notes conflict with the code or tests, trust the code and keep diffs mi
 - No `.github/copilot-instructions.md` file exists in this repository.
 
 ## Change Strategy
-- Prefer small diffs that preserve the current CLI and wire protocol.
+- Prefer small diffs that preserve the current CLI and wire protocol unless the task explicitly changes them.
 - Do not assume a documented flag is fully implemented; verify code paths and tests first.
 - For client/server changes, run at least one CLI test and one transfer test.
 - For cleanup refactors, re-check every failure path and each resource release.
@@ -123,7 +122,7 @@ If these notes conflict with the code or tests, trust the code and keep diffs mi
 
 ### Resource management
 - Free every allocation and close every descriptor on every exit path.
-- Use `socket_close(...)` for sockets and `hf_close(...)` for file descriptors.
+- Use `socket_close(...)` for sockets and `fs_close(...)` for file descriptors.
 - Prefer a single cleanup label per function when practical.
 - In the server, keep listener cleanup separate from per-connection cleanup unless a helper extraction clearly simplifies things.
 
@@ -147,9 +146,9 @@ Validation expectations:
 
 Useful helpers:
 - `protocol_send_header(...)`, `protocol_recv_header(...)`
-- `send_all(...)`, `recv_all(...)`, `write_all(...)`
+- `send_all(...)`, `recv_all(...)`
 - `encode_u64_be(...)`, `decode_u64_be(...)`
-- `save_validate_file_name(...)`, `save_join_path(...)`
+- `fs_validate_file_name(...)`, `fs_join_path(...)`
 
 ## Debugging Notes
 - Debug builds define `DEBUG` in `CMakeLists.txt`.
