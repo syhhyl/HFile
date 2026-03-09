@@ -1,31 +1,34 @@
 # AGENTS
 Guide for agentic coding assistants working in this repository.
-If these notes conflict with the code or tests, follow the code and keep diffs minimal.
+If these notes conflict with the code or tests, trust the code and keep diffs minimal.
 
-## Project Summary
-- Language: C
-- Portability target: POSIX + Windows via `_WIN32`
-- Build system: CMake + Ninja, with `build.sh` as the main entrypoint
-- Main binary: `hf` (`hf.exe` for Windows cross-builds)
-- Scope: single-file transfer over one TCP connection
+## Project Snapshot
+- Language: C for product code, Python `unittest` for tests.
+- Purpose: transfer one file over one TCP connection.
+- Portability target: POSIX and Windows guarded by `_WIN32`.
+- Build system: CMake + Ninja, wrapped by `./build.sh`.
+- Main binary: `build/hf` on native builds, `hf.exe` when cross-building for Windows.
 
-## Key Source Files
+## Important Paths
 - Entry point: `src/main.c`
-- CLI: `src/cli.c`, `src/cli.h`
+- CLI parsing: `src/cli.c`, `src/cli.h`
 - Client/server: `src/client.c`, `src/client.h`, `src/server.c`, `src/server.h`
-- Protocol: `src/protocol.c`, `src/protocol.h`
-- Platform helpers: `src/net.c`, `src/net.h`, `src/fs.c`, `src/fs.h`
-- Save/path/perf helpers: `src/save.c`, `src/save.h`, `src/helper.c`, `src/helper.h`
-- Tests: `test/test_*.py`; helpers: `test/util_hf.py`
+- Protocol framing: `src/protocol.c`, `src/protocol.h`
+- Platform/socket helpers: `src/net.c`, `src/net.h`
+- File I/O wrappers: `src/fs.c`, `src/fs.h`
+- Save/path helpers: `src/save.c`, `src/save.h`
+- Shared helpers and perf output: `src/helper.c`, `src/helper.h`
+- Test helpers: `test/util_hf.py`
+- Main test modules: `test/test_cli.py`, `test/test_transfer.py`, `test/test_hf.py`
 
 ## Build Commands
-### Native builds
-- Default debug build: `./build.sh`
+### Preferred entrypoint
+- Debug build: `./build.sh`
 - Release build: `BUILD_TYPE=Release ./build.sh`
-- Build and install to `$HOME/.local`: `./build.sh --install`
 - Custom build type: `./build.sh --build-type RelWithDebInfo`
+- Build and install natively: `./build.sh --install`
 
-### Manual native commands
+### Manual native build
 - Configure: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_INSTALL_PREFIX=$HOME/.local`
 - Build: `cmake --build build`
 - Install: `cmake --install build`
@@ -34,118 +37,128 @@ If these notes conflict with the code or tests, follow the code and keep diffs m
 - `./build.sh -w`
 - `./build.sh --windows`
 
-### Build notes
-- `build.sh` tracks the active platform in `.build_platform` and recreates `build/` when switching native vs Windows.
-- Do not run native and Windows builds concurrently against the same `build/` directory.
-
-## Run Commands
-- Server: `./build/hf -s <output_dir> [-p <port>] [--perf]`
-- Client: `./build/hf -c <file_path> [-i <ip>] [-p <port>] [--perf] [--compress]`
-- Default port: `9000`
-- Default client IP: `127.0.0.1`
+### Build behavior notes
+- `build.sh` stores the active target platform in `.build_platform`.
+- Switching between native and Windows builds deletes `build/` and reconfigures.
+- Do not run native and Windows builds at the same time against the same `build/` directory.
+- Compiler warnings currently come from `CMakeLists.txt`: `-Wall -Wextra`.
+- No formatter, linter, sanitizer, or clang-tidy target is configured.
 
 ## Test Commands
-### Recommended full suite
+### Full suite
 - `python3 -m unittest discover -s test -p 'test_*.py' -v`
-
-### Suite module
 - `python3 -m unittest -v test.test_hf`
 
-### Single test targets
-- File: `python3 -m unittest -v test.test_transfer`
-- File: `python3 -m unittest -v test.test_cli`
-- Class: `python3 -m unittest -v test.test_transfer.TestTransfer`
-- Class: `python3 -m unittest -v test.test_cli.TestCLI`
-- Method: `python3 -m unittest -v test.test_transfer.TestTransfer.test_empty_file`
-- Method: `python3 -m unittest -v test.test_transfer.TestTransfer.test_common_file`
-- Method: `python3 -m unittest -v test.test_cli.TestCLI.test_help_prints_usage`
+### Run one test file
+- `python3 -m unittest -v test.test_cli`
+- `python3 -m unittest -v test.test_transfer`
+
+### Run one test class
+- `python3 -m unittest -v test.test_cli.TestCLI`
+- `python3 -m unittest -v test.test_transfer.TestTransfer`
+
+### Run one test method
+- `python3 -m unittest -v test.test_cli.TestCLI.test_help_prints_usage`
+- `python3 -m unittest -v test.test_cli.TestCLI.test_invalid_cli_args`
+- `python3 -m unittest -v test.test_transfer.TestTransfer.test_empty_file`
+- `python3 -m unittest -v test.test_transfer.TestTransfer.test_common_file`
+- `python3 -m unittest -v test.test_transfer.TestTransfer.test_fixtures`
 
 ### Test behavior notes
-- Tests expect `build/hf` to exist; build before running tests.
-- Transfer tests start a real `hf` server subprocess.
-- Server readiness is detected from the log line containing `listening on `.
-- Tests reserve free TCP ports dynamically; avoid noisy parallel test runs.
-- Fixtures live in `test/fixtures/` and are copied into temporary directories during tests.
+- Tests expect `build/hf` to exist first; build before running tests.
+- Transfer tests launch a real `hf` server subprocess.
+- Server readiness is detected from stdout containing `listening on `.
+- Transfer tests reserve a free TCP port dynamically; avoid noisy parallel test runs.
+- Fixtures live in `test/fixtures/` and are copied into temporary directories.
+- `test/test_hf.py` is a suite wrapper around the CLI and transfer modules.
 
-## Lint / Formatting / Static Checks
-- No dedicated formatter is configured.
-- No standalone linter is configured.
-- Compiler warnings come from `CMakeLists.txt`: `-Wall -Wextra`.
-- Keep formatting consistent with surrounding code instead of reformatting whole files.
+## Cursor And Copilot Rules
+- No `.cursor/rules/` directory exists in this repository.
+- No `.cursorrules` file exists in this repository.
+- No `.github/copilot-instructions.md` file exists in this repository.
 
-## Cursor / Copilot Rules
-- No `.cursor/rules/` directory found.
-- No `.cursorrules` file found.
-- No `.github/copilot-instructions.md` file found.
+## Change Strategy
+- Prefer small diffs that preserve the current CLI and wire protocol.
+- Do not assume a documented flag is fully implemented; verify code paths and tests first.
+- For client/server changes, run at least one CLI test and one transfer test.
+- For cleanup refactors, re-check every failure path and each resource release.
+- Keep user changes intact if the worktree is dirty; do not revert unrelated edits.
 
-## Repository Conventions
+## Code Style
 ### Formatting
-- Use 2-space indentation, no tabs, and K&R braces: `if (...) {`.
-- Keep lines and control flow straightforward rather than clever.
-- Prefer small, explicit steps over compressed expressions.
+- Use 2-space indentation and no tabs.
+- Follow the existing K&R brace style: `if (...) {`.
+- Keep functions explicit and straightforward rather than clever or dense.
+- Match surrounding formatting instead of reformatting whole files.
+- Follow local style in touched blocks; the repo already has a few spacing inconsistencies.
 
-### Includes
-- Use project headers with double quotes, for example `"net.h"`; use system headers with angle brackets.
-- Keep include blocks tidy and stable.
-- Guard platform-specific includes and logic with `_WIN32`.
+### Includes and headers
+- Put project headers in double quotes, for example `"net.h"`.
+- Put system headers in angle brackets.
+- Header guards are uppercase macros such as `HF_PROTOCOL_H`.
+- Keep include blocks stable and avoid unnecessary churn.
+- Guard Windows-only includes and declarations with `_WIN32`.
 
 ### Naming
 - Files, functions, and variables use `lower_snake_case`.
-- Reuse existing enum/type naming patterns such as `Mode`, `Opt`, and `parse_result_t`.
+- Struct typedefs and some enums use short PascalCase-style names like `Opt` and `Mode`.
+- Enum constants often use uppercase for result codes (`PARSE_OK`, `PROTOCOL_ERR_IO`) and snake case for mode values (`server_mode`, `client_mode`).
+- Reuse existing names and patterns instead of introducing a new naming scheme.
 
-### Types
-- Prefer fixed-width integer types for protocol and on-wire data.
-- Use `uint16_t` for file name length and port values, `uint64_t` for file sizes and wire-size accounting.
-- Use `size_t` for buffer lengths/offsets and `ssize_t` for I/O results.
-- Keep socket types portable by using definitions from `src/net.h`.
+### Types and data handling
+- Prefer fixed-width integer types for protocol and byte-counted data.
+- Use `uint16_t` for ports and on-wire file-name length.
+- Use `uint64_t` for file sizes, timestamps, and wire-size accounting.
+- Use `size_t` for buffer lengths and indexing.
+- Use `ssize_t` for read/write/send/recv results.
+- Use `socket_t` or the definitions in `src/net.h` for portable socket code.
 
 ### Error handling
-- Most command-style functions return `0` on success and `1` on failure.
-- For invalid CLI usage or validation errors, print a human-readable message to `stderr`.
+- Most top-level command functions return `0` on success and `1` on failure.
+- CLI validation errors should print a short human-readable message to `stderr`.
 - Use `perror(...)` only when `errno` is meaningful.
-- Use `sock_perror(...)` for socket-related failures.
-- Retry interrupted socket operations on `EINTR` or `WSAEINTR`.
-- When adding new error paths, verify cleanup still runs exactly once.
+- Use `sock_perror(...)` for socket failures.
+- Retry interrupted I/O when surrounding code already handles `EINTR` or `WSAEINTR`.
+- Preserve cleanup-once behavior when adding new failure paths.
 
 ### Resource management
-- Release every acquired resource on every exit path.
+- Free every allocation and close every descriptor on every exit path.
 - Use `socket_close(...)` for sockets and `hf_close(...)` for file descriptors.
-- Free heap allocations on all paths.
-- Prefer one cleanup section per function when practical.
-- In server code, separate connection-level cleanup from listener-level cleanup unless you split logic into helper functions.
+- Prefer a single cleanup label per function when practical.
+- In the server, keep listener cleanup separate from per-connection cleanup unless a helper extraction clearly simplifies things.
 
 ### Portability
-- On Windows, open payload files with `O_BINARY`.
-- Preserve existing `_WIN32` branches rather than collapsing them unless the replacement is clearly portable.
-- Be careful with APIs whose error reporting differs across POSIX and Windows.
+- Keep `_WIN32` branches intact unless the replacement is clearly portable.
+- On Windows, payload files should be opened with `O_BINARY`.
+- Be careful with socket error handling because POSIX and Winsock differ.
+- Windows code may use `SOCKET`, `INVALID_SOCKET`, `SOCKET_ERROR`, and `WSAGetLastError()`.
 
 ## Protocol Notes
-Current frame layout for one transferred file:
+Current frame layout for one file transfer:
 1. `file_name_len`: 2-byte big-endian `uint16_t`
-2. `file_name`: raw bytes, no trailing NUL on the wire
+2. `file_name`: raw bytes with no trailing NUL on the wire
 3. `file_content_size`: 8-byte big-endian `uint64_t`
 4. `file_content`: exactly `file_content_size` bytes
 
 Validation expectations:
-- Reject `file_name_len == 0` and `file_name_len > 255`.
+- Reject `file_name_len == 0`.
+- Reject `file_name_len > 255`.
 - Reject unsafe names containing `/`, `\\`, or `..`.
 
-Useful helpers: `protocol_send_header(...)`, `protocol_recv_header(...)`, `send_all(...)`, `recv_all(...)`, `write_all(...)`, `encode_u64_be(...)`, `decode_u64_be(...)`
-
-## Testing and Change Strategy
-- Prefer small diffs that preserve the current protocol and CLI behavior.
-- For client/server changes, run at least one CLI test and one transfer test.
-- For cleanup refactors, re-check every failure path after moving labels or resources.
-- Do not assume an advertised CLI flag is implemented; verify in code paths and tests.
+Useful helpers:
+- `protocol_send_header(...)`, `protocol_recv_header(...)`
+- `send_all(...)`, `recv_all(...)`, `write_all(...)`
+- `encode_u64_be(...)`, `decode_u64_be(...)`
+- `save_validate_file_name(...)`, `save_join_path(...)`
 
 ## Debugging Notes
 - Debug builds define `DEBUG` in `CMakeLists.txt`.
-- `DBG(...)` in `src/helper.h` writes to `stderr` when debug is enabled.
-- The server readiness log line is `listening on ...`; tests depend on that exact phrase.
+- `DBG(...)` in `src/helper.h` writes to `stderr` only in debug builds.
+- The exact readiness log phrase is `listening on ...`; tests depend on that wording.
 
 ## Quick Checklist
-- Build: `./build.sh`
-- Rebuild: `cmake --build build`
-- Single transfer test: `python3 -m unittest -v test.test_transfer.TestTransfer.test_empty_file`
-- Single CLI test: `python3 -m unittest -v test.test_cli.TestCLI.test_help_prints_usage`
-- Full suite: `python3 -m unittest discover -s test -p 'test_*.py' -v`
+- Build first: `./build.sh`
+- Rebuild after edits: `cmake --build build`
+- Fast CLI check: `python3 -m unittest -v test.test_cli.TestCLI.test_help_prints_usage`
+- Fast transfer check: `python3 -m unittest -v test.test_transfer.TestTransfer.test_empty_file`
+- Full regression: `python3 -m unittest discover -s test -p 'test_*.py' -v`
