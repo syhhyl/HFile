@@ -80,7 +80,7 @@ int server(const char *path, uint16_t port, int perf) {
   }
   
 
-  printf("listening on %s port %u...\n", path, (unsigned)port);
+  printf("listening on %s port %u\n", path, (unsigned)port);
   fflush(stdout);
 
   int conn_flag = 1;
@@ -97,7 +97,6 @@ int server(const char *path, uint16_t port, int perf) {
       sock_perror("accept");
       continue;
     }
-    printf("client connected\n");
 
     uint8_t ack = 1;
     uint64_t perf_conn_start_ns = now_ns();
@@ -152,8 +151,6 @@ int server(const char *path, uint16_t port, int perf) {
     } else {
       full_n = (int)strlen(full_path);
     }
-    free(file_name);
-    file_name = NULL;
 
     if (full_n < 0 || (size_t)full_n >= sizeof(full_path)) {
       fprintf(stderr, "output path too long\n");
@@ -276,6 +273,8 @@ int server(const char *path, uint16_t port, int perf) {
         ack = 0;
       }
     }
+    
+    printf("saved %s\n", file_name);
 
 CLEANUP_CONN:
     if (ack != 0 && tmp_path[0] != '\0') {
