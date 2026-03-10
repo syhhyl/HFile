@@ -1,5 +1,4 @@
 #include "helper.h"
-#include <string.h>
 #include <stdio.h>
 #include <inttypes.h>
 
