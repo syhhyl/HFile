@@ -11,9 +11,6 @@
 // #define DBG(...) ((void)0)
 // #endif
 
-
-#define CHUNK_SIZE 1024 * 1024
-
 void report_transfer_perf(const char *mode, int ok, double total_s,
                           double io_s, double net_s, uint64_t file_bytes,
                           uint64_t wire_bytes);
