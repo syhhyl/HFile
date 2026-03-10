@@ -1,4 +1,5 @@
 #include "protocol.h"
+#include "net.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -94,5 +95,68 @@ protocol_result_t protocol_recv_header(socket_t sock, char **file_name_out,
 
   *file_name_out = file_name;
   *content_size_out = decode_u64_be(szbuf);
+  return PROTOCOL_OK;
+}
+
+protocol_result_t encode_header(const protocol_header *header, uint8_t *out) {
+  if (header == NULL || out == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+  
+  uint16_t net_magic = htons(header->magic);
+  uint8_t net_payload_size[8];
+  encode_u64_be(header->payload_size, net_payload_size);
+  
+  uint8_t *base = out;
+  memcpy(base, &net_magic, sizeof(net_magic)); base += sizeof(net_magic);
+  *base++ = header->version;
+  *base++ = header->msg_type;
+  *base++ = header->flags;
+  memcpy(base, net_payload_size, sizeof(net_payload_size));
+
+  return PROTOCOL_OK;
+}
+
+protocol_result_t decode_header(protocol_header *header, const uint8_t *in) {
+
+  if (in == NULL || header == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  uint16_t net_magic = 0;
+  const uint8_t *base = in;
+
+  memcpy(&net_magic, base, sizeof(net_magic));
+  header->magic = ntohs(net_magic);
+  base += sizeof(net_magic);
+
+  header->version = *base++;
+  header->msg_type = *base++;
+  header->flags = *base++;
+  header->payload_size = decode_u64_be(base);
+
+  return PROTOCOL_OK;
+}
+
+protocol_result_t send_header(socket_t sock, const uint8_t *in) {
+  if (in == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+  if (send_all(sock, in, HF_PROTOCOL_HEADER_SIZE) != (ssize_t)HF_PROTOCOL_HEADER_SIZE) {
+    return PROTOCOL_ERR_IO;
+  }
+  return PROTOCOL_OK; 
+}
+
+protocol_result_t recv_header(socket_t sock, uint8_t *out) {
+  if (out == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+  ssize_t n = recv_all(sock, out, HF_PROTOCOL_HEADER_SIZE);
+  
+  if (n < HF_PROTOCOL_HEADER_SIZE) {
+    if (n < 0) return PROTOCOL_ERR_IO;
+    return PROTOCOL_ERR_EOF; 
+  }
   return PROTOCOL_OK;
 }
