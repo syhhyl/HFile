@@ -78,7 +78,7 @@ class TestCLI(unittest.TestCase):
                 "name": "server_mode_has_ip",
                 "args": ["-s", "out", "-i", "10.0.0.1"],
                 "rc": 1,
-                "stderr_contains": ["server mode don't need ip", "usage:"],
+                "stderr_contains": ["server mode does not accept -i", "usage:"],
             },
             {
                 "name": "port_missing_value",

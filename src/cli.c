@@ -146,7 +146,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
   if (!seen_s && !seen_c) {
     if (ip_set) {
-      fprintf(stderr, "server mode don't need ip\n");
+      fprintf(stderr, "server mode does not accept -i\n");
     }
     return PARSE_ERR;
   }
@@ -154,7 +154,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->mode = seen_s ? server_mode : client_mode;
   if (opt->path == NULL) return PARSE_ERR;
   if (ip_set && opt->mode != client_mode) {
-    fprintf(stderr, "server mode don't need ip\n");
+    fprintf(stderr, "server mode does not accept -i\n");
     return PARSE_ERR;
   }
 

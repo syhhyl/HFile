@@ -30,14 +30,14 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
 
   const char *file_name;
   if (fs_get_file_name(&path, &file_name) != 0) {
-    fprintf(stderr, "invalid file path\n");
+    fprintf(stderr, "invalid client path\n");
     exit_code = 1;
     goto CLEANUP;
   }
 
   uint16_t file_name_len = 0;
   if (protocol_get_file_name_len(file_name, &file_name_len) != 0) {
-    fprintf(stderr, "file name len > 255\n");
+    fprintf(stderr, "invalid file name length\n");
     exit_code = 1;
     goto CLEANUP;
   }
@@ -56,7 +56,7 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
   }
 
   if (protocol_header_size(file_name_len) > CHUNK_SIZE) {
-    fprintf(stderr, "file name too long for buffer\n");
+    fprintf(stderr, "protocol header exceeds buffer size\n");
     exit_code = 1;
     goto CLEANUP;
   }
@@ -86,7 +86,7 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
   }
   perf_io_ns += now_ns() - t_stat_start;
   if (st.st_size < 0) {
-    fprintf(stderr, "invalid file size\n");
+    fprintf(stderr, "invalid source file size\n");
     exit_code = 1;
     goto CLEANUP;
   }
@@ -139,7 +139,7 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
   perf_net_ns += now_ns() - t_header_start;
   if (header_res != PROTOCOL_OK) {
     if (header_res == PROTOCOL_ERR_FILE_NAME_LEN) {
-      fprintf(stderr, "file name len > 255\n");
+      fprintf(stderr, "invalid file name length\n");
     } else {
       sock_perror("protocol_send_header");
     }
@@ -167,7 +167,7 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
         goto CLEANUP;
       }
       if (tmp == 0) {
-        fprintf(stderr, "source file truncated while reading\n");
+        fprintf(stderr, "source file changed during transfer\n");
         exit_code = 1;
         goto CLEANUP;
       }
@@ -210,7 +210,8 @@ int client(const char *path, const char *ip, uint16_t port, int perf) {
   }
   perf_net_ns += now_ns() - t_ack_start;
   if (ack != 0) {
-    fprintf(stderr, "server returned error ack: %u\n", (unsigned)ack);
+    fprintf(stderr, "server reported transfer failure (ack=%u)\n",
+            (unsigned)ack);
     exit_code = 1;
     goto CLEANUP;
   }

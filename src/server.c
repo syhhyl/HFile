@@ -121,11 +121,11 @@ int server(const char *path, uint16_t port, int perf) {
 
     if (header_res != PROTOCOL_OK) {
       if (header_res == PROTOCOL_ERR_FILE_NAME_LEN) {
-        fprintf(stderr, "invalid file name length\n");
+        fprintf(stderr, "protocol error: invalid file name length\n");
       } else if (header_res == PROTOCOL_ERR_ALLOC) {
         perror("malloc(file_name)");
       } else if (header_res == PROTOCOL_ERR_EOF) {
-        fprintf(stderr, "unexpected EOF while receiving header\n");
+        fprintf(stderr, "protocol error: unexpected EOF while receiving header\n");
       } else {
         sock_perror("protocol_recv_header");
       }
@@ -153,7 +153,7 @@ int server(const char *path, uint16_t port, int perf) {
     }
 
     if (full_n < 0 || (size_t)full_n >= sizeof(full_path)) {
-      fprintf(stderr, "output path too long\n");
+      fprintf(stderr, "output path is too long\n");
       exit_code = 1;
       goto CLEANUP_CONN;
     }
@@ -165,7 +165,7 @@ int server(const char *path, uint16_t port, int perf) {
     for (int attempt = 0; attempt < 16; attempt++) {
       if (fs_make_temp_path(tmp_path, sizeof(tmp_path), full_path, pid,
                             attempt) != 0) {
-        fprintf(stderr, "temp path too long\n");
+        fprintf(stderr, "temporary file path is too long\n");
         exit_code = 1;
         goto CLEANUP_CONN;
       }
@@ -181,7 +181,7 @@ int server(const char *path, uint16_t port, int perf) {
     }
 
     if (out == -1) {
-      fprintf(stderr, "failed to create temp file\n");
+      fprintf(stderr, "failed to create temporary file\n");
       exit_code = 1;
       goto CLEANUP_CONN;
     }
@@ -229,7 +229,7 @@ int server(const char *path, uint16_t port, int perf) {
       perf_net_ns += now_ns() - t_recv_chunk_start;
 #endif
       if (n == 0) {
-        fprintf(stderr, "unexpected EOF while receiving file\n");
+        fprintf(stderr, "protocol error: unexpected EOF while receiving file\n");
         exit_code = 1;
         ok = 0;
         break;
@@ -262,7 +262,8 @@ int server(const char *path, uint16_t port, int perf) {
       if (fs_finalize_temp_file(tmp_path, full_path, &win_err) != 0) {
         perf_io_ns += now_ns() - t_rename_start;
 #ifdef _WIN32
-        fprintf(stderr, "MoveFileExA failed (err=%lu)\n", (unsigned long)win_err);
+        fprintf(stderr, "failed to finalize temporary file (err=%lu)\n",
+                (unsigned long)win_err);
 #else
         perror("rename");
 #endif
@@ -271,10 +272,10 @@ int server(const char *path, uint16_t port, int perf) {
       } else {
         perf_io_ns += now_ns() - t_rename_start;
         ack = 0;
+        printf("saved to %s\n", full_path);
+        fflush(stdout);
       }
     }
-    
-    printf("saved %s\n", file_name);
 
 CLEANUP_CONN:
     if (ack != 0 && tmp_path[0] != '\0') {
