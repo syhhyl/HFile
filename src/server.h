@@ -1,8 +1,8 @@
 #ifndef HF_SERVER_H
 #define HF_SERVER_H
 
-#include <stdint.h>
+#include "cli.h"
 
-int server(const char *path, uint16_t port, int perf);
+int server(const server_opt_t *ser_opt);
 
 #endif  // HF_SERVER_H

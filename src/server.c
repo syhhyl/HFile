@@ -1,3 +1,4 @@
+#include "cli.h"
 #include "net.h"
 #include "protocol.h"
 #include "server.h"
@@ -17,7 +18,7 @@
 #endif
 
 
-int server(const char *path, uint16_t port, int perf) {
+int server(const server_opt_t *ser_opt) {
   int exit_code = 0;
   int opt = 1;
 #ifdef _WIN32
@@ -26,7 +27,7 @@ int server(const char *path, uint16_t port, int perf) {
   int sock = -1;
 #endif
 
-  if (path == NULL || strlen(path) == 0) {
+  if (ser_opt->path == NULL || strlen(ser_opt->path) == 0) {
     exit_code = 1;
     goto CLOSE_SOCK;
   }
@@ -56,7 +57,7 @@ int server(const char *path, uint16_t port, int perf) {
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(port);
+  addr.sin_port = htons(ser_opt->port);
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
 #ifdef _WIN32
@@ -80,7 +81,7 @@ int server(const char *path, uint16_t port, int perf) {
   }
   
 
-  printf("listening on %s port %u\n", path, (unsigned)port);
+  printf("listening on %s port %u\n", ser_opt->path, (unsigned)ser_opt->port);
   fflush(stdout);
 
   int conn_flag = 1;
@@ -107,6 +108,8 @@ int server(const char *path, uint16_t port, int perf) {
     uint64_t t_ack_start = 0;
     char *file_name = NULL;
     char *buf = NULL;
+    uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
+    protocol_header_t proto_header = {0};
     uint64_t content_size = 0;
     uint16_t file_len = 0;
     char tmp_path[4096];
@@ -115,19 +118,112 @@ int server(const char *path, uint16_t port, int perf) {
     int ok = 0;
 
     uint64_t t_recv_header_start = now_ns();
-    protocol_result_t header_res =
-      protocol_recv_header(conn, &file_name, &content_size);
+    protocol_result_t header_res = recv_header(conn, header_buf);
     perf_net_ns += now_ns() - t_recv_header_start;
+    if (header_res != PROTOCOL_OK) {
+      if (header_res == PROTOCOL_ERR_EOF) {
+        fprintf(stderr, "protocol error: unexpected EOF while receiving header\n");
+      } else {
+        sock_perror("recv_header");
+      }
+      exit_code = 1;
+      goto CLEANUP_CONN;
+    }
 
+    header_res = decode_header(&proto_header, header_buf);
+    if (header_res != PROTOCOL_OK) {
+      fprintf(stderr, "protocol error: failed to decode header\n");
+      exit_code = 1;
+      goto CLEANUP_CONN;
+    }
+
+    if (proto_header.magic != HF_PROTOCOL_MAGIC) {
+      fprintf(stderr, "protocol error: invalid protocol magic\n");
+      exit_code = 1;
+      goto CLEANUP_CONN;
+    }
+
+    if (proto_header.version != HF_PROTOCOL_VERSION) {
+      fprintf(stderr, "protocol error: unsupported protocol version\n");
+      exit_code = 1;
+      goto CLEANUP_CONN;
+    }
+
+    if (proto_header.flags != HF_MSG_FLAG_NONE) {
+      fprintf(stderr, "protocol error: unsupported flags: %u\n",
+              (unsigned)proto_header.flags);
+      exit_code = 1;
+      goto CLEANUP_CONN;
+    }
+
+    perf_wire_bytes = (uint64_t)HF_PROTOCOL_HEADER_SIZE + proto_header.payload_size;
+
+    if (proto_header.msg_type == HF_MSG_TYPE_TEXT_MESSAGE) {
+      if (proto_header.payload_size > ((uint64_t)SIZE_MAX - 1u)) {
+        fprintf(stderr, "protocol error: message payload too large\n");
+        exit_code = 1;
+        goto CLEANUP_CONN;
+      }
+      size_t msg_len = (size_t)proto_header.payload_size;
+      char *message = (char *)malloc(msg_len + 1u);
+      if (message == NULL) {
+        perror("malloc(message)");
+        exit_code = 1;
+        goto CLEANUP_CONN;
+      }
+
+      if (msg_len > 0) {
+        uint64_t t_recv_msg_start = now_ns();
+        ssize_t n = recv_all(conn, message, msg_len);
+        perf_net_ns += now_ns() - t_recv_msg_start;
+        if (n != (ssize_t)msg_len) {
+          free(message);
+          if (n < 0) {
+            sock_perror("recv_all(message)");
+          } else {
+            fprintf(stderr, "protocol error: unexpected EOF while receiving message\n");
+          }
+          exit_code = 1;
+          goto CLEANUP_CONN;
+        }
+      }
+
+      message[msg_len] = '\0';
+      perf_file_bytes = (uint64_t)msg_len;
+      printf("message: %s\n", message);
+      fflush(stdout);
+      free(message);
+      ack = 0;
+      goto CLEANUP_CONN;
+    }
+
+    if (proto_header.msg_type != HF_MSG_TYPE_FILE_TRANSFER) {
+      fprintf(stderr, "protocol error: unsupported message type: %u\n",
+              (unsigned)proto_header.msg_type);
+      exit_code = 1;
+      goto CLEANUP_CONN;
+    }
+
+    if (proto_header.payload_size <
+        (uint64_t)protocol_file_transfer_prefix_size(0)) {
+      fprintf(stderr, "protocol error: payload size too small\n");
+      exit_code = 1;
+      goto CLEANUP_CONN;
+    }
+
+    uint64_t t_recv_payload_start = now_ns();
+    header_res = protocol_recv_file_transfer_prefix(conn, &file_name,
+                                                    &content_size);
+    perf_net_ns += now_ns() - t_recv_payload_start;
     if (header_res != PROTOCOL_OK) {
       if (header_res == PROTOCOL_ERR_FILE_NAME_LEN) {
         fprintf(stderr, "protocol error: invalid file name length\n");
       } else if (header_res == PROTOCOL_ERR_ALLOC) {
         perror("malloc(file_name)");
       } else if (header_res == PROTOCOL_ERR_EOF) {
-        fprintf(stderr, "protocol error: unexpected EOF while receiving header\n");
+        fprintf(stderr, "protocol error: unexpected EOF while receiving payload\n");
       } else {
-        sock_perror("protocol_recv_header");
+        sock_perror("protocol_recv_file_transfer_prefix");
       }
       exit_code = 1;
       goto CLEANUP_CONN;
@@ -140,13 +236,20 @@ int server(const char *path, uint16_t port, int perf) {
       exit_code = 1;
       goto CLEANUP_CONN;
     }
+
+    uint64_t expected_payload_size =
+      (uint64_t)protocol_file_transfer_prefix_size(file_len) + content_size;
+    if (proto_header.payload_size != expected_payload_size) {
+      fprintf(stderr, "protocol error: payload size mismatch\n");
+      exit_code = 1;
+      goto CLEANUP_CONN;
+    }
+
     perf_file_bytes = content_size;
-    perf_wire_bytes = (uint64_t)sizeof(uint16_t) + (uint64_t)file_len +
-                      (uint64_t)sizeof(uint64_t) + content_size;
 
     char full_path[4096];
     int full_n = 0;
-    if (fs_join_path(full_path, sizeof(full_path), path, file_name) != 0) {
+    if (fs_join_path(full_path, sizeof(full_path), ser_opt->path, file_name) != 0) {
       full_n = -1;
     } else {
       full_n = (int)strlen(full_path);
@@ -293,7 +396,7 @@ CLEANUP_CONN:
       sock_perror("send_all(ack)");
     }
 
-    if (perf) {
+    if (ser_opt->perf) {
       uint64_t perf_total_ns = now_ns() - perf_conn_start_ns;
       report_transfer_perf(
         "server",
