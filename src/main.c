@@ -7,22 +7,23 @@ int main(int argc, char **argv) {
   
   net_init();
 
-  Opt opt;
+  Opt opt = {0};
   parse_result_t res = parse_args(argc, argv, &opt);
+
+  int ret;
 
   if (res == PARSE_HELP) {
     usage(argv[0]);
     net_cleanup();
-    return 0;
+    ret = 0;
   }
 
   if (res != PARSE_OK) {
     usage(argv[0]);
     net_cleanup();
-    return 1;
+    ret = 1;
   }
 
-  int ret = 1;
   if (opt.mode == server_mode) {
     ret = server(opt.path, opt.port, opt.perf);
   } else if (opt.mode == client_mode) {
