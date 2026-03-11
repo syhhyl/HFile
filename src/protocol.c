@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-int protocol_get_file_name_len(const char *file_name, uint16_t *out_len) {
+int proto_validate_file_name_len(const char *file_name, uint16_t *out_len) {
   size_t len = 0;
 
   if (file_name == NULL || out_len == NULL) {
@@ -20,17 +20,18 @@ int protocol_get_file_name_len(const char *file_name, uint16_t *out_len) {
   return 0;
 }
 
-size_t protocol_header_size(uint16_t file_name_len) {
+size_t protocol_file_transfer_prefix_size(uint16_t file_name_len) {
   return sizeof(uint16_t) + (size_t)file_name_len + sizeof(uint64_t);
 }
 
-protocol_result_t protocol_send_header(socket_t sock, const char *file_name,
-                                       uint64_t content_size) {
+protocol_result_t protocol_send_file_transfer_prefix(socket_t sock,
+                                                     const char *file_name,
+                                                     uint64_t content_size) {
   uint16_t file_name_len = 0;
   uint16_t net_len = 0;
   uint8_t szbuf[8];
 
-  if (protocol_get_file_name_len(file_name, &file_name_len) != 0) {
+  if (proto_validate_file_name_len(file_name, &file_name_len) != 0) {
     return PROTOCOL_ERR_FILE_NAME_LEN;
   }
 
@@ -51,8 +52,9 @@ protocol_result_t protocol_send_header(socket_t sock, const char *file_name,
   return PROTOCOL_OK;
 }
 
-protocol_result_t protocol_recv_header(socket_t sock, char **file_name_out,
-                                       uint64_t *content_size_out) {
+protocol_result_t protocol_recv_file_transfer_prefix(socket_t sock,
+                                                     char **file_name_out,
+                                                     uint64_t *content_size_out) {
   uint16_t net_len = 0;
   uint16_t file_name_len = 0;
   char *file_name = NULL;
@@ -98,7 +100,22 @@ protocol_result_t protocol_recv_header(socket_t sock, char **file_name_out,
   return PROTOCOL_OK;
 }
 
-protocol_result_t encode_header(const protocol_header *header, uint8_t *out) {
+
+void init_header(protocol_header_t *header) {
+  if (header == NULL) {
+    return;
+  }
+
+  header->magic = HF_PROTOCOL_MAGIC; 
+  header->version = HF_PROTOCOL_VERSION;
+  header->msg_type = 0;
+  header->flags = HF_MSG_FLAG_NONE;
+  header->payload_size = 0;
+}
+
+
+
+protocol_result_t encode_header(const protocol_header_t *header, uint8_t *out) {
   if (header == NULL || out == NULL) {
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
@@ -117,7 +134,7 @@ protocol_result_t encode_header(const protocol_header *header, uint8_t *out) {
   return PROTOCOL_OK;
 }
 
-protocol_result_t decode_header(protocol_header *header, const uint8_t *in) {
+protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in) {
 
   if (in == NULL || header == NULL) {
     return PROTOCOL_ERR_INVALID_ARGUMENT;
