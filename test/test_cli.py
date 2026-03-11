@@ -24,7 +24,25 @@ class TestCLI(unittest.TestCase):
                 "name": "no_args",
                 "args": [],
                 "rc": 1,
-                "stderr_contains": ["usage:"],
+                "stderr_contains": ["must specify one of -s, -c, or -m", "usage:"],
+            },
+            {
+                "name": "no_mode_with_ip",
+                "args": ["-i", "10.0.0.1"],
+                "rc": 1,
+                "stderr_contains": [
+                    "must specify one of -s, -c, or -m",
+                    "usage:",
+                ],
+            },
+            {
+                "name": "no_mode_with_perf",
+                "args": ["--perf"],
+                "rc": 1,
+                "stderr_contains": [
+                    "must specify one of -s, -c, or -m",
+                    "usage:",
+                ],
             },
             {
                 "name": "invalid_token",
@@ -73,6 +91,33 @@ class TestCLI(unittest.TestCase):
                 "args": ["-c", "-s"],
                 "rc": 1,
                 "stderr_contains": ["invalid client path", "usage:"],
+            },
+            {
+                "name": "message_missing",
+                "args": ["-m"],
+                "rc": 1,
+                "stderr_contains": ["invalid message", "usage:"],
+            },
+            {
+                "name": "mutual_exclusion_c_then_m",
+                "args": ["-c", "in", "-m", "hello"],
+                "rc": 1,
+                "stderr_contains": ["cannot use -c -m together", "usage:"],
+            },
+            {
+                "name": "mutual_exclusion_s_then_m",
+                "args": ["-s", "out", "-m", "hello"],
+                "rc": 1,
+                "stderr_contains": ["cannot use -s -m together", "usage:"],
+            },
+            {
+                "name": "message_mode_has_compress",
+                "args": ["-m", "hello", "--compress"],
+                "rc": 1,
+                "stderr_contains": [
+                    "message mode does not accept --compress",
+                    "usage:",
+                ],
             },
             {
                 "name": "server_mode_has_ip",

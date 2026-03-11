@@ -3,13 +3,15 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include "protocol.h"
 
 void usage(const char *argv0) {
   fprintf(stderr,
           "usage:\n"
           "  %s -s <server_path> [-p <port>] [--perf]\n"
-          "  %s -c <file_path> [-i <ip>] [-p <port>] [--perf] [--compress]\n",
-          argv0, argv0);
+          "  %s -c <file_path> [-i <ip>] [-p <port>] [--perf] [--compress]\n"
+          "  %s -m <message> [-i <ip>] [-p <port>] [--perf]\n",
+          argv0, argv0, argv0);
 }
 
 int parse_port(const char *s, uint16_t *out) {
@@ -35,14 +37,19 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
   opt->mode = init_mode;
   opt->path = NULL;
+  opt->message = NULL;
   opt->ip = "127.0.0.1";
   opt->port = 9000;
   opt->perf = 0;
   opt->compress = 0;
+  opt->msg_type = 0;
+  opt->msg_flags = HF_MSG_FLAG_NONE;
 
   int seen_s = 0;
   int seen_c = 0;
+  int seen_m = 0;
   int ip_set = 0;
+  int mode_count = 0;
 
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
@@ -59,6 +66,8 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         opt->compress = 1;
         continue;
       }
+
+      fprintf(stderr, "invalid argument\n");
       return PARSE_ERR;
     }
 
@@ -101,7 +110,23 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
         opt->mode = client_mode;
         opt->path = v;
+        opt->message = NULL;
+        opt->msg_type = HF_MSG_TYPE_FILE_TRANSFER;
         seen_c = 1;
+        break;
+      }
+      
+      case 'm': {
+        const char *v = NULL;
+        if (need_value(argc, argv, &i, &v) != 0) {
+          fprintf(stderr, "invalid message\n");
+          return PARSE_ERR;
+        }
+        opt->mode = client_mode;
+        opt->path = NULL;
+        opt->message = v;
+        opt->msg_type = HF_MSG_TYPE_TEXT_MESSAGE;
+        seen_m = 1;
         break;
       }
 
@@ -135,8 +160,16 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
       }
 
       default:
+        fprintf(stderr, "invalid argument\n");
         return PARSE_ERR;
     }
+  }
+
+  mode_count = seen_s + seen_c + seen_m;
+
+  if (mode_count == 0) {
+    fprintf(stderr, "must specify one of -s, -c, or -m\n");
+    return PARSE_ERR;
   }
 
   if (seen_s && seen_c) {
@@ -144,17 +177,29 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     return PARSE_ERR;
   }
 
-  if (!seen_s && !seen_c) {
-    if (ip_set) {
-      fprintf(stderr, "server mode does not accept -i\n");
-    }
+  if (seen_s && seen_m) {
+    fprintf(stderr, "cannot use -s -m together\n");
+    return PARSE_ERR;
+  }
+
+  if (seen_c && seen_m) {
+    fprintf(stderr, "cannot use -c -m together\n");
     return PARSE_ERR;
   }
 
   opt->mode = seen_s ? server_mode : client_mode;
-  if (opt->path == NULL) return PARSE_ERR;
+  if (opt->mode == server_mode && opt->path == NULL) return PARSE_ERR;
+  if (opt->mode == client_mode && seen_c && opt->path == NULL) return PARSE_ERR;
+  if (opt->mode == client_mode && seen_m && opt->message == NULL) {
+    return PARSE_ERR;
+  }
   if (ip_set && opt->mode != client_mode) {
     fprintf(stderr, "server mode does not accept -i\n");
+    return PARSE_ERR;
+  }
+
+  if (seen_m && opt->compress) {
+    fprintf(stderr, "message mode does not accept --compress\n");
     return PARSE_ERR;
   }
 
