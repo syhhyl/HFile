@@ -1,8 +1,8 @@
 #ifndef HF_CLIENT_H
 #define HF_CLIENT_H
 
-#include <stdint.h>
+#include "cli.h"
 
-int client(const char *path, const char *ip, uint16_t port, int perf);
+int client(const client_opt_t *cli_opt);
 
 #endif  // HF_CLIENT_H
