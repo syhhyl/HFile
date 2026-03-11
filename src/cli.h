@@ -21,7 +21,8 @@ typedef struct {
   const char *ip;
   uint16_t port;
   int perf;
-  int compress;
+  uint16_t msg_type;
+  uint8_t flags;
 } Opt;
 
 void usage(const char *argv0);

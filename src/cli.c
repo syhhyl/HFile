@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include "protocol.h"
 
 void usage(const char *argv0) {
   fprintf(stderr,
@@ -38,7 +39,8 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->ip = "127.0.0.1";
   opt->port = 9000;
   opt->perf = 0;
-  opt->compress = 0;
+  opt->msg_type = MSG_TYPE_FILE_TRANSFER;
+  opt->flags = HF_PROTOCOL_FLAGS;
 
   int seen_s = 0;
   int seen_c = 0;
@@ -55,10 +57,8 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
       if (strcmp(a, "--perf") == 0) {
         opt->perf = 1;
         continue;
-      } else if (strcmp(a, "--compress") == 0) {
-        opt->compress = 1;
-        continue;
       }
+      
       return PARSE_ERR;
     }
 
