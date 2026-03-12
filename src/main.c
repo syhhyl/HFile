@@ -3,6 +3,22 @@
 #include "server.h"
 #include "client.h"
 
+static inline void init_server_opt(Opt *opt, server_opt_t *server_opt) {
+  server_opt->path = opt->path;
+  server_opt->port= opt->port;
+  server_opt->perf = opt->perf;
+}
+
+static inline void init_client_opt(Opt *opt, client_opt_t *client_opt) {
+  client_opt->path = opt->path;
+  client_opt->message = opt->message;
+  client_opt->ip = opt->ip;
+  client_opt->port = opt->port;
+  client_opt->perf = opt->perf;
+  client_opt->msg_type = opt->msg_type;
+  client_opt->msg_flags = opt->msg_flags; 
+}
+
 int main(int argc, char **argv) {
   net_init();
 
@@ -22,22 +38,12 @@ int main(int argc, char **argv) {
   }
 
   if (opt.mode == server_mode) {
-    server_opt_t server_opt = {
-      .path = opt.path,
-      .port = opt.port,
-      .perf = opt.perf
-    };
+    server_opt_t server_opt;
+    init_server_opt(&opt, &server_opt);
     ret = server(&server_opt);
   } else if (opt.mode == client_mode) {
-    client_opt_t client_opt = {
-      .path = opt.path,
-      .message = opt.message,
-      .ip = opt.ip,
-      .port = opt.port,
-      .perf = opt.perf,
-      .msg_type = opt.msg_type,
-      .msg_flags = opt.msg_flags
-    };
+    client_opt_t client_opt;
+    init_client_opt(&opt, &client_opt);
     ret = client(&client_opt);
   } else {
     usage(argv[0]);
