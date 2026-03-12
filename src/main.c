@@ -22,14 +22,14 @@ int main(int argc, char **argv) {
   }
 
   if (opt.mode == server_mode) {
-    server_opt_t ser_opt = {
+    server_opt_t server_opt = {
       .path = opt.path,
       .port = opt.port,
       .perf = opt.perf
     };
-    ret = server(&ser_opt);
+    ret = server(&server_opt);
   } else if (opt.mode == client_mode) {
-    client_opt_t cli_opt = {
+    client_opt_t client_opt = {
       .path = opt.path,
       .message = opt.message,
       .ip = opt.ip,
@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
       .msg_type = opt.msg_type,
       .msg_flags = opt.msg_flags
     };
-    ret = client(&cli_opt);
+    ret = client(&client_opt);
   } else {
     usage(argv[0]);
   }
