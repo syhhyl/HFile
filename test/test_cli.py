@@ -69,6 +69,12 @@ class TestCLI(unittest.TestCase):
                 "stderr_contains": ["cannot use -s -c together", "usage:"],
             },
             {
+                "name": "duplicate_server_mode",
+                "args": ["-s", "out1", "-s", "out2"],
+                "rc": 1,
+                "stderr_contains": ["duplicate -s", "usage:"],
+            },
+            {
                 "name": "server_path_missing",
                 "args": ["-s"],
                 "rc": 1,
@@ -93,10 +99,22 @@ class TestCLI(unittest.TestCase):
                 "stderr_contains": ["invalid client path", "usage:"],
             },
             {
+                "name": "duplicate_client_mode",
+                "args": ["-c", "in1", "-c", "in2"],
+                "rc": 1,
+                "stderr_contains": ["duplicate -c", "usage:"],
+            },
+            {
                 "name": "message_missing",
                 "args": ["-m"],
                 "rc": 1,
                 "stderr_contains": ["invalid message", "usage:"],
+            },
+            {
+                "name": "duplicate_message_mode",
+                "args": ["-m", "hello", "-m", "world"],
+                "rc": 1,
+                "stderr_contains": ["duplicate -m", "usage:"],
             },
             {
                 "name": "mutual_exclusion_c_then_m",
