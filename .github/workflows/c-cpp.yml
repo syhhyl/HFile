@@ -20,10 +20,10 @@ jobs:
           python-version: "3.11"
 
       - name: Make build script executable
-        run: chmod +x ./build
+        run: chmod +x ./build.sh
 
       - name: Build for Linux
-        run: ./build
+        run: ./build.sh
 
       - name: Run Linux tests
         run: python3 test/test_hf.py
@@ -41,7 +41,7 @@ jobs:
           sudo apt-get install -y mingw-w64
 
       - name: Make build script executable
-        run: chmod +x ./build
+        run: chmod +x ./build.sh
 
       - name: Cross build for Windows
-        run: ./build -w
+        run: ./build.sh -w
