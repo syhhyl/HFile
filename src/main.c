@@ -5,7 +5,7 @@
 
 static inline void init_server_opt(Opt *opt, server_opt_t *server_opt) {
   server_opt->path = opt->path;
-  server_opt->port= opt->port;
+  server_opt->port = opt->port;
   server_opt->perf = opt->perf;
 }
 
@@ -16,7 +16,7 @@ static inline void init_client_opt(Opt *opt, client_opt_t *client_opt) {
   client_opt->port = opt->port;
   client_opt->perf = opt->perf;
   client_opt->msg_type = opt->msg_type;
-  client_opt->msg_flags = opt->msg_flags; 
+  client_opt->msg_flags = opt->msg_flags;
 }
 
 int main(int argc, char **argv) {
@@ -25,7 +25,6 @@ int main(int argc, char **argv) {
   int ret = 1;
   Opt opt = {0};
   parse_result_t res = parse_args(argc, argv, &opt);
-
 
   if (res == PARSE_HELP) {
     usage(argv[0]);
