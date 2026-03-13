@@ -82,6 +82,10 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
       case 's': {
         const char *v = NULL;
+        if (seen_s) {
+          fprintf(stderr, "duplicate -s\n");
+          return PARSE_ERR;
+        }
         if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
           fprintf(stderr, "invalid server path\n");
           return PARSE_ERR;
@@ -95,6 +99,10 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
       case 'c': {
         const char *v = NULL;
+        if (seen_c) {
+          fprintf(stderr, "duplicate -c\n");
+          return PARSE_ERR;
+        }
         if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
           fprintf(stderr, "invalid client path\n");
           return PARSE_ERR;
@@ -110,6 +118,10 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
       
       case 'm': {
         const char *v = NULL;
+        if (seen_m) {
+          fprintf(stderr, "duplicate -m\n");
+          return PARSE_ERR;
+        }
         if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
           fprintf(stderr, "invalid message\n");
           return PARSE_ERR;
