@@ -3,13 +3,13 @@
 #include "server.h"
 #include "client.h"
 
-static inline void init_server_opt(Opt *opt, server_opt_t *server_opt) {
+static inline void init_server_opt(const Opt *opt, server_opt_t *server_opt) {
   server_opt->path = opt->path;
   server_opt->port = opt->port;
   server_opt->perf = opt->perf;
 }
 
-static inline void init_client_opt(Opt *opt, client_opt_t *client_opt) {
+static inline void init_client_opt(const Opt *opt, client_opt_t *client_opt) {
   client_opt->path = opt->path;
   client_opt->message = opt->message;
   client_opt->ip = opt->ip;
@@ -20,9 +20,9 @@ static inline void init_client_opt(Opt *opt, client_opt_t *client_opt) {
 }
 
 int main(int argc, char **argv) {
-  net_init();
-
   int ret = 1;
+  if (net_init() != 0) goto CLEAN_UP;
+
   Opt opt = {0};
   parse_result_t res = parse_args(argc, argv, &opt);
 
@@ -37,11 +37,11 @@ int main(int argc, char **argv) {
   }
 
   if (opt.mode == server_mode) {
-    server_opt_t server_opt;
+    server_opt_t server_opt = {0};
     init_server_opt(&opt, &server_opt);
     ret = server(&server_opt);
   } else if (opt.mode == client_mode) {
-    client_opt_t client_opt;
+    client_opt_t client_opt = {0};
     init_client_opt(&opt, &client_opt);
     ret = client(&client_opt);
   } else usage(argv[0]);
