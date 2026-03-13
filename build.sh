@@ -22,13 +22,14 @@ while [ $# -gt 0 ]; do
     -i|--install)
       DO_INSTALL=1
       ;;
-    -t|--build-type)
+    -t|--target)
       BUILD_TYPE=$(need_value "$1" "${2:-}")
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 [-w|--windows]"
+      echo "Usage: $0 [-w|--windows][-t|--target <target>]"
       echo "  -w, --windows  Cross-compile for Windows using MinGW"
+      echo "  -t, --target <target> Build the specified target" 
       exit 0
       ;;
     *)
