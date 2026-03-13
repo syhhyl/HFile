@@ -23,7 +23,7 @@ jobs:
         run: chmod +x ./build.sh
 
       - name: Build for Linux
-        run: ./build.sh
+        run: ./build.sh -t Release
 
       - name: Run Linux tests
         run: python3 test/test_hf.py
@@ -44,4 +44,4 @@ jobs:
         run: chmod +x ./build.sh
 
       - name: Cross build for Windows
-        run: ./build.sh -w
+        run: ./build.sh -w -t Release
