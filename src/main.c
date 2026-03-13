@@ -28,12 +28,12 @@ int main(int argc, char **argv) {
 
   if (res == PARSE_HELP) {
     usage(argv[0]);
-    net_cleanup();
-    return 0;
+    ret = 0;
+    goto CLEAN_UP;
   } else if (res == PARSE_ERR) {
     usage(argv[0]);
-    net_cleanup();
-    return 1;
+    ret = 1;
+    goto CLEAN_UP;
   }
 
   if (opt.mode == server_mode) {
@@ -44,10 +44,9 @@ int main(int argc, char **argv) {
     client_opt_t client_opt;
     init_client_opt(&opt, &client_opt);
     ret = client(&client_opt);
-  } else {
-    usage(argv[0]);
-  }
+  } else usage(argv[0]);
 
+CLEAN_UP:
   net_cleanup();
   return ret;
 }
