@@ -80,6 +80,20 @@ class TestTransfer(unittest.TestCase):
         dst = self._send_and_assert_ok(src)
         assert_files_equal(self, src, dst)
 
+    def test_text_message_too_large(self) -> None:
+        message = "a" * (256 * 1024 + 1)
+        r = run_hf(
+            self.hf_path,
+            ["-m", message, "-i", self.server.host, "-p", str(self.server.port)],
+            timeout=8.0,
+        )
+        self.assertEqual(
+            r.returncode,
+            1,
+            f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+        self.assertIn("message too large", r.stderr)
+
     def test_fixtures(self) -> None:
         fixtures_dir = Path(__file__).resolve().parent / "fixtures"
         if not fixtures_dir.exists():
