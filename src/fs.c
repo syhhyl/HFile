@@ -146,7 +146,7 @@ void fs_remove_quiet(const char *path) {
   (void)remove(path);
 }
 
-int fs_get_file_name(const char **file_path, const char **file_name) {
+int fs_basename_from_path(const char **file_path, const char **file_name) {
   if (*file_path == NULL) return 1;
   char *tmp;
 #ifdef _WIN32
