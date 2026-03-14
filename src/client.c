@@ -220,9 +220,8 @@ static int client_send_file_transfer(const client_opt_t *opt) {
   for (;;) {
     while (pos < CHUNK_SIZE && remaining > 0) {
       size_t want = CHUNK_SIZE - pos;
-      if ((uint64_t)want > remaining) {
+      if ((uint64_t)want > remaining)
         want = (size_t)remaining;
-      }
 
       uint64_t t_read_start = now_ns();
       ssize_t nr = fs_read(in, buf + pos, want);
