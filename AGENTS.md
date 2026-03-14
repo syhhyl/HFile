@@ -50,7 +50,7 @@ If these notes conflict with the code or tests, trust the code and keep diffs sm
 - `build.sh` stores the active platform in `.build_platform`.
 - Switching between native and Windows builds deletes `build/` and reconfigures.
 - Do not share one `build/` directory between native and Windows builds.
-- Warnings come from `CMakeLists.txt` via `-Wall -Wextra`.
+- Warnings come from `CMakeLists.txt` via `-Wall -Wextra` on GCC/Clang and `/W4` on MSVC.
 - There is no configured formatter, linter, sanitizer, or clang-tidy target.
 - Treat `cmake --build build` as the fastest rebuild after small edits.
 
