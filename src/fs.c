@@ -6,16 +6,12 @@
 
 #ifdef _WIN32
   #include <io.h>
+  #include <windows.h>
 #else
   #include <fcntl.h>
   #include <unistd.h>
 #endif
 
-#ifdef _WIN32
-  #include <windows.h>
-#else
-  #include <stdio.h>
-#endif
 
 int fs_open(const char *path, int flags, int mode) {
 #ifdef _WIN32
