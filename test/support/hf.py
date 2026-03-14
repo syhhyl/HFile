@@ -11,17 +11,38 @@ from pathlib import Path
 from typing import Sequence
 
 
-def resolve_hf_path() -> Path:
+def resolve_hf_path(
+    root: os.PathLike[str] | str | None = None,
+    *,
+    target_os: str | None = None,
+) -> Path:
     """Resolve the hf binary path.
 
-    build/hf (repo-local)
+    Prefer the runnable repo-local binary for the requested target OS.
     """
 
-    build_bin = Path("build") / "hf"
-    if build_bin.exists():
-        return build_bin
+    search_root = Path(root) if root is not None else Path.cwd()
+    resolved_target = target_os
+    if resolved_target is None:
+        resolved_target = "windows" if os.name == "nt" else "posix"
 
-    raise FileNotFoundError("hf binary not found. Build with ./build.sh")
+    if resolved_target == "windows":
+        candidates = [
+            search_root / "build" / "hf.exe",
+            search_root / "build" / "hf",
+        ]
+    elif resolved_target == "posix":
+        candidates = [search_root / "build" / "hf"]
+    else:
+        raise ValueError(f"unsupported target_os: {resolved_target}")
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    raise FileNotFoundError(
+        "hf binary not found. Build with ./build.sh or cmake --build build"
+    )
 
 
 def reserve_free_port(host: str = "127.0.0.1", attempts: int = 32) -> int:
@@ -173,12 +194,14 @@ class HFileServer:
         host: str = "127.0.0.1",
         port: int | None = None,
         log_path: Path | None = None,
+        extra_args: Sequence[os.PathLike[str] | str] = (),
     ) -> None:
         self.hf_path = Path(hf_path)
         self.out_dir = Path(out_dir)
         self.host = host
         self.port = int(port) if port is not None else reserve_free_port(host=host)
         self.log_path = Path(log_path) if log_path is not None else None
+        self.extra_args = tuple(str(arg) for arg in extra_args)
         self._proc: subprocess.Popen[str] | None = None
         self._log_fh = None
 
@@ -202,6 +225,7 @@ class HFileServer:
             str(self.out_dir),
             "-p",
             str(self.port),
+            *self.extra_args,
         ]
 
         self._proc = subprocess.Popen(

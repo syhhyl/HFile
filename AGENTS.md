@@ -20,9 +20,10 @@ If these notes conflict with the code or tests, trust the code and keep diffs sm
 - `src/fs.c`, `src/fs.h`: file and path helpers.
 - `src/helper.c`, `src/helper.h`: timing, debug, perf helpers.
 - `test/test_cli.py`: CLI behavior tests.
+- `test/test_support.py`: shared test-helper tests.
 - `test/test_transfer.py`: end-to-end transfer tests.
 - `test/test_hf.py`: suite wrapper.
-- `test/util_hf.py`: test harness and server process helpers.
+- `test/support/hf.py`: test harness and server process helpers.
 
 ## Agent-Specific Rules
 - No `.cursor/rules/` directory exists.
@@ -49,7 +50,7 @@ If these notes conflict with the code or tests, trust the code and keep diffs sm
 - `build.sh` stores the active platform in `.build_platform`.
 - Switching between native and Windows builds deletes `build/` and reconfigures.
 - Do not share one `build/` directory between native and Windows builds.
-- Warnings come from `CMakeLists.txt` via `-Wall -Wextra`.
+- Warnings come from `CMakeLists.txt` via `-Wall -Wextra` on GCC/Clang and `/W4` on MSVC.
 - There is no configured formatter, linter, sanitizer, or clang-tidy target.
 - Treat `cmake --build build` as the fastest rebuild after small edits.
 
@@ -78,8 +79,8 @@ If these notes conflict with the code or tests, trust the code and keep diffs sm
 - Transfer tests launch a real `hf` server subprocess.
 - Server readiness is detected from stdout containing `listening on `.
 - Transfer tests reserve a free TCP port dynamically; avoid noisy parallel test runs.
-- Test fixtures live under `test/fixtures/`.
-- `test/util_hf.py` resolves only `build/hf`, so install output is not used by tests.
+- Test fixtures live under `test/fixtures/transfer/`.
+- `test/support/hf.py` resolves the host-appropriate binary from `build/hf` or `build/hf.exe`, so install output is not used by tests.
 
 ## Change Strategy
 - Prefer small, local diffs over broad cleanup.

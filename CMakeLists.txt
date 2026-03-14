@@ -17,10 +17,14 @@ target_include_directories(hf PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_compile_options(hf PRIVATE -Wall -Wextra)
+if (MSVC)
+  target_compile_options(hf PRIVATE /W4)
+else()
+  target_compile_options(hf PRIVATE -Wall -Wextra)
+endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-  target_link_libraries(hf PRIVATE ws2_32)
+  target_link_libraries(hf PRIVATE ws2_32 shell32)
 endif()
 
 target_compile_definitions(hf PRIVATE

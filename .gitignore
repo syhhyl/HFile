@@ -4,3 +4,4 @@ build*/
 .ruff_cache/
 .build_platform
 test/__pycache__/
+test/**/__pycache__/
