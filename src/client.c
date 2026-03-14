@@ -80,11 +80,14 @@ static int client_connect(const char *ip, uint16_t port, socket_t *sock_out,
 
 static int client_send_file_transfer(const client_opt_t *opt) {
   int exit_code = 0;
+
+  //--perf
   uint64_t perf_start_ns = now_ns();
   uint64_t perf_io_ns = 0;
   uint64_t perf_net_ns = 0;
   uint64_t perf_file_bytes = 0;
   uint64_t perf_wire_bytes = 0;
+
   int in = -1;
   char *buf = NULL;
 #ifdef _WIN32
@@ -92,25 +95,25 @@ static int client_send_file_transfer(const client_opt_t *opt) {
 #else
   socket_t sock = -1;
 #endif
-
   const char *path = opt->path;
   const char *file_name = NULL;
   uint16_t file_name_len = 0;
   uint64_t content_size = 0;
 
+  //TODO msg_flags
   if (opt->msg_flags != HF_MSG_FLAG_NONE) {
     fprintf(stderr, "unsupported flags for file transfer: %u\n",
             (unsigned)opt->msg_flags);
     return 1;
   }
 
-  if (fs_get_file_name(&path, &file_name) != 0) {
+  if (fs_basename_from_path(&path, &file_name) != 0) {
     fprintf(stderr, "invalid client path\n");
     exit_code = 1;
     goto CLEANUP;
   }
 
-  if (proto_validate_file_name_len(file_name, &file_name_len) != 0) {
+  if (proto_get_file_name_len(file_name, &file_name_len) != 0) {
     fprintf(stderr, "invalid file name length\n");
     exit_code = 1;
     goto CLEANUP;
@@ -129,7 +132,7 @@ static int client_send_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  if (protocol_file_transfer_prefix_size(file_name_len) > CHUNK_SIZE) {
+  if (proto_file_transfer_prefix_size(file_name_len) > CHUNK_SIZE) {
     fprintf(stderr, "protocol payload prefix exceeds buffer size\n");
     exit_code = 1;
     goto CLEANUP;
@@ -166,7 +169,7 @@ static int client_send_file_transfer(const client_opt_t *opt) {
   content_size = (uint64_t)st.st_size;
   perf_file_bytes = content_size;
   uint64_t payload_size =
-    (uint64_t)protocol_file_transfer_prefix_size(file_name_len) + content_size;
+    (uint64_t)proto_file_transfer_prefix_size(file_name_len) + content_size;
   perf_wire_bytes = (uint64_t)HF_PROTOCOL_HEADER_SIZE + payload_size;
 
   protocol_header_t header = {0};
@@ -193,7 +196,7 @@ static int client_send_file_transfer(const client_opt_t *opt) {
   }
 
   uint64_t t_prefix_start = now_ns();
-  proto_res = protocol_send_file_transfer_prefix(sock, file_name, content_size);
+  proto_res = proto_send_file_transfer_prefix(sock, file_name, content_size);
   perf_net_ns += now_ns() - t_prefix_start;
   if (proto_res != PROTOCOL_OK) {
     if (proto_res == PROTOCOL_ERR_FILE_NAME_LEN) {
@@ -312,6 +315,7 @@ static int client_send_text_message(const client_opt_t *opt) {
   const char *message = opt->message;
   size_t message_len = 0;
 
+  // TODO msg_flags
   if (opt->msg_flags != HF_MSG_FLAG_NONE) {
     fprintf(stderr, "unsupported flags for text message: %u\n",
             (unsigned)opt->msg_flags);
@@ -323,12 +327,17 @@ static int client_send_text_message(const client_opt_t *opt) {
     return 1;
   }
 
+  message_len = strlen(message);
+  if (message_len > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
+    fprintf(stderr, "message too large\n");
+    return 1;
+  }
+
   if (client_connect(opt->ip, opt->port, &sock, &perf_net_ns) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
 
-  message_len = strlen(message);
   uint64_t payload_size = (uint64_t)message_len;
   perf_file_bytes = payload_size;
   perf_wire_bytes = (uint64_t)HF_PROTOCOL_HEADER_SIZE + payload_size;
