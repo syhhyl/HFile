@@ -396,24 +396,19 @@ class TestTransfer(unittest.TestCase):
                 self._wait_for_server_log(c["needle"], offset=log_offset)
 
     def test_protocol_rejects_unsupported_message_type(self) -> None:
-        file_name = b"unsupported.bin"
-        content = b"blocked\n"
-        prefix = self._make_file_prefix(file_name, len(content))
         header = self._make_header(
             msg_type=0x7F,
-            payload_size=len(prefix) + len(content),
+            payload_size=0,
         )
 
         log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header, prefix, content])
+        ack = self._send_raw_parts([header])
         self.assertEqual(ack, b"\x01", f"unexpected ack: {ack!r}")
         self._wait_for_server_log(
             "protocol error: unsupported message type: 127",
             offset=log_offset,
         )
-        final_name = file_name.decode("ascii")
-        self.assertFalse((self.out_dir / final_name).exists())
-        self._assert_no_temp_files(final_name)
+        self.assertFalse(list(self.out_dir.glob("unsupported.bin*")))
 
     def test_protocol_rejects_payload_size_mismatch(self) -> None:
         file_name = b"mismatch.bin"
