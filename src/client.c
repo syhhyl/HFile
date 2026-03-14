@@ -240,6 +240,7 @@ static int client_send_file_transfer(const client_opt_t *opt) {
       remaining -= (uint64_t)nr;
     }
 
+    //TODO can we use multithreading ?
     if (pos > 0) {
       uint64_t t_send_start = now_ns();
       ssize_t sent = send_all(sock, buf, pos);
