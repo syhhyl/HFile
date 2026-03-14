@@ -17,20 +17,19 @@
   #include <unistd.h>
 #endif
 
-
-int server(const server_opt_t *ser_opt) {
-  int exit_code = 0;
+static inline int create_listener_socket(uint16_t port, socket_t *sock_out) {
   int opt = 1;
-#ifdef _WIN32
-  SOCKET sock = INVALID_SOCKET;
-#else
-  int sock = -1;
-#endif
+  struct sockaddr_in addr;
 
-  if (ser_opt->path == NULL || strlen(ser_opt->path) == 0) {
-    exit_code = 1;
-    goto CLOSE_SOCK;
+  if (sock_out == NULL) {
+    return 1;
   }
+
+#ifdef _WIN32
+  socket_t sock = INVALID_SOCKET;
+#else
+  socket_t sock = -1;
+#endif
 
 #ifdef _WIN32
   sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -40,24 +39,23 @@ int server(const server_opt_t *ser_opt) {
   if (sock < 0) {
 #endif
     sock_perror("socket");
-    exit_code = 1;
-    goto CLOSE_SOCK;
+    return 1;
   }
 
 #ifdef _WIN32
-  if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt)) == SOCKET_ERROR) {
+  if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt,
+                 sizeof(opt)) == SOCKET_ERROR) {
 #else
   if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
 #endif
     sock_perror("setsockopt(SO_REUSEADDR)");
-    exit_code = 1;
-    goto CLOSE_SOCK;
+    socket_close(sock);
+    return 1;
   }
-  
-  struct sockaddr_in addr;
+
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(ser_opt->port);
+  addr.sin_port = htons(port);
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
 #ifdef _WIN32
@@ -66,20 +64,42 @@ int server(const server_opt_t *ser_opt) {
   if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 #endif
     sock_perror("bind");
-    exit_code = 1;
-    goto CLOSE_SOCK;
+    socket_close(sock);
+    return 1;
   }
-  
+
 #ifdef _WIN32
   if (listen(sock, 4) == SOCKET_ERROR) {
 #else
   if (listen(sock, 4) == -1) {
 #endif
     sock_perror("listen");
+    socket_close(sock);
+    return 1;
+  }
+
+  *sock_out = sock;
+  return 0;
+}
+
+int server(const server_opt_t *ser_opt) {
+  int exit_code = 0;
+
+  if (ser_opt->path == NULL || strlen(ser_opt->path) == 0) {
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+
+#ifdef _WIN32
+  SOCKET sock = INVALID_SOCKET;
+#else
+  int sock = -1;
+#endif
+
+  if (create_listener_socket(ser_opt->port, &sock) != 0) {
     exit_code = 1;
     goto CLOSE_SOCK;
   }
-  
 
   printf("listening on %s port %u\n", ser_opt->path, (unsigned)ser_opt->port);
   fflush(stdout);
@@ -159,11 +179,12 @@ int server(const server_opt_t *ser_opt) {
     perf_wire_bytes = (uint64_t)HF_PROTOCOL_HEADER_SIZE + proto_header.payload_size;
 
     if (proto_header.msg_type == HF_MSG_TYPE_TEXT_MESSAGE) {
-      if (proto_header.payload_size > ((uint64_t)SIZE_MAX - 1u)) {
+      if (proto_header.payload_size > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
         fprintf(stderr, "protocol error: message payload too large\n");
         exit_code = 1;
         goto CLEANUP_CONN;
       }
+
       size_t msg_len = (size_t)proto_header.payload_size;
       char *message = (char *)malloc(msg_len + 1u);
       if (message == NULL) {
@@ -190,29 +211,29 @@ int server(const server_opt_t *ser_opt) {
 
       message[msg_len] = '\0';
       perf_file_bytes = (uint64_t)msg_len;
-      printf("message: %s\n", message);
+      printf("msg: %s\n", message);
       fflush(stdout);
       free(message);
       ack = 0;
       goto CLEANUP_CONN;
     }
 
-    if (proto_header.msg_type != HF_MSG_TYPE_FILE_TRANSFER) {
-      fprintf(stderr, "protocol error: unsupported message type: %u\n",
-              (unsigned)proto_header.msg_type);
-      exit_code = 1;
-      goto CLEANUP_CONN;
-    }
+    // if (proto_header.msg_type != HF_MSG_TYPE_FILE_TRANSFER) {
+    //   fprintf(stderr, "protocol error: unsupported message type: %u\n",
+    //           (unsigned)proto_header.msg_type);
+    //   exit_code = 1;
+    //   goto CLEANUP_CONN;
+    // }
 
     if (proto_header.payload_size <
-        (uint64_t)protocol_file_transfer_prefix_size(0)) {
+        (uint64_t)proto_file_transfer_prefix_size(0)) {
       fprintf(stderr, "protocol error: payload size too small\n");
       exit_code = 1;
       goto CLEANUP_CONN;
     }
 
     uint64_t t_recv_payload_start = now_ns();
-    header_res = protocol_recv_file_transfer_prefix(conn, &file_name,
+    header_res = proto_recv_file_transfer_prefix(conn, &file_name,
                                                     &content_size);
     perf_net_ns += now_ns() - t_recv_payload_start;
     if (header_res != PROTOCOL_OK) {
@@ -238,7 +259,7 @@ int server(const server_opt_t *ser_opt) {
     }
 
     uint64_t expected_payload_size =
-      (uint64_t)protocol_file_transfer_prefix_size(file_len) + content_size;
+      (uint64_t)proto_file_transfer_prefix_size(file_len) + content_size;
     if (proto_header.payload_size != expected_payload_size) {
       fprintf(stderr, "protocol error: payload size mismatch\n");
       exit_code = 1;
@@ -302,7 +323,8 @@ int server(const server_opt_t *ser_opt) {
     while (remaining > 0) {
       ssize_t n = 0;
       size_t want = CHUNK_SIZE;
-      if (remaining < (uint64_t)want) want = (size_t)remaining;
+      if (remaining < (uint64_t)want)
+        want = (size_t)remaining;
 
 #ifdef _WIN32
       uint64_t t_recv_chunk_start = now_ns();
@@ -338,6 +360,7 @@ int server(const server_opt_t *ser_opt) {
         break;
       }
 
+      //TODO can we use multithreading ?
       uint64_t t_write_start = now_ns();
       ssize_t nw = fs_write_all(out, buf, (size_t)n);
       perf_io_ns += now_ns() - t_write_start;
@@ -422,5 +445,6 @@ CLOSE_SOCK:
     socket_close(sock);
   }
 
+CLEAN_UP:
   return exit_code;
 }
