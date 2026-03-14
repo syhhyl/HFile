@@ -4,34 +4,31 @@
 #include <stdlib.h>
 #include <string.h>
 
-int proto_validate_file_name_len(const char *file_name, uint16_t *out_len) {
+int proto_get_file_name_len(const char *file_name, uint16_t *out_len) {
   size_t len = 0;
 
-  if (file_name == NULL || out_len == NULL) {
-    return 1;
-  }
+  if (file_name == NULL || out_len == NULL) return 1;
 
   len = strlen(file_name);
-  if (len == 0 || len > HF_PROTOCOL_MAX_FILE_NAME_LEN) {
+  if (len == 0 || len > HF_PROTOCOL_MAX_FILE_NAME_LEN)
     return 1;
-  }
 
   *out_len = (uint16_t)len;
   return 0;
 }
 
-size_t protocol_file_transfer_prefix_size(uint16_t file_name_len) {
+size_t proto_file_transfer_prefix_size(uint16_t file_name_len) {
   return sizeof(uint16_t) + (size_t)file_name_len + sizeof(uint64_t);
 }
 
-protocol_result_t protocol_send_file_transfer_prefix(socket_t sock,
+protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
                                                      const char *file_name,
                                                      uint64_t content_size) {
   uint16_t file_name_len = 0;
   uint16_t net_len = 0;
   uint8_t szbuf[8];
 
-  if (proto_validate_file_name_len(file_name, &file_name_len) != 0) {
+  if (proto_get_file_name_len(file_name, &file_name_len) != 0) {
     return PROTOCOL_ERR_FILE_NAME_LEN;
   }
 
@@ -52,7 +49,7 @@ protocol_result_t protocol_send_file_transfer_prefix(socket_t sock,
   return PROTOCOL_OK;
 }
 
-protocol_result_t protocol_recv_file_transfer_prefix(socket_t sock,
+protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
                                                      char **file_name_out,
                                                      uint64_t *content_size_out) {
   uint16_t net_len = 0;

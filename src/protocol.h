@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #define HF_PROTOCOL_MAX_FILE_NAME_LEN 255u
+#define HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE (256u * 1024u)
 #define HF_PROTOCOL_HEADER_SIZE 13u
 
 #define HF_PROTOCOL_MAGIC 0x0429u
@@ -47,12 +48,12 @@ protocol_result_t recv_header(socket_t sock, uint8_t *out);
 
 
 
-int proto_validate_file_name_len(const char *file_name, uint16_t *out_len);
-size_t protocol_file_transfer_prefix_size(uint16_t file_name_len);
-protocol_result_t protocol_send_file_transfer_prefix(socket_t sock,
+int proto_get_file_name_len(const char *file_name, uint16_t *out_len);
+size_t proto_file_transfer_prefix_size(uint16_t file_name_len);
+protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
                                                      const char *file_name,
                                                      uint64_t content_size);
-protocol_result_t protocol_recv_file_transfer_prefix(socket_t sock,
+protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
                                                      char **file_name_out,
                                                      uint64_t *content_size_out);
 
