@@ -1,14 +1,23 @@
-name: C/C++ CI
+name: CI
 
 on:
   push:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  linux-build-test:
-    runs-on: ubuntu-latest
+  native-build-test:
+    name: Native build and tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout source
@@ -19,21 +28,32 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Make build script executable
-        run: chmod +x ./build.sh
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v6
 
-      - name: Build for Linux
-        run: ./build.sh -t Release
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Run Linux tests
-        run: python3 test/test_hf.py
+      - name: Configure CMake
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run test suite
+        run: python -m unittest -v test.test_hf
 
   windows-cross-build:
+    name: Windows cross-build (MinGW)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v5
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v6
 
       - name: Install MinGW
         run: |
@@ -44,4 +64,4 @@ jobs:
         run: chmod +x ./build.sh
 
       - name: Cross build for Windows
-        run: ./build.sh -w -t Release
+        run: BUILD_TYPE=Release ./build.sh -w

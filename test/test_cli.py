@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
-from test.util_hf import resolve_hf_path, run_hf
+from test.support.hf import make_temp_dir, resolve_hf_path, run_hf
 
 
 class TestCLI(unittest.TestCase):
@@ -201,6 +202,36 @@ class TestCLI(unittest.TestCase):
                         r.stderr,
                         f"argv={r.argv} missing {needle!r} in stderr={r.stderr!r}",
                     )
+
+    def test_client_rejects_invalid_ip_literal(self) -> None:
+        with make_temp_dir(prefix="hf_cli_") as tmp_dir:
+            src = Path(tmp_dir) / "ip.txt"
+            src.write_bytes(b"hello\n")
+
+            r = run_hf(
+                self.hf_path,
+                ["-c", src, "-i", "not_an_ip"],
+                timeout=5.0,
+            )
+
+        self.assertEqual(
+            r.returncode,
+            1,
+            f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+        self.assertIn("inet_pton", r.stderr)
+
+    def test_client_rejects_missing_source_file(self) -> None:
+        with make_temp_dir(prefix="hf_cli_") as tmp_dir:
+            missing = Path(tmp_dir) / "missing.txt"
+            r = run_hf(self.hf_path, ["-c", missing], timeout=5.0)
+
+        self.assertEqual(
+            r.returncode,
+            1,
+            f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+        self.assertIn("open", r.stderr)
 
 
 if __name__ == "__main__":
