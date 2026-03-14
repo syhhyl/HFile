@@ -24,7 +24,7 @@ else()
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-  target_link_libraries(hf PRIVATE ws2_32)
+  target_link_libraries(hf PRIVATE ws2_32 shell32)
 endif()
 
 target_compile_definitions(hf PRIVATE
