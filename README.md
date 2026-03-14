@@ -1,6 +1,6 @@
 # HFile
 
-HFile is a lightweight terminal-based bytes transfer tool written in C. (now support file and message)
+HFile is a lightweight terminal-based bytes transfer tool written in C. (now supports files and messages)
 
 It is designed around a simple idea: make peer-to-peer byte exchange clear, controllable, and easy to extend. 
 
