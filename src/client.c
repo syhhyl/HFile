@@ -10,7 +10,6 @@
 #include <inttypes.h>
 #include <fcntl.h>
 #include "fs.h"
-#include <unistd.h>
 #include <sys/stat.h>
 
 
