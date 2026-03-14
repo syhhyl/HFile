@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import shutil
+import socket
+import struct
+import time
 import unittest
 from pathlib import Path
 
@@ -81,18 +84,30 @@ class TestTransfer(unittest.TestCase):
         assert_files_equal(self, src, dst)
 
     def test_text_message_too_large(self) -> None:
-        message = "a" * (256 * 1024 + 1)
-        r = run_hf(
-            self.hf_path,
-            ["-m", message, "-i", self.server.host, "-p", str(self.server.port)],
-            timeout=8.0,
-        )
-        self.assertEqual(
-            r.returncode,
-            1,
-            f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
-        )
-        self.assertIn("message too large", r.stderr)
+        payload_size = 256 * 1024 + 1
+        header = struct.pack("!HBBBQ", 0x0429, 0x02, 0x02, 0x00, payload_size)
+
+        with socket.create_connection(
+            (self.server.host, self.server.port), timeout=8.0
+        ) as s:
+            s.sendall(header)
+            s.shutdown(socket.SHUT_WR)
+            ack = s.recv(1)
+
+        self.assertEqual(ack, b"\x01", f"unexpected ack: {ack!r}")
+
+        deadline = time.monotonic() + 5.0
+        needle = "protocol error: message payload too large"
+        while time.monotonic() < deadline:
+            log_text = tail_text_file(self.server.log_path or Path(""))
+            if needle in log_text:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail(
+                f"missing {needle!r} in server log: "
+                f"{tail_text_file(self.server.log_path or Path(''))!r}"
+            )
 
     def test_fixtures(self) -> None:
         fixtures_dir = Path(__file__).resolve().parent / "fixtures"
