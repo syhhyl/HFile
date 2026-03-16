@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 project(HFile VERSION 0.0.1 LANGUAGES C)
 
 add_executable(hf
-  src/main.c
+  src/hfile.c
   src/server.c
   src/client.c
   src/protocol.c
