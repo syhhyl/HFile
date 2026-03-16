@@ -20,7 +20,7 @@ from test.support.hf import (
 
 CHUNK_SIZE = 1024 * 1024
 PROTOCOL_MAGIC = 0x0429
-PROTOCOL_VERSION = 0x02
+PROTOCOL_VERSION = 0x03
 MSG_TYPE_FILE_TRANSFER = 0x01
 MSG_TYPE_TEXT_MESSAGE = 0x02
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "transfer"
@@ -138,6 +138,27 @@ class TestTransfer(unittest.TestCase):
                 s.sendall(part)
             s.shutdown(socket.SHUT_WR)
             return s.recv(1)
+
+    def _send_raw_file_transfer(
+        self,
+        header: bytes,
+        prefix: bytes,
+        body: bytes,
+        *,
+        timeout: float = 8.0,
+    ) -> tuple[bytes, bytes]:
+        with socket.create_connection(
+            (self.server.host, self.server.port), timeout=timeout
+        ) as s:
+            s.settimeout(timeout)
+            s.sendall(header)
+            s.sendall(prefix)
+            ready_ack = s.recv(1)
+            if ready_ack == b"\x00" and body:
+                s.sendall(body)
+            s.shutdown(socket.SHUT_WR)
+            final_ack = s.recv(1)
+            return ready_ack, final_ack
 
     def _assert_no_temp_files(self, final_name: str) -> None:
         matches = sorted(
@@ -269,6 +290,24 @@ class TestTransfer(unittest.TestCase):
         self.assertFalse(dst.exists(), f"unexpected output file: {dst}")
         self._assert_no_temp_files(src.name)
 
+    def test_protocol_rejects_invalid_file_name_before_body(self) -> None:
+        file_name = b"bad..name.bin"
+        content_size = 1024
+        prefix = self._make_file_prefix(file_name, content_size)
+        header = self._make_header(
+            msg_type=MSG_TYPE_FILE_TRANSFER,
+            payload_size=len(prefix) + content_size,
+        )
+
+        log_offset = self._server_log_offset()
+        ack = self._send_raw_parts([header, prefix])
+        self.assertEqual(ack, b"\x01", f"unexpected ack: {ack!r}")
+        self._wait_for_server_log(
+            f"invalid file name: {file_name.decode('ascii')}", offset=log_offset
+        )
+        self.assertFalse((self.out_dir / file_name.decode("ascii")).exists())
+        self._assert_no_temp_files(file_name.decode("ascii"))
+
     def test_perf_option_reports_on_client_and_server(self) -> None:
         with make_temp_dir(prefix="hf_perf_") as tmp_dir:
             base_dir = Path(tmp_dir)
@@ -325,7 +364,14 @@ class TestTransfer(unittest.TestCase):
 
     def test_text_message_too_large(self) -> None:
         payload_size = 256 * 1024 + 1
-        header = struct.pack("!HBBBQ", 0x0429, 0x02, 0x02, 0x00, payload_size)
+        header = struct.pack(
+            "!HBBBQ",
+            PROTOCOL_MAGIC,
+            PROTOCOL_VERSION,
+            MSG_TYPE_TEXT_MESSAGE,
+            0x00,
+            payload_size,
+        )
 
         with socket.create_connection(
             (self.server.host, self.server.port), timeout=8.0
@@ -365,7 +411,7 @@ class TestTransfer(unittest.TestCase):
                 "header": self._make_header(
                     msg_type=MSG_TYPE_TEXT_MESSAGE,
                     payload_size=0,
-                    version=0x03,
+                    version=PROTOCOL_VERSION + 1,
                 ),
                 "needle": "protocol error: unsupported protocol version",
             },
@@ -437,8 +483,9 @@ class TestTransfer(unittest.TestCase):
         )
 
         log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header, prefix, b"x" * 100])
-        self.assertEqual(ack, b"\x01", f"unexpected ack: {ack!r}")
+        ready_ack, final_ack = self._send_raw_file_transfer(header, prefix, b"x" * 100)
+        self.assertEqual(ready_ack, b"\x00", f"unexpected ready ack: {ready_ack!r}")
+        self.assertEqual(final_ack, b"\x01", f"unexpected final ack: {final_ack!r}")
         self._wait_for_server_log(
             "protocol error: unexpected EOF while receiving file",
             offset=log_offset,
