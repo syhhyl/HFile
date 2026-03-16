@@ -17,6 +17,7 @@
 #define HF_MSG_TYPE_TEXT_MESSAGE 0x02u
 
 #define HF_MSG_FLAG_NONE 0x00u
+#define HF_MSG_FLAG_COMPRESS 0x01u
 
 // protocol header struct
 typedef struct {
