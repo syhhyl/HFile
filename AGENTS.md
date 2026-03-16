@@ -144,11 +144,11 @@ If these notes conflict with the code or tests, trust the code and keep diffs sm
 - Prefer `self.assert...` calls with informative failure messages.
 - Reuse helpers from `test/support/hf.py` instead of duplicating subprocess or temp-dir logic.
 ## Protocol And Runtime Notes
-- `HF_PROTOCOL_HEADER_SIZE` is `13` bytes; current magic and version are `0x0429` and `0x02`.
-- File transfers send file-name length, file name bytes, content size, then content bytes.
+- `HF_PROTOCOL_HEADER_SIZE` is `13` bytes; current magic and version are `0x0429` and `0x03`.
+- File transfers send file-name length, file name bytes, and content size, then wait for a one-byte server ready ack before sending content bytes.
 - Text messages use `HF_MSG_TYPE_TEXT_MESSAGE` and are capped at `256 KiB`.
 - Reject unsafe file names containing `/`, `\\`, or `..`.
-- The server ack byte is `0` for success and nonzero for failure.
+- The server ack byte is `0` for success and nonzero for failure; file transfers use one ready ack before the body and one final ack after it.
 - Useful helpers: `send_header(...)`, `recv_header(...)`, `proto_send_file_transfer_prefix(...)`, `proto_recv_file_transfer_prefix(...)`, `fs_validate_file_name(...)`, `fs_join_path(...)`.
 - Perf reporting comes from `report_transfer_perf(...)` and is written to `stderr`.
 ## Quick Checklist
