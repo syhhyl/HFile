@@ -29,6 +29,9 @@ def run_all() -> int:
 
 
 def load_tests(loader: unittest.TestLoader, tests, pattern):
+    if pattern is not None:
+        return tests
+
     root = Path(__file__).resolve().parents[1]
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))

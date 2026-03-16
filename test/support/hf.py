@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import ast
 import os
+import re
 import socket
 import subprocess
 import tempfile
 import time
+from functools import lru_cache
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -91,6 +94,104 @@ def tail_text_file(path: Path, max_bytes: int = 32 * 1024) -> str:
         return data.decode("utf-8", errors="replace")
     except Exception:
         return repr(data)
+
+
+def wait_for_text_in_file(
+    path: Path,
+    needle: str,
+    *,
+    offset: int = 0,
+    timeout: float = 5.0,
+    interval: float = 0.05,
+) -> str | None:
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            data = b""
+
+        text = data[offset:].decode("utf-8", errors="replace")
+        if needle in text:
+            return text
+
+        time.sleep(interval)
+
+    return None
+
+
+def _eval_int_expr(expr: str) -> int:
+    normalized = re.sub(
+        r"0x[0-9A-Fa-f]+[uUlL]*|\d+[uUlL]*",
+        lambda m: re.sub(r"[uUlL]+$", "", m.group(0)),
+        expr,
+    )
+    node = ast.parse(normalized, mode="eval")
+
+    def visit(n: ast.AST) -> int:
+        if isinstance(n, ast.Expression):
+            return visit(n.body)
+        if isinstance(n, ast.Constant) and isinstance(n.value, int):
+            return int(n.value)
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.UAdd, ast.USub)):
+            value = visit(n.operand)
+            return value if isinstance(n.op, ast.UAdd) else -value
+        if isinstance(n, ast.BinOp):
+            left = visit(n.left)
+            right = visit(n.right)
+            if isinstance(n.op, ast.Add):
+                return left + right
+            if isinstance(n.op, ast.Sub):
+                return left - right
+            if isinstance(n.op, ast.Mult):
+                return left * right
+            if isinstance(n.op, ast.FloorDiv):
+                return left // right
+            if isinstance(n.op, ast.Div):
+                return left // right
+            if isinstance(n.op, ast.Mod):
+                return left % right
+            if isinstance(n.op, ast.LShift):
+                return left << right
+            if isinstance(n.op, ast.RShift):
+                return left >> right
+            if isinstance(n.op, ast.BitOr):
+                return left | right
+            if isinstance(n.op, ast.BitAnd):
+                return left & right
+            if isinstance(n.op, ast.BitXor):
+                return left ^ right
+
+        raise ValueError(f"unsupported integer expression: {expr!r}")
+
+    return visit(node)
+
+
+@lru_cache(maxsize=1)
+def _protocol_defines() -> dict[str, int]:
+    header_path = Path(__file__).resolve().parents[2] / "src" / "protocol.h"
+    text = header_path.read_text(encoding="utf-8")
+    values: dict[str, int] = {}
+
+    for line in text.splitlines():
+        m = re.match(r"^#define\s+(HF_[A-Z0-9_]+)\s+(.+?)\s*$", line)
+        if m is None:
+            continue
+        name, expr = m.groups()
+        expr = expr.split("//", 1)[0].strip()
+        if not expr:
+            continue
+        values[name] = _eval_int_expr(expr)
+
+    return values
+
+
+def protocol_define(name: str) -> int:
+    try:
+        return _protocol_defines()[name]
+    except KeyError as e:
+        raise KeyError(f"protocol define not found: {name}") from e
 
 
 @dataclass(frozen=True)
