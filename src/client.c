@@ -13,17 +13,19 @@
 #include <sys/stat.h>
 
 
-static int client_recv_ack(socket_t sock, uint64_t *perf_net_ns) {
+static int client_recv_ack(socket_t sock, uint64_t *perf_net_ns,
+                           const char *recv_ctx,
+                           const char *failure_ctx) {
   uint8_t ack = 1;
   uint64_t t_ack_start = now_ns();
   if (recv_all(sock, &ack, sizeof(ack)) != (ssize_t)sizeof(ack)) {
     *perf_net_ns += now_ns() - t_ack_start;
-    sock_perror("recv_all(ack)");
+    sock_perror(recv_ctx);
     return 1;
   }
   *perf_net_ns += now_ns() - t_ack_start;
   if (ack != 0) {
-    fprintf(stderr, "server reported transfer failure (ack=%u)\n", (unsigned)ack);
+    fprintf(stderr, "%s (ack=%u)\n", failure_ctx, (unsigned)ack);
     return 1;
   }
 
@@ -100,10 +102,13 @@ static int client_send_file_transfer(const client_opt_t *opt) {
   uint64_t content_size = 0;
 
   //TODO msg_flags
-  if (opt->msg_flags != HF_MSG_FLAG_NONE) {
-    fprintf(stderr, "unsupported flags for file transfer: %u\n",
-            (unsigned)opt->msg_flags);
-    return 1;
+  // if (opt->msg_flags != HF_MSG_FLAG_NONE) {
+  //   fprintf(stderr, "unsupported flags for file transfer: %u\n",
+  //           (unsigned)opt->msg_flags);
+  //   return 1;
+  // }
+  if (opt->msg_flags == HF_MSG_FLAG_COMPRESS) {
+    printf("TODO compress\n");
   }
 
   if (fs_basename_from_path(&path, &file_name) != 0) {
@@ -207,6 +212,12 @@ static int client_send_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
+  if (client_recv_ack(sock, &perf_net_ns, "recv_all(file_transfer_ready_ack)",
+                      "server reported transfer failure") != 0) {
+    exit_code = 1;
+    goto CLEANUP;
+  }
+
   size_t pos = 0;
   uint64_t remaining = content_size;
   buf = (char *)malloc(CHUNK_SIZE);
@@ -267,7 +278,8 @@ static int client_send_file_transfer(const client_opt_t *opt) {
   }
 #endif
 
-  if (client_recv_ack(sock, &perf_net_ns) != 0) {
+  if (client_recv_ack(sock, &perf_net_ns, "recv_all(file_transfer_final_ack)",
+                      "server reported transfer failure") != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
@@ -385,7 +397,8 @@ static int client_send_text_message(const client_opt_t *opt) {
   }
 #endif
 
-  if (client_recv_ack(sock, &perf_net_ns) != 0) {
+  if (client_recv_ack(sock, &perf_net_ns, "recv_all(message_ack)",
+                      "server reported transfer failure") != 0) {
     exit_code = 1;
     goto CLEANUP;
   }

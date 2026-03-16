@@ -169,16 +169,16 @@ int server(const server_opt_t *ser_opt) {
       goto CLEANUP_CONN;
     }
 
-    if (proto_header.flags != HF_MSG_FLAG_NONE) {
-      fprintf(stderr, "protocol error: unsupported flags: %u\n",
-              (unsigned)proto_header.flags);
-      exit_code = 1;
-      goto CLEANUP_CONN;
-    }
-
     perf_wire_bytes = (uint64_t)HF_PROTOCOL_HEADER_SIZE + proto_header.payload_size;
 
     if (proto_header.msg_type == HF_MSG_TYPE_TEXT_MESSAGE) {
+      if (proto_header.flags != HF_MSG_FLAG_NONE) {
+        fprintf(stderr, "protocol error: unsupported flags: %u\n",
+                (unsigned)proto_header.flags);
+        exit_code = 1;
+        goto CLEANUP_CONN;
+      }
+
       if (proto_header.payload_size > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
         fprintf(stderr, "protocol error: message payload too large\n");
         exit_code = 1;
@@ -221,6 +221,13 @@ int server(const server_opt_t *ser_opt) {
     if (proto_header.msg_type != HF_MSG_TYPE_FILE_TRANSFER) {
       fprintf(stderr, "protocol error: unsupported message type: %u\n",
               (unsigned)proto_header.msg_type);
+      exit_code = 1;
+      goto CLEANUP_CONN;
+    }
+
+    if ((proto_header.flags & (uint8_t)~HF_MSG_FLAG_COMPRESS) != 0) {
+      fprintf(stderr, "protocol error: unsupported flags: %u\n",
+              (unsigned)proto_header.flags);
       exit_code = 1;
       goto CLEANUP_CONN;
     }
@@ -313,6 +320,16 @@ int server(const server_opt_t *ser_opt) {
     buf = (char *)malloc(CHUNK_SIZE);
     if (buf == NULL) {
       perror("malloc(buf)");
+      exit_code = 1;
+      goto CLEANUP_CONN;
+    }
+
+    uint8_t ready_ack = 0;
+    t_ack_start = now_ns();
+    ssize_t ready_ack_sent = send_all(conn, &ready_ack, sizeof(ready_ack));
+    perf_net_ns += now_ns() - t_ack_start;
+    if (ready_ack_sent != (ssize_t)sizeof(ready_ack)) {
+      sock_perror("send_all(file_transfer_ready_ack)");
       exit_code = 1;
       goto CLEANUP_CONN;
     }
