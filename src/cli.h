@@ -22,7 +22,7 @@ typedef struct {
   const char *ip;
   uint16_t port;
   int perf;
-  int compress;
+  // int compress;
   uint8_t msg_type;
   uint8_t msg_flags;
 } Opt;

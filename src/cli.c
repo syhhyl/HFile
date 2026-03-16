@@ -41,7 +41,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->ip = "127.0.0.1";
   opt->port = 9000;
   opt->perf = 0;
-  opt->compress = 0;
+  // opt->compress = 0;
   opt->msg_type = 0;
   opt->msg_flags = HF_MSG_FLAG_NONE;
 
@@ -63,7 +63,8 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         opt->perf = 1;
         continue;
       } else if (strcmp(a, "--compress") == 0) {
-        opt->compress = 1;
+        // opt->compress = 1;
+        opt->msg_flags |= HF_MSG_FLAG_COMPRESS;
         continue;
       }
 
@@ -199,7 +200,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     return PARSE_ERR;
   }
 
-  if (seen_m && opt->compress) {
+  if (seen_m && (opt->msg_flags == HF_MSG_FLAG_COMPRESS)) {
     fprintf(stderr, "message mode does not accept --compress\n");
     return PARSE_ERR;
   }
