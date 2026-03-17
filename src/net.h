@@ -53,6 +53,8 @@ ssize_t recv_all(
 
 void encode_u64_be(uint64_t v, uint8_t out[8]);
 uint64_t decode_u64_be(const uint8_t in[8]);
+void encode_u32_be(uint32_t v, uint8_t out[4]);
+uint32_t decode_u32_be(const uint8_t in[4]);
 
 void sock_perror(const char *msg);
 
