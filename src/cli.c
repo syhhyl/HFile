@@ -200,9 +200,15 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     return PARSE_ERR;
   }
 
-  if (seen_m && (opt->msg_flags == HF_MSG_FLAG_COMPRESS)) {
+  if (seen_m && ((opt->msg_flags & HF_MSG_FLAG_COMPRESS) != 0)) {
     fprintf(stderr, "message mode does not accept --compress\n");
     return PARSE_ERR;
+  }
+
+  if (seen_s && ((opt->msg_flags & HF_MSG_FLAG_COMPRESS) != 0)) {
+    fprintf(stderr, "server mode does not accept --compress\n");
+    return PARSE_ERR;
+
   }
 
   return PARSE_OK;
