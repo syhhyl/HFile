@@ -21,6 +21,10 @@ size_t proto_file_transfer_prefix_size(uint16_t file_name_len) {
   return sizeof(uint16_t) + (size_t)file_name_len + sizeof(uint64_t);
 }
 
+size_t proto_compressed_block_size(uint32_t stored_size) {
+  return HF_COMPRESS_BLOCK_HEADER_SIZE + (size_t)stored_size;
+}
+
 protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
                                                      const char *file_name,
                                                      uint64_t content_size) {
@@ -50,8 +54,8 @@ protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
 }
 
 protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
-                                                     char **file_name_out,
-                                                     uint64_t *content_size_out) {
+                                                      char **file_name_out,
+                                                      uint64_t *content_size_out) {
   uint16_t net_len = 0;
   uint16_t file_name_len = 0;
   char *file_name = NULL;
@@ -94,6 +98,43 @@ protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
 
   *file_name_out = file_name;
   *content_size_out = decode_u64_be(szbuf);
+  return PROTOCOL_OK;
+}
+
+protocol_result_t proto_encode_compressed_block_header(
+  uint8_t *out,
+  uint8_t block_type,
+  uint32_t raw_size,
+  uint32_t stored_size) {
+  uint8_t *base = out;
+
+  if (out == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  *base++ = block_type;
+  encode_u32_be(raw_size, base);
+  base += sizeof(uint32_t);
+  encode_u32_be(stored_size, base);
+  return PROTOCOL_OK;
+}
+
+protocol_result_t proto_decode_compressed_block_header(
+  const uint8_t *in,
+  uint8_t *block_type_out,
+  uint32_t *raw_size_out,
+  uint32_t *stored_size_out) {
+  const uint8_t *base = in;
+
+  if (in == NULL || block_type_out == NULL || raw_size_out == NULL ||
+      stored_size_out == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  *block_type_out = *base++;
+  *raw_size_out = decode_u32_be(base);
+  base += sizeof(uint32_t);
+  *stored_size_out = decode_u32_be(base);
   return PROTOCOL_OK;
 }
 
