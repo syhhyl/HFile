@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import socket
 import struct
+import re
 import unittest
 from pathlib import Path
 
@@ -24,8 +25,12 @@ PROTOCOL_MAGIC = protocol_define("HF_PROTOCOL_MAGIC")
 PROTOCOL_VERSION = protocol_define("HF_PROTOCOL_VERSION")
 MSG_TYPE_FILE_TRANSFER = protocol_define("HF_MSG_TYPE_FILE_TRANSFER")
 MSG_TYPE_TEXT_MESSAGE = protocol_define("HF_MSG_TYPE_TEXT_MESSAGE")
+MSG_TYPE_FILE_TRANSFER_COMPRESSED = protocol_define(
+    "HF_MSG_TYPE_FILE_TRANSFER_COMPRESSED"
+)
 MSG_FLAG_NONE = protocol_define("HF_MSG_FLAG_NONE")
 MSG_FLAG_COMPRESS = protocol_define("HF_MSG_FLAG_COMPRESS")
+COMPRESS_BLOCK_TYPE_RAW = protocol_define("HF_COMPRESS_BLOCK_TYPE_RAW")
 MAX_TEXT_MESSAGE_SIZE = protocol_define("HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE")
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "transfer"
 
@@ -165,6 +170,15 @@ class TransferTestCase(unittest.TestCase):
             + struct.pack("!Q", content_size)
         )
 
+    def _make_compressed_raw_block(self, data: bytes) -> bytes:
+        return struct.pack("!BII", COMPRESS_BLOCK_TYPE_RAW, len(data), len(data)) + data
+
+    def _client_wire_bytes(self, stderr: str) -> int:
+        m = re.search(r"wire_bytes=(\d+)B", stderr)
+        self.assertIsNotNone(m, f"missing wire_bytes in stderr={stderr!r}")
+        assert m is not None
+        return int(m.group(1))
+
     def _sendall_or_fail(self, sock: socket.socket, data: bytes, *, phase: str) -> None:
         try:
             sock.sendall(data)
@@ -303,12 +317,36 @@ class TestTransferCLI(TransferTestCase):
         dst = self._send_and_assert_ok(src)
         assert_files_equal(self, src, dst)
 
-    def test_file_transfer_accepts_compress_flag(self) -> None:
-        src = self._write_input_file(
-            "compress.txt", b"compress flag is currently a no-op\n"
+    def test_file_transfer_compresses_compressible_file(self) -> None:
+        data = (b"compressible-data-" * (CHUNK_SIZE // 64)) + b"tail\n"
+        src = self._write_input_file("compress.txt", data)
+        r, dst = self._run_client_file_transfer(
+            src,
+            extra_args=("--compress", "--perf"),
+            timeout=15.0,
         )
-        dst = self._send_and_assert_ok(src, extra_args=("--compress",))
+        self.assertEqual(
+            r.returncode,
+            0,
+            f"client failed argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+        self.assertIn("perf mode=client ok=1", r.stderr)
+        self.assertTrue(
+            wait_for_file_stable(dst, timeout=15.0),
+            f"file not saved: {dst}; client_stderr={r.stderr!r}; server_log_tail={self._server_log_tail()!r}",
+        )
         assert_files_equal(self, src, dst)
+
+        plain_wire_bytes = (
+            protocol_define("HF_PROTOCOL_HEADER_SIZE")
+            + len(self._make_file_prefix(src.name.encode("utf-8"), src.stat().st_size))
+            + src.stat().st_size
+        )
+        self.assertLess(
+            self._client_wire_bytes(r.stderr),
+            plain_wire_bytes,
+            f"expected compressed transfer to shrink wire bytes; stderr={r.stderr!r}",
+        )
 
     def test_server_rejects_invalid_file_name_from_client(self) -> None:
         src = self._write_input_file("bad..name.txt", b"bad name\n")
@@ -614,36 +652,95 @@ class TestTransferProtocol(TransferTestCase):
         )
         self._assert_no_temp_files(file_name.decode("ascii"))
 
-    # def test_file_protocol_accepts_compress_flag(self) -> None:
-    #     file_name = b"raw_compress.bin"
-    #     body = b"compress raw path\n"
-    #     prefix = self._make_file_prefix(file_name, len(body))
-    #     header = self._make_header(
-    #         msg_type=MSG_TYPE_FILE_TRANSFER,
-    #         payload_size=len(prefix) + len(body),
-    #         flags=MSG_FLAG_COMPRESS,
-    #     )
+    def test_compressed_file_protocol_accepts_raw_blocks(self) -> None:
+        file_name = b"raw_compress.bin"
+        parts = [b"compress raw ", b"path\n"]
+        body = b"".join(self._make_compressed_raw_block(part) for part in parts)
+        prefix = self._make_file_prefix(file_name, sum(len(part) for part in parts))
+        header = self._make_header(
+            msg_type=MSG_TYPE_FILE_TRANSFER_COMPRESSED,
+            payload_size=len(prefix) + len(body),
+        )
 
-    #     dst = self.out_dir / file_name.decode("ascii")
-    #     self._reset_output_path(dst)
-    #     ready_ack, final_ack = self._send_raw_file_transfer(header, prefix, body)
-    #     self.assertEqual(
-    #         ready_ack,
-    #         b"\x00",
-    #         f"unexpected compress ready ack: {ready_ack!r}; server_log_tail={self._server_log_tail()!r}",
-    #     )
-    #     self.assertEqual(
-    #         final_ack,
-    #         b"\x00",
-    #         f"unexpected compress final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
-    #     )
-    #     self.assertTrue(
-    #         wait_for_file_stable(dst, timeout=8.0),
-    #         f"compressed raw transfer did not save {dst}; server_log_tail={self._server_log_tail()!r}",
-    #     )
-    #     self.assertEqual(
-    #         body, dst.read_bytes(), f"raw compress content mismatch for {dst}"
-    #     )
+        dst = self.out_dir / file_name.decode("ascii")
+        self._reset_output_path(dst)
+        ready_ack, final_ack = self._send_raw_file_transfer(header, prefix, body)
+        self.assertEqual(
+            ready_ack,
+            b"\x00",
+            f"unexpected compress ready ack: {ready_ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self.assertEqual(
+            final_ack,
+            b"\x00",
+            f"unexpected compress final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self.assertTrue(
+            wait_for_file_stable(dst, timeout=8.0),
+            f"compressed raw transfer did not save {dst}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self.assertEqual(
+            b"".join(parts),
+            dst.read_bytes(),
+            f"raw compress content mismatch for {dst}",
+        )
+
+    def test_compressed_file_protocol_rejects_invalid_block_type(self) -> None:
+        file_name = b"bad_block_type.bin"
+        content = b"abc"
+        body = struct.pack("!BII", 0x7F, len(content), len(content)) + content
+        prefix = self._make_file_prefix(file_name, len(content))
+        header = self._make_header(
+            msg_type=MSG_TYPE_FILE_TRANSFER_COMPRESSED,
+            payload_size=len(prefix) + len(body),
+        )
+
+        log_offset = self._server_log_offset()
+        ready_ack, final_ack = self._send_raw_file_transfer(header, prefix, body)
+        self.assertEqual(
+            ready_ack,
+            b"\x00",
+            f"unexpected ready ack: {ready_ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self.assertEqual(
+            final_ack,
+            b"\x01",
+            f"unexpected final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self._wait_for_server_log(
+            "protocol error: invalid compressed block type", offset=log_offset
+        )
+        self.assertFalse((self.out_dir / file_name.decode("ascii")).exists())
+
+    def test_compressed_file_protocol_rejects_raw_block_size_mismatch(self) -> None:
+        file_name = b"bad_raw_block.bin"
+        content = b"abc"
+        body = (
+            struct.pack("!BII", COMPRESS_BLOCK_TYPE_RAW, len(content), len(content) - 1)
+            + content[:2]
+        )
+        prefix = self._make_file_prefix(file_name, len(content))
+        header = self._make_header(
+            msg_type=MSG_TYPE_FILE_TRANSFER_COMPRESSED,
+            payload_size=len(prefix) + len(body),
+        )
+
+        log_offset = self._server_log_offset()
+        ready_ack, final_ack = self._send_raw_file_transfer(header, prefix, body)
+        self.assertEqual(
+            ready_ack,
+            b"\x00",
+            f"unexpected ready ack: {ready_ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self.assertEqual(
+            final_ack,
+            b"\x01",
+            f"unexpected final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self._wait_for_server_log(
+            "protocol error: raw compressed block size mismatch", offset=log_offset
+        )
+        self.assertFalse((self.out_dir / file_name.decode("ascii")).exists())
 
     def test_partial_raw_file_transfer_cleans_up_temp_file(self) -> None:
         file_name = b"partial.bin"

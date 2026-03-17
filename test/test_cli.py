@@ -139,6 +139,15 @@ class TestCLI(unittest.TestCase):
                 ],
             },
             {
+                "name": "server_mode_has_compress",
+                "args": ["-s", "out", "--compress"],
+                "rc": 1,
+                "stderr_contains": [
+                    "server mode does not accept --compress",
+                    "usage:",
+                ],
+            },
+            {
                 "name": "server_mode_has_ip",
                 "args": ["-s", "out", "-i", "10.0.0.1"],
                 "rc": 1,
