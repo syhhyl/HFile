@@ -395,7 +395,7 @@ static int client_send_plain_file_transfer(const client_opt_t *opt) {
 
   protocol_header_t header = {0};
   init_header(&header);
-  header.msg_type = HF_MSG_TYPE_FILE_TRANSFER;
+  header.msg_type = opt->msg_type;
   header.flags = opt->msg_flags;
   header.payload_size = payload_size;
 
@@ -590,10 +590,6 @@ static int client_send_compressed_file_transfer(const client_opt_t *opt) {
     in = -1;
   }
 
-  if (wire_body_size >= content_size) {
-    fclose(body_fp);
-    return client_send_plain_file_transfer(opt);
-  }
 
   if (client_connect(opt->ip, opt->port, &sock, &perf_net_ns) != 0) {
     exit_code = 1;
@@ -607,8 +603,8 @@ static int client_send_compressed_file_transfer(const client_opt_t *opt) {
 
   protocol_header_t header = {0};
   init_header(&header);
-  header.msg_type = HF_MSG_TYPE_FILE_TRANSFER_COMPRESSED;
-  header.flags = HF_MSG_FLAG_NONE;
+  header.msg_type = opt->msg_type;
+  header.flags = opt->msg_flags;
   header.payload_size = payload_size;
 
   uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];

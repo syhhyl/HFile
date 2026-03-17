@@ -25,9 +25,6 @@ PROTOCOL_MAGIC = protocol_define("HF_PROTOCOL_MAGIC")
 PROTOCOL_VERSION = protocol_define("HF_PROTOCOL_VERSION")
 MSG_TYPE_FILE_TRANSFER = protocol_define("HF_MSG_TYPE_FILE_TRANSFER")
 MSG_TYPE_TEXT_MESSAGE = protocol_define("HF_MSG_TYPE_TEXT_MESSAGE")
-MSG_TYPE_FILE_TRANSFER_COMPRESSED = protocol_define(
-    "HF_MSG_TYPE_FILE_TRANSFER_COMPRESSED"
-)
 MSG_FLAG_NONE = protocol_define("HF_MSG_FLAG_NONE")
 MSG_FLAG_COMPRESS = protocol_define("HF_MSG_FLAG_COMPRESS")
 COMPRESS_BLOCK_TYPE_RAW = protocol_define("HF_COMPRESS_BLOCK_TYPE_RAW")
@@ -658,8 +655,9 @@ class TestTransferProtocol(TransferTestCase):
         body = b"".join(self._make_compressed_raw_block(part) for part in parts)
         prefix = self._make_file_prefix(file_name, sum(len(part) for part in parts))
         header = self._make_header(
-            msg_type=MSG_TYPE_FILE_TRANSFER_COMPRESSED,
+            msg_type=MSG_TYPE_FILE_TRANSFER,
             payload_size=len(prefix) + len(body),
+            flags=MSG_FLAG_COMPRESS,
         )
 
         dst = self.out_dir / file_name.decode("ascii")
@@ -691,8 +689,9 @@ class TestTransferProtocol(TransferTestCase):
         body = struct.pack("!BII", 0x7F, len(content), len(content)) + content
         prefix = self._make_file_prefix(file_name, len(content))
         header = self._make_header(
-            msg_type=MSG_TYPE_FILE_TRANSFER_COMPRESSED,
+            msg_type=MSG_TYPE_FILE_TRANSFER,
             payload_size=len(prefix) + len(body),
+            flags=MSG_FLAG_COMPRESS,
         )
 
         log_offset = self._server_log_offset()
@@ -721,8 +720,9 @@ class TestTransferProtocol(TransferTestCase):
         )
         prefix = self._make_file_prefix(file_name, len(content))
         header = self._make_header(
-            msg_type=MSG_TYPE_FILE_TRANSFER_COMPRESSED,
+            msg_type=MSG_TYPE_FILE_TRANSFER,
             payload_size=len(prefix) + len(body),
+            flags=MSG_FLAG_COMPRESS,
         )
 
         log_offset = self._server_log_offset()

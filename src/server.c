@@ -369,23 +369,22 @@ int server(const server_opt_t *ser_opt) {
       goto CLEANUP_CONN;
     }
 
-    if (proto_header.msg_type != HF_MSG_TYPE_FILE_TRANSFER &&
-        proto_header.msg_type != HF_MSG_TYPE_FILE_TRANSFER_COMPRESSED) {
+    if (proto_header.msg_type != HF_MSG_TYPE_FILE_TRANSFER) {
       fprintf(stderr, "protocol error: unsupported message type: %u\n",
               (unsigned)proto_header.msg_type);
       exit_code = 1;
       goto CLEANUP_CONN;
     }
 
-    compressed_transfer =
-      proto_header.msg_type == HF_MSG_TYPE_FILE_TRANSFER_COMPRESSED;
-
-    if (proto_header.flags != HF_MSG_FLAG_NONE) {
+    if ((proto_header.flags & (uint8_t)~HF_MSG_FLAG_COMPRESS) != 0) {
       fprintf(stderr, "protocol error: unsupported flags: %u\n",
               (unsigned)proto_header.flags);
       exit_code = 1;
       goto CLEANUP_CONN;
     }
+
+    compressed_transfer =
+      (proto_header.flags & HF_MSG_FLAG_COMPRESS) != 0;
 
     if (proto_header.payload_size <
         (uint64_t)proto_file_transfer_prefix_size(0)) {
