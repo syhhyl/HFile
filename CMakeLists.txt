@@ -13,9 +13,19 @@ add_executable(hf
   src/fs.c
 )
 
+add_library(lz4 STATIC
+  external/lz4/lz4.c
+)
+
+target_include_directories(lz4 PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/external/lz4
+)
+
 target_include_directories(hf PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+
+target_link_libraries(hf PRIVATE lz4)
 
 if (MSVC)
   target_compile_options(hf PRIVATE /W4)
