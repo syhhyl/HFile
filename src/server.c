@@ -330,25 +330,19 @@ int server(const server_opt_t *ser_opt) {
         goto CLEANUP_CONN;
       }
 
-      if (proto_header.payload_size > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
-        fprintf(stderr, "protocol error: message payload too large\n");
-        exit_code = 1;
-        goto CLEANUP_CONN;
-      }
-
-      size_t msg_len = (size_t)proto_header.payload_size;
-      char *message = (char *)malloc(msg_len + 1u);
+      size_t message_len = (size_t)proto_header.payload_size;
+      char *message = (char *)malloc(message_len + 1u);
       if (message == NULL) {
         perror("malloc(message)");
         exit_code = 1;
         goto CLEANUP_CONN;
       }
 
-      if (msg_len > 0) {
+      if (message_len > 0) {
         uint64_t t_recv_msg_start = now_ns();
-        ssize_t n = recv_all(conn, message, msg_len);
+        ssize_t n = recv_all(conn, message, message_len);
         perf_net_ns += now_ns() - t_recv_msg_start;
-        if (n != (ssize_t)msg_len) {
+        if (n != (ssize_t)message_len) {
           free(message);
           if (n < 0) {
             sock_perror("recv_all(message)");
@@ -360,8 +354,8 @@ int server(const server_opt_t *ser_opt) {
         }
       }
 
-      message[msg_len] = '\0';
-      perf_file_bytes = (uint64_t)msg_len;
+      message[message_len] = '\0';
+      perf_file_bytes = (uint64_t)message_len;
       printf("msg: %s\n", message);
       fflush(stdout);
       free(message);

@@ -707,22 +707,11 @@ static int client_send_text_message(const client_opt_t *opt) {
   const char *message = opt->message;
   size_t message_len = 0;
 
-  // TODO msg_flags
-  if (opt->msg_flags != HF_MSG_FLAG_NONE) {
-    fprintf(stderr, "unsupported flags for text message: %u\n",
-            (unsigned)opt->msg_flags);
-    return 1;
-  }
-
-  if (message == NULL) {
-    fprintf(stderr, "invalid message\n");
-    return 1;
-  }
-
   message_len = strlen(message);
   if (message_len > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
     fprintf(stderr, "message too large\n");
-    return 1;
+    exit_code = 1;
+    goto CLEANUP;
   }
 
   if (client_connect(opt->ip, opt->port, &sock, &perf_net_ns) != 0) {
