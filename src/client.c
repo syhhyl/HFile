@@ -584,6 +584,10 @@ static int client_send_compressed_file_transfer(const client_opt_t *opt) {
     exit_code = 1;
     goto CLEANUP;
   }
+  
+  // if (content_size < wire_body_size) {
+  //   return client_send_plain_file_transfer(opt);
+  // }
 
   if (in != -1) {
     fs_close(in);
