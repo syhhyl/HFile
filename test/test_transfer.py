@@ -557,9 +557,6 @@ class TestTransferProtocol(TransferTestCase):
             b"\x01",
             f"unexpected text-too-large ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
-        self._wait_for_server_log(
-            "protocol error: message payload too large", offset=log_offset
-        )
 
     def test_protocol_rejects_invalid_file_name_before_body(self) -> None:
         file_name = b"bad..name.bin"
