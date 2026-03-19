@@ -183,11 +183,27 @@ protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in) {
 
   memcpy(&net_magic, base, sizeof(net_magic));
   header->magic = ntohs(net_magic);
+  if (header->magic != HF_PROTOCOL_MAGIC) {
+    return PROTOCOL_ERR_HEADER_MAGIC;
+  }
   base += sizeof(net_magic);
 
   header->version = *base++;
+  if (header->version != HF_PROTOCOL_VERSION) {
+    return PROTOCOL_ERR_HEADER_VERSION;
+  }
+  
   header->msg_type = *base++;
+  if (header->msg_type != HF_MSG_TYPE_TEXT_MESSAGE &&
+      header->msg_type != HF_MSG_TYPE_FILE_TRANSFER) {
+    return PROTOCOL_ERR_HEADER_MSG_TYPE;
+  }
+  
   header->flags = *base++;
+  if (header->flags & ~(HF_MSG_FLAG_NONE | HF_MSG_FLAG_COMPRESS)) {
+    return PROTOCOL_ERR_HEADER_MAG_FLAG;
+  }
+
   header->payload_size = decode_u64_be(base);
 
   return PROTOCOL_OK;

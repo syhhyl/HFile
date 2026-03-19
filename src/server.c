@@ -308,24 +308,11 @@ int server(const server_opt_t *ser_opt) {
       goto CLEANUP_CONN;
     }
 
-    if (proto_header.magic != HF_PROTOCOL_MAGIC) {
-      fprintf(stderr, "protocol error: invalid protocol magic\n");
-      exit_code = 1;
-      goto CLEANUP_CONN;
-    }
-
-    if (proto_header.version != HF_PROTOCOL_VERSION) {
-      fprintf(stderr, "protocol error: unsupported protocol version\n");
-      exit_code = 1;
-      goto CLEANUP_CONN;
-    }
-
     perf_wire_bytes = (uint64_t)HF_PROTOCOL_HEADER_SIZE + proto_header.payload_size;
 
     if (proto_header.msg_type == HF_MSG_TYPE_TEXT_MESSAGE) {
-      if (proto_header.flags != HF_MSG_FLAG_NONE) {
-        fprintf(stderr, "protocol error: unsupported flags: %u\n",
-                (unsigned)proto_header.flags);
+      if (proto_header.flags == HF_MSG_FLAG_COMPRESS) {
+        fprintf(stderr, "protocol error: text message has unsupported compress flag");
         exit_code = 1;
         goto CLEANUP_CONN;
       }
@@ -370,12 +357,6 @@ int server(const server_opt_t *ser_opt) {
       goto CLEANUP_CONN;
     }
 
-    if ((proto_header.flags & (uint8_t)~HF_MSG_FLAG_COMPRESS) != 0) {
-      fprintf(stderr, "protocol error: unsupported flags: %u\n",
-              (unsigned)proto_header.flags);
-      exit_code = 1;
-      goto CLEANUP_CONN;
-    }
 
     compressed_transfer =
       (proto_header.flags & HF_MSG_FLAG_COMPRESS) != 0;

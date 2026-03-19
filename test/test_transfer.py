@@ -451,7 +451,7 @@ class TestTransferProtocol(TransferTestCase):
             f"unexpected invalid-magic ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
-            "protocol error: invalid protocol magic", offset=log_offset
+            "protocol error: failed to decode header", offset=log_offset
         )
 
     def test_protocol_rejects_invalid_version(self) -> None:
@@ -469,7 +469,7 @@ class TestTransferProtocol(TransferTestCase):
             f"unexpected invalid-version ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
-            "protocol error: unsupported protocol version", offset=log_offset
+            "protocol error: failed to decode header", offset=log_offset
         )
 
     def test_text_protocol_rejects_unsupported_flags(self) -> None:
@@ -487,7 +487,7 @@ class TestTransferProtocol(TransferTestCase):
             f"unexpected text-unsupported-flags ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
-            "protocol error: unsupported flags: 1", offset=log_offset
+            "protocol error: text message has unsupported compress flag", offset=log_offset
         )
 
     def test_file_protocol_rejects_unsupported_flags(self) -> None:
@@ -505,7 +505,7 @@ class TestTransferProtocol(TransferTestCase):
             f"unexpected file-unsupported-flags ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
-            "protocol error: unsupported flags: 2", offset=log_offset
+            "protocol error: failed to decode header", offset=log_offset
         )
 
     def test_file_protocol_rejects_payload_size_too_small(self) -> None:
@@ -539,7 +539,7 @@ class TestTransferProtocol(TransferTestCase):
             f"unexpected unsupported-message ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
-            "protocol error: unsupported message type: 127",
+            "protocol error: failed to decode header",
             offset=log_offset,
         )
         self.assertFalse(list(self.out_dir.glob("unsupported.bin*")))
