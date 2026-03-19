@@ -231,6 +231,291 @@ CLEANUP:
   return exit_code;
 }
 
+static int server_handle_text_message(socket_t conn,
+                                      const protocol_header_t *proto_header,
+                                      uint8_t *ack,
+                                      uint64_t *perf_io_ns,
+                                      uint64_t *perf_net_ns,
+                                      uint64_t *perf_file_bytes) {
+  char *message = NULL;
+
+  if (ack == NULL || perf_io_ns == NULL || perf_net_ns == NULL ||
+      perf_file_bytes == NULL) {
+    fprintf(stderr, "invalid text message handler arguments\n");
+    return 1;
+  }
+
+  if (proto_header->flags == HF_MSG_FLAG_COMPRESS) {
+    fprintf(stderr, "protocol error: text message has unsupported compress flag\n");
+    return 1;
+  }
+
+  if (proto_header->payload_size > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
+    fprintf(stderr, "protocol error: text message too large\n");
+    return 1;
+  }
+
+  size_t message_len = (size_t)proto_header->payload_size;
+  message = (char *)malloc(message_len + 1u);
+  if (message == NULL) {
+    perror("malloc(message)");
+    return 1;
+  }
+
+  if (message_len > 0) {
+    uint64_t t_recv_msg_start = now_ns();
+    ssize_t n = recv_all(conn, message, message_len);
+    *perf_net_ns += now_ns() - t_recv_msg_start;
+    if (n != (ssize_t)message_len) {
+      free(message);
+      if (n < 0) {
+        sock_perror("recv_all(message)");
+      } else {
+        fprintf(stderr,
+                "protocol error: unexpected EOF while receiving message\n");
+      }
+      return 1;
+    }
+  }
+
+  message[message_len] = '\0';
+  *perf_file_bytes = (uint64_t)message_len;
+  printf("msg: %s\n", message);
+  fflush(stdout);
+  free(message);
+  *ack = 0;
+  return 0;
+}
+
+static int server_handle_file_transfer(socket_t conn,
+                                       const server_opt_t *ser_opt,
+                                       const protocol_header_t *proto_header,
+                                       uint8_t *ack,
+                                       uint64_t *perf_io_ns,
+                                       uint64_t *perf_net_ns,
+                                       uint64_t *perf_file_bytes) {
+  int exit_code = 1;
+  char *file_name = NULL;
+  char *buf = NULL;
+  char tmp_path[4096];
+  int out = -1;
+  int ok = 0;
+  uint64_t content_size = 0;
+  uint64_t wire_body_size = 0;
+  uint16_t file_len = 0;
+  int compressed_transfer = 0;
+
+  tmp_path[0] = '\0';
+
+  if (ack == NULL || ser_opt == NULL || perf_io_ns == NULL ||
+      perf_net_ns == NULL || perf_file_bytes == NULL) {
+    fprintf(stderr, "invalid file transfer handler arguments\n");
+    return 1;
+  }
+
+  compressed_transfer = (proto_header->flags & HF_MSG_FLAG_COMPRESS) != 0;
+
+  if (proto_header->payload_size <
+      (uint64_t)proto_file_transfer_prefix_size(0)) {
+    fprintf(stderr, "protocol error: payload size too small\n");
+    return 1;
+  }
+
+  uint64_t t_recv_payload_start = now_ns();
+  protocol_result_t header_res = proto_recv_file_transfer_prefix(conn,
+    &file_name, &content_size);
+  *perf_net_ns += now_ns() - t_recv_payload_start;
+  if (header_res != PROTOCOL_OK) {
+    if (header_res == PROTOCOL_ERR_FILE_NAME_LEN) {
+      fprintf(stderr, "protocol error: invalid file name length\n");
+    } else if (header_res == PROTOCOL_ERR_ALLOC) {
+      perror("malloc(file_name)");
+    } else if (header_res == PROTOCOL_ERR_EOF) {
+      fprintf(stderr,
+              "protocol error: unexpected EOF while receiving payload\n");
+    } else {
+      sock_perror("protocol_recv_file_transfer_prefix");
+    }
+    goto CLEANUP;
+  }
+
+  file_len = (uint16_t)strlen(file_name);
+
+  if (fs_validate_file_name(file_name) != 0) {
+    fprintf(stderr, "invalid file name: %s\n", file_name);
+    goto CLEANUP;
+  }
+
+  uint64_t prefix_size = (uint64_t)proto_file_transfer_prefix_size(file_len);
+  if (compressed_transfer) {
+    if (proto_header->payload_size < prefix_size) {
+      fprintf(stderr, "protocol error: payload size mismatch\n");
+      goto CLEANUP;
+    }
+    wire_body_size = proto_header->payload_size - prefix_size;
+  } else {
+    uint64_t expected_payload_size = prefix_size + content_size;
+    if (proto_header->payload_size != expected_payload_size) {
+      fprintf(stderr, "protocol error: payload size mismatch\n");
+      goto CLEANUP;
+    }
+    wire_body_size = content_size;
+  }
+
+  *perf_file_bytes = content_size;
+
+  char full_path[4096];
+  int full_n = 0;
+  if (fs_join_path(full_path, sizeof(full_path), ser_opt->path, file_name) != 0) {
+    full_n = -1;
+  } else {
+    full_n = (int)strlen(full_path);
+  }
+
+  if (full_n < 0 || (size_t)full_n >= sizeof(full_path)) {
+    fprintf(stderr, "output path is too long\n");
+    goto CLEANUP;
+  }
+#ifdef _WIN32
+  int pid = _getpid();
+#else
+  int pid = (int)getpid();
+#endif
+  for (int attempt = 0; attempt < 16; attempt++) {
+    if (fs_make_temp_path(tmp_path, sizeof(tmp_path), full_path, pid,
+                          attempt) != 0) {
+      fprintf(stderr, "temporary file path is too long\n");
+      goto CLEANUP;
+    }
+
+    uint64_t t_open_start = now_ns();
+    out = fs_open_temp_file(tmp_path);
+    *perf_io_ns += now_ns() - t_open_start;
+    if (out != -1) break;
+    if (errno == EEXIST) continue;
+    perror("open(temp)");
+    goto CLEANUP;
+  }
+
+  if (out == -1) {
+    fprintf(stderr, "failed to create temporary file\n");
+    goto CLEANUP;
+  }
+
+  if (!compressed_transfer) {
+    buf = (char *)malloc(CHUNK_SIZE);
+    if (buf == NULL) {
+      perror("malloc(buf)");
+      goto CLEANUP;
+    }
+  }
+
+  uint8_t ready_ack = 0;
+  uint64_t t_ack_start = now_ns();
+  ssize_t ready_ack_sent = send_all(conn, &ready_ack, sizeof(ready_ack));
+  *perf_net_ns += now_ns() - t_ack_start;
+  if (ready_ack_sent != (ssize_t)sizeof(ready_ack)) {
+    sock_perror("send_all(file_transfer_ready_ack)");
+    goto CLEANUP;
+  }
+
+  if (compressed_transfer) {
+    if (server_recv_compressed_file_body(conn, out, wire_body_size,
+                                         content_size, perf_io_ns,
+                                         perf_net_ns) != 0) {
+      ok = 0;
+    } else {
+      ok = 1;
+    }
+  } else {
+    uint64_t remaining = content_size;
+
+    while (remaining > 0) {
+      ssize_t n = 0;
+      size_t want = CHUNK_SIZE;
+      if (remaining < (uint64_t)want)
+        want = (size_t)remaining;
+
+#ifdef _WIN32
+      uint64_t t_recv_chunk_start = now_ns();
+      int tmp = recv(conn, buf, (int)want, 0);
+      if (tmp == SOCKET_ERROR) {
+        *perf_net_ns += now_ns() - t_recv_chunk_start;
+        int err = WSAGetLastError();
+        if (err == WSAEINTR) continue;
+        sock_perror("recv");
+        break;
+      }
+      *perf_net_ns += now_ns() - t_recv_chunk_start;
+      n = (ssize_t)tmp;
+#else
+      uint64_t t_recv_chunk_start = now_ns();
+      n = recv(conn, buf, want, 0);
+      if (n < 0) {
+        *perf_net_ns += now_ns() - t_recv_chunk_start;
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+          continue;
+        sock_perror("recv");
+        break;
+      }
+      *perf_net_ns += now_ns() - t_recv_chunk_start;
+#endif
+      if (n == 0) {
+        fprintf(stderr, "protocol error: unexpected EOF while receiving file\n");
+        break;
+      }
+
+      uint64_t t_write_start = now_ns();
+      ssize_t nw = fs_write_all(out, buf, (size_t)n);
+      *perf_io_ns += now_ns() - t_write_start;
+      if (nw != (ssize_t)n) {
+        perror("write_all");
+        break;
+      }
+      remaining -= (uint64_t)n;
+    }
+
+    if (remaining == 0) {
+      ok = 1;
+    }
+  }
+
+  free(buf);
+  buf = NULL;
+  fs_close(out);
+  out = -1;
+
+  if (ok) {
+    unsigned long win_err = 0;
+    uint64_t t_rename_start = now_ns();
+    if (fs_finalize_temp_file(tmp_path, full_path, &win_err) != 0) {
+      *perf_io_ns += now_ns() - t_rename_start;
+#ifdef _WIN32
+      fprintf(stderr, "failed to finalize temporary file (err=%lu)\n",
+              (unsigned long)win_err);
+#else
+      perror("rename");
+#endif
+      fs_remove_quiet(tmp_path);
+    } else {
+      *perf_io_ns += now_ns() - t_rename_start;
+      *ack = 0;
+      printf("saved to %s\n", full_path);
+      fflush(stdout);
+      exit_code = 0;
+    }
+  }
+
+CLEANUP:
+  if (ack != NULL && *ack != 0 && tmp_path[0] != '\0') {
+    fs_remove_quiet(tmp_path);
+  }
+  if (buf != NULL) free(buf);
+  if (out != -1) fs_close(out);
+  if (file_name != NULL) free(file_name);
+  return exit_code;
+}
+
 int server(const server_opt_t *ser_opt) {
   int exit_code = 0;
 
@@ -275,18 +560,8 @@ int server(const server_opt_t *ser_opt) {
     uint64_t perf_file_bytes = 0;
     uint64_t perf_wire_bytes = 0;
     uint64_t t_ack_start = 0;
-    char *file_name = NULL;
-    char *buf = NULL;
     uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
     protocol_header_t proto_header = {0};
-    uint64_t content_size = 0;
-    uint64_t wire_body_size = 0;
-    uint16_t file_len = 0;
-    char tmp_path[4096];
-    tmp_path[0] = '\0';
-    int out = -1;
-    int ok = 0;
-    int compressed_transfer = 0;
 
     uint64_t t_recv_header_start = now_ns();
     protocol_result_t header_res = recv_header(conn, header_buf);
@@ -312,263 +587,16 @@ int server(const server_opt_t *ser_opt) {
 
     switch (proto_header.msg_type) {
       case HF_MSG_TYPE_TEXT_MESSAGE: {
-        if (proto_header.flags == HF_MSG_FLAG_COMPRESS) {
-          fprintf(stderr, "protocol error: text message has unsupported compress flag\n");
-          exit_code = 1;
-          goto CLEANUP_CONN;
-        }
-
-        if (proto_header.payload_size > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
-          fprintf(stderr, "protocol error: text message too large\n");
-          exit_code = 1;
-          goto CLEANUP_CONN;
-        }
-
-        size_t message_len = (size_t)proto_header.payload_size;
-        char *message = (char *)malloc(message_len + 1u);
-        if (message == NULL) {
-          perror("malloc(message)");
-          exit_code = 1;
-          goto CLEANUP_CONN;
-        }
-
-        if (message_len > 0) {
-          uint64_t t_recv_msg_start = now_ns();
-          ssize_t n = recv_all(conn, message, message_len);
-          perf_net_ns += now_ns() - t_recv_msg_start;
-          if (n != (ssize_t)message_len) {
-            free(message);
-            if (n < 0) {
-              sock_perror("recv_all(message)");
-            } else {
-              fprintf(stderr, "protocol error: unexpected EOF while receiving message\n");
-            }
-            exit_code = 1;
-            goto CLEANUP_CONN;
-          }
-        }
-
-        message[message_len] = '\0';
-        perf_file_bytes = (uint64_t)message_len;
-        printf("msg: %s\n", message);
-        fflush(stdout);
-        free(message);
-        ack = 0;
+        exit_code = server_handle_text_message(conn, &proto_header, &ack,
+                                               &perf_io_ns, &perf_net_ns,
+                                               &perf_file_bytes);
         goto CLEANUP_CONN;
       }
 
       case HF_MSG_TYPE_FILE_TRANSFER: {
-        compressed_transfer =
-          (proto_header.flags & HF_MSG_FLAG_COMPRESS) != 0;
-
-        if (proto_header.payload_size <
-            (uint64_t)proto_file_transfer_prefix_size(0)) {
-          fprintf(stderr, "protocol error: payload size too small\n");
-          exit_code = 1;
-          goto CLEANUP_CONN;
-        }
-
-        uint64_t t_recv_payload_start = now_ns();
-        header_res = proto_recv_file_transfer_prefix(conn, &file_name,
-                                                     &content_size);
-        perf_net_ns += now_ns() - t_recv_payload_start;
-        if (header_res != PROTOCOL_OK) {
-          if (header_res == PROTOCOL_ERR_FILE_NAME_LEN) {
-            fprintf(stderr, "protocol error: invalid file name length\n");
-          } else if (header_res == PROTOCOL_ERR_ALLOC) {
-            perror("malloc(file_name)");
-          } else if (header_res == PROTOCOL_ERR_EOF) {
-            fprintf(stderr, "protocol error: unexpected EOF while receiving payload\n");
-          } else {
-            sock_perror("protocol_recv_file_transfer_prefix");
-          }
-          exit_code = 1;
-          goto CLEANUP_CONN;
-        }
-
-        file_len = (uint16_t)strlen(file_name);
-
-        if (fs_validate_file_name(file_name) != 0) {
-          fprintf(stderr, "invalid file name: %s\n", file_name);
-          exit_code = 1;
-          goto CLEANUP_CONN;
-        }
-
-        uint64_t prefix_size = (uint64_t)proto_file_transfer_prefix_size(file_len);
-        if (compressed_transfer) {
-          if (proto_header.payload_size < prefix_size) {
-            fprintf(stderr, "protocol error: payload size mismatch\n");
-            exit_code = 1;
-            goto CLEANUP_CONN;
-          }
-          wire_body_size = proto_header.payload_size - prefix_size;
-        } else {
-          uint64_t expected_payload_size = prefix_size + content_size;
-          if (proto_header.payload_size != expected_payload_size) {
-            fprintf(stderr, "protocol error: payload size mismatch\n");
-            exit_code = 1;
-            goto CLEANUP_CONN;
-          }
-          wire_body_size = content_size;
-        }
-
-        perf_file_bytes = content_size;
-
-        char full_path[4096];
-        int full_n = 0;
-        if (fs_join_path(full_path, sizeof(full_path), ser_opt->path, file_name) != 0) {
-          full_n = -1;
-        } else {
-          full_n = (int)strlen(full_path);
-        }
-
-        if (full_n < 0 || (size_t)full_n >= sizeof(full_path)) {
-          fprintf(stderr, "output path is too long\n");
-          exit_code = 1;
-          goto CLEANUP_CONN;
-        }
-#ifdef _WIN32
-        int pid = _getpid();
-#else
-        int pid = (int)getpid();
-#endif
-        for (int attempt = 0; attempt < 16; attempt++) {
-          if (fs_make_temp_path(tmp_path, sizeof(tmp_path), full_path, pid,
-                                attempt) != 0) {
-            fprintf(stderr, "temporary file path is too long\n");
-            exit_code = 1;
-            goto CLEANUP_CONN;
-          }
-
-          uint64_t t_open_start = now_ns();
-          out = fs_open_temp_file(tmp_path);
-          perf_io_ns += now_ns() - t_open_start;
-          if (out != -1) break;
-          if (errno == EEXIST) continue;
-          perror("open(temp)");
-          exit_code = 1;
-          goto CLEANUP_CONN;
-        }
-
-        if (out == -1) {
-          fprintf(stderr, "failed to create temporary file\n");
-          exit_code = 1;
-          goto CLEANUP_CONN;
-        }
-
-        if (!compressed_transfer) {
-          buf = (char *)malloc(CHUNK_SIZE);
-          if (buf == NULL) {
-            perror("malloc(buf)");
-            exit_code = 1;
-            goto CLEANUP_CONN;
-          }
-        }
-
-        uint8_t ready_ack = 0;
-        t_ack_start = now_ns();
-        ssize_t ready_ack_sent = send_all(conn, &ready_ack, sizeof(ready_ack));
-        perf_net_ns += now_ns() - t_ack_start;
-        if (ready_ack_sent != (ssize_t)sizeof(ready_ack)) {
-          sock_perror("send_all(file_transfer_ready_ack)");
-          exit_code = 1;
-          goto CLEANUP_CONN;
-        }
-
-        if (compressed_transfer) {
-          if (server_recv_compressed_file_body(conn, out, wire_body_size,
-                                               content_size, &perf_io_ns,
-                                               &perf_net_ns) != 0) {
-            exit_code = 1;
-            ok = 0;
-          } else {
-            ok = 1;
-          }
-        } else {
-          uint64_t remaining = content_size;
-
-          while (remaining > 0) {
-            ssize_t n = 0;
-            size_t want = CHUNK_SIZE;
-            if (remaining < (uint64_t)want)
-              want = (size_t)remaining;
-
-#ifdef _WIN32
-            uint64_t t_recv_chunk_start = now_ns();
-            int tmp = recv(conn, buf, (int)want, 0);
-            if (tmp == SOCKET_ERROR) {
-              perf_net_ns += now_ns() - t_recv_chunk_start;
-              int err = WSAGetLastError();
-              if (err == WSAEINTR) continue;
-              sock_perror("recv");
-              exit_code = 1;
-              ok = 0;
-              break;
-            }
-            perf_net_ns += now_ns() - t_recv_chunk_start;
-            n = (ssize_t)tmp;
-#else
-            uint64_t t_recv_chunk_start = now_ns();
-            n = recv(conn, buf, want, 0);
-            if (n < 0) {
-              perf_net_ns += now_ns() - t_recv_chunk_start;
-              if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
-              sock_perror("recv");
-              exit_code = 1;
-              ok = 0;
-              break;
-            }
-            perf_net_ns += now_ns() - t_recv_chunk_start;
-#endif
-            if (n == 0) {
-              fprintf(stderr, "protocol error: unexpected EOF while receiving file\n");
-              exit_code = 1;
-              ok = 0;
-              break;
-            }
-
-            uint64_t t_write_start = now_ns();
-            ssize_t nw = fs_write_all(out, buf, (size_t)n);
-            perf_io_ns += now_ns() - t_write_start;
-            if (nw != (ssize_t)n) {
-              perror("write_all");
-              exit_code = 1;
-              ok = 0;
-              break;
-            }
-            remaining -= (uint64_t)n;
-          }
-
-          if (remaining == 0) {
-            ok = 1;
-          }
-        }
-
-        free(buf);
-        buf = NULL;
-        fs_close(out);
-        out = -1;
-
-        if (ok) {
-          unsigned long win_err = 0;
-          uint64_t t_rename_start = now_ns();
-          if (fs_finalize_temp_file(tmp_path, full_path, &win_err) != 0) {
-            perf_io_ns += now_ns() - t_rename_start;
-#ifdef _WIN32
-            fprintf(stderr, "failed to finalize temporary file (err=%lu)\n",
-                    (unsigned long)win_err);
-#else
-            perror("rename");
-#endif
-            fs_remove_quiet(tmp_path);
-            exit_code = 1;
-          } else {
-            perf_io_ns += now_ns() - t_rename_start;
-            ack = 0;
-            printf("saved to %s\n", full_path);
-            fflush(stdout);
-          }
-        }
+        exit_code = server_handle_file_transfer(conn, ser_opt, &proto_header,
+                                                &ack, &perf_io_ns,
+                                                &perf_net_ns, &perf_file_bytes);
         break;
       }
 
@@ -579,15 +607,7 @@ int server(const server_opt_t *ser_opt) {
         goto CLEANUP_CONN;
     }
 
-CLEANUP_CONN:
-    if (ack != 0 && tmp_path[0] != '\0') {
-      fs_remove_quiet(tmp_path);
-    }
-
-    if (buf != NULL) free(buf);
-    if (out != -1) fs_close(out);
-    if (file_name != NULL) free(file_name);
-
+    CLEANUP_CONN:
     t_ack_start = now_ns();
     ssize_t ack_sent = send_all(conn, &ack, sizeof(ack));
     perf_net_ns += now_ns() - t_ack_start;
