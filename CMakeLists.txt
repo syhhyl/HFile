@@ -5,6 +5,7 @@ project(HFile VERSION 0.0.1 LANGUAGES C)
 add_executable(hf
   src/hfile.c
   src/server.c
+  src/http.c
   src/client.c
   src/protocol.c
   src/helper.c
@@ -35,6 +36,9 @@ endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
   target_link_libraries(hf PRIVATE ws2_32 shell32)
+else()
+  find_package(Threads REQUIRED)
+  target_link_libraries(hf PRIVATE Threads::Threads)
 endif()
 
 target_compile_definitions(hf PRIVATE

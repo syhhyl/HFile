@@ -1,4 +1,5 @@
 #include "cli.h"
+#include "http.h"
 #include "net.h"
 #include "protocol.h"
 #include "server.h"
@@ -15,10 +16,19 @@
 #ifdef _WIN32
   #include <process.h>
 #else
+  #include <pthread.h>
   #include <unistd.h>
 #endif
 
-static inline int create_listener_socket(uint16_t port, socket_t *sock_out) {
+typedef struct {
+  socket_t sock;
+  server_opt_t opt;
+} http_thread_ctx_t;
+
+static inline int create_listener_socket(
+  const char *bind_ip,
+  uint16_t port,
+  socket_t *sock_out) {
   int opt = 1;
   struct sockaddr_in addr;
 
@@ -57,7 +67,13 @@ static inline int create_listener_socket(uint16_t port, socket_t *sock_out) {
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
-  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  if (bind_ip == NULL || bind_ip[0] == '\0') {
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  } else if (inet_pton(AF_INET, bind_ip, &addr.sin_addr) != 1) {
+    fprintf(stderr, "invalid bind address: %s\n", bind_ip);
+    socket_close(sock);
+    return 1;
+  }
 
 #ifdef _WIN32
   if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
@@ -80,6 +96,59 @@ static inline int create_listener_socket(uint16_t port, socket_t *sock_out) {
   }
 
   *sock_out = sock;
+  return 0;
+}
+
+#ifdef _WIN32
+static unsigned __stdcall http_thread_main(void *arg) {
+#else
+static void *http_thread_main(void *arg) {
+#endif
+  http_thread_ctx_t *ctx = (http_thread_ctx_t *)arg;
+  socket_t sock = ctx->sock;
+  server_opt_t opt = ctx->opt;
+  free(ctx);
+
+  if (http_server(sock, &opt) != 0) {
+    fprintf(stderr, "http server stopped unexpectedly\n");
+  }
+
+#ifdef _WIN32
+  return 0;
+#else
+  return NULL;
+#endif
+}
+
+static int start_http_thread(socket_t sock, const server_opt_t *ser_opt) {
+  http_thread_ctx_t *ctx = (http_thread_ctx_t *)malloc(sizeof(*ctx));
+  if (ctx == NULL) {
+    perror("malloc(http_thread_ctx)");
+    return 1;
+  }
+
+  ctx->sock = sock;
+  ctx->opt = *ser_opt;
+
+#ifdef _WIN32
+  uintptr_t handle = _beginthreadex(NULL, 0, http_thread_main, ctx, 0, NULL);
+  if (handle == 0) {
+    fprintf(stderr, "_beginthreadex(http) failed\n");
+    free(ctx);
+    return 1;
+  }
+  CloseHandle((HANDLE)handle);
+#else
+  pthread_t tid;
+  int err = pthread_create(&tid, NULL, http_thread_main, ctx);
+  if (err != 0) {
+    fprintf(stderr, "pthread_create(http): %s\n", strerror(err));
+    free(ctx);
+    return 1;
+  }
+  (void)pthread_detach(tid);
+#endif
+
   return 0;
 }
 
@@ -516,30 +585,10 @@ CLEANUP:
   return exit_code;
 }
 
-int server(const server_opt_t *ser_opt) {
+static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
   int exit_code = 0;
 
-  if (ser_opt->path == NULL || strlen(ser_opt->path) == 0) {
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
-
-#ifdef _WIN32
-  SOCKET sock = INVALID_SOCKET;
-#else
-  int sock = -1;
-#endif
-
-  if (create_listener_socket(ser_opt->port, &sock) != 0) {
-    exit_code = 1;
-    goto CLOSE_SOCK;
-  }
-
-  printf("listening on %s port %u\n", ser_opt->path, (unsigned)ser_opt->port);
-  fflush(stdout);
-
-  int conn_flag = 1;
-  while (conn_flag) {
+  for (;;) {
 #ifdef _WIN32
     SOCKET conn = accept(sock, NULL, NULL);
     if (conn == INVALID_SOCKET) {
@@ -627,10 +676,64 @@ int server(const server_opt_t *ser_opt) {
         perf_wire_bytes);
     }
     socket_close(conn);
+  }
+  return exit_code;
+}
 
+int server(const server_opt_t *ser_opt) {
+  int exit_code = 0;
+  int http_started = 0;
+
+  if (ser_opt->path == NULL || strlen(ser_opt->path) == 0) {
+    exit_code = 1;
+    goto CLEAN_UP;
   }
 
+#ifdef _WIN32
+  SOCKET sock = INVALID_SOCKET;
+  SOCKET http_sock = INVALID_SOCKET;
+#else
+  int sock = -1;
+  int http_sock = -1;
+#endif
+
+  if (create_listener_socket(NULL, ser_opt->port, &sock) != 0) {
+    exit_code = 1;
+    goto CLOSE_SOCK;
+  }
+
+  if (ser_opt->http_port != 0) {
+    if (create_listener_socket(ser_opt->http_bind, ser_opt->http_port,
+                               &http_sock) != 0) {
+      exit_code = 1;
+      goto CLOSE_SOCK;
+    }
+    if (start_http_thread(http_sock, ser_opt) != 0) {
+      exit_code = 1;
+      goto CLOSE_SOCK;
+    }
+    http_started = 1;
+    printf("http ready on %s port %u\n",
+           ser_opt->http_bind != NULL ? ser_opt->http_bind : "0.0.0.0",
+           (unsigned)ser_opt->http_port);
+    fflush(stdout);
+  }
+
+  printf("listening on %s port %u\n", ser_opt->path, (unsigned)ser_opt->port);
+  fflush(stdout);
+
+  exit_code = server_run_tcp(sock, ser_opt);
+
 CLOSE_SOCK:
+  if (!http_started && http_sock !=
+#ifdef _WIN32
+      INVALID_SOCKET
+#else
+      -1
+#endif
+  ) {
+    socket_close(http_sock);
+  }
   if (sock !=
 #ifdef _WIN32
       INVALID_SOCKET

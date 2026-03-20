@@ -20,7 +20,9 @@ typedef struct {
   const char *path;
   const char *message;
   const char *ip;
+  const char *http_bind;
   uint16_t port;
+  uint16_t http_port;
   int perf;
   uint8_t msg_type;
   uint8_t msg_flags;
@@ -39,7 +41,9 @@ typedef struct {
 
 typedef struct {
   const char *path;
+  const char *http_bind;
   uint16_t port;
+  uint16_t http_port;
   int perf;
 } server_opt_t;
 

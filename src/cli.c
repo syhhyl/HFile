@@ -8,7 +8,8 @@
 void usage(const char *argv0) {
   fprintf(stderr,
           "usage:\n"
-          "  %s -s <server_path> [-p <port>] [--perf]\n"
+          "  %s -s <server_path> [-p <port>] [--http-port <port>]\n"
+          "     [--http-bind <ip>] [--perf]\n"
           "  %s -c <file_path> [-i <ip>] [-p <port>] [--perf] [--compress]\n"
           "  %s -m <message> [-i <ip>] [-p <port>] [--perf]\n",
           argv0, argv0, argv0);
@@ -39,7 +40,9 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->path = NULL;
   opt->message = NULL;
   opt->ip = "127.0.0.1";
+  opt->http_bind = "0.0.0.0";
   opt->port = 9000;
+  opt->http_port = 0;
   opt->perf = 0;
   opt->msg_type = 0;
   opt->msg_flags = HF_MSG_FLAG_NONE;
@@ -48,6 +51,8 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   int seen_c = 0;
   int seen_m = 0;
   int ip_set = 0;
+  int http_port_set = 0;
+  int http_bind_set = 0;
   int mode_count = 0;
 
   for (int i = 1; i < argc; i++) {
@@ -63,6 +68,35 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         continue;
       } else if (strcmp(a, "--compress") == 0) {
         opt->msg_flags |= HF_MSG_FLAG_COMPRESS;
+        continue;
+      } else if (strcmp(a, "--http-port") == 0) {
+        const char *v = NULL;
+        if (http_port_set) {
+          fprintf(stderr, "duplicate --http-port\n");
+          return PARSE_ERR;
+        }
+        if (need_value(argc, argv, &i, &v) != 0) {
+          fprintf(stderr, "invalid http port\n");
+          return PARSE_ERR;
+        }
+        if (parse_port(v, &opt->http_port) != 0) {
+          fprintf(stderr, "invalid http port\n");
+          return PARSE_ERR;
+        }
+        http_port_set = 1;
+        continue;
+      } else if (strcmp(a, "--http-bind") == 0) {
+        const char *v = NULL;
+        if (http_bind_set) {
+          fprintf(stderr, "duplicate --http-bind\n");
+          return PARSE_ERR;
+        }
+        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
+          fprintf(stderr, "invalid http bind\n");
+          return PARSE_ERR;
+        }
+        opt->http_bind = v;
+        http_bind_set = 1;
         continue;
       }
 
@@ -207,6 +241,16 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     fprintf(stderr, "server mode does not accept --compress\n");
     return PARSE_ERR;
 
+  }
+
+  if ((http_port_set || http_bind_set) && !seen_s) {
+    fprintf(stderr, "server mode only accepts --http-port/--http-bind\n");
+    return PARSE_ERR;
+  }
+
+  if (http_bind_set && !http_port_set) {
+    fprintf(stderr, "server mode requires --http-port with --http-bind\n");
+    return PARSE_ERR;
   }
 
   return PARSE_OK;

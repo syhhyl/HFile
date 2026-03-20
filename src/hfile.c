@@ -67,7 +67,9 @@ static int load_windows_utf8_argv(int *argc_out, char ***argv_out) {
 
 static inline void init_server_opt(const Opt *opt, server_opt_t *server_opt) {
   server_opt->path = opt->path;
+  server_opt->http_bind = opt->http_bind;
   server_opt->port = opt->port;
+  server_opt->http_port = opt->http_port;
   server_opt->perf = opt->perf;
 }
 

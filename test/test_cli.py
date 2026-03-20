@@ -154,6 +154,51 @@ class TestCLI(unittest.TestCase):
                 "stderr_contains": ["server mode does not accept -i", "usage:"],
             },
             {
+                "name": "server_mode_http_bind_without_port",
+                "args": ["-s", "out", "--http-bind", "127.0.0.1"],
+                "rc": 1,
+                "stderr_contains": [
+                    "server mode requires --http-port with --http-bind",
+                    "usage:",
+                ],
+            },
+            {
+                "name": "client_mode_has_http_port",
+                "args": ["-c", "in", "--http-port", "8080"],
+                "rc": 1,
+                "stderr_contains": [
+                    "server mode only accepts --http-port/--http-bind",
+                    "usage:",
+                ],
+            },
+            {
+                "name": "message_mode_has_http_bind",
+                "args": ["-m", "hello", "--http-bind", "127.0.0.1"],
+                "rc": 1,
+                "stderr_contains": [
+                    "server mode only accepts --http-port/--http-bind",
+                    "usage:",
+                ],
+            },
+            {
+                "name": "duplicate_http_port",
+                "args": ["-s", "out", "--http-port", "8080", "--http-port", "8081"],
+                "rc": 1,
+                "stderr_contains": ["duplicate --http-port", "usage:"],
+            },
+            {
+                "name": "duplicate_http_bind",
+                "args": ["-s", "out", "--http-port", "8080", "--http-bind", "127.0.0.1", "--http-bind", "0.0.0.0"],
+                "rc": 1,
+                "stderr_contains": ["duplicate --http-bind", "usage:"],
+            },
+            {
+                "name": "invalid_http_port",
+                "args": ["-s", "out", "--http-port", "nope"],
+                "rc": 1,
+                "stderr_contains": ["invalid http port", "usage:"],
+            },
+            {
                 "name": "port_missing_value",
                 "args": ["-s", "out", "-p"],
                 "rc": 1,

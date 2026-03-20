@@ -7,6 +7,7 @@ from pathlib import Path
 TEST_MODULES = [
     "test.test_support",
     "test.test_cli",
+    "test.test_http",
     "test.test_transfer",
 ]
 

@@ -294,6 +294,8 @@ class HFileServer:
         out_dir: Path,
         host: str = "127.0.0.1",
         port: int | None = None,
+        http_host: str = "127.0.0.1",
+        http_port: int | None = None,
         log_path: Path | None = None,
         extra_args: Sequence[os.PathLike[str] | str] = (),
     ) -> None:
@@ -301,6 +303,10 @@ class HFileServer:
         self.out_dir = Path(out_dir)
         self.host = host
         self.port = int(port) if port is not None else reserve_free_port(host=host)
+        self.http_host = http_host
+        self.http_port = (
+            int(http_port) if http_port is not None else None
+        )
         self.log_path = Path(log_path) if log_path is not None else None
         self.extra_args = tuple(str(arg) for arg in extra_args)
         self._proc: subprocess.Popen[str] | None = None
@@ -326,8 +332,17 @@ class HFileServer:
             str(self.out_dir),
             "-p",
             str(self.port),
-            *self.extra_args,
         ]
+        if self.http_port is not None:
+            argv.extend(
+                [
+                    "--http-port",
+                    str(self.http_port),
+                    "--http-bind",
+                    self.http_host,
+                ]
+            )
+        argv.extend(self.extra_args)
 
         self._proc = subprocess.Popen(
             argv,
@@ -392,3 +407,9 @@ class HFileServer:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.stop()
+
+    @property
+    def http_url(self) -> str:
+        if self.http_port is None:
+            raise RuntimeError("http server not configured")
+        return f"http://{self.http_host}:{self.http_port}"
