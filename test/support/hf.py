@@ -284,7 +284,7 @@ class HFileServer:
     """Manage an hf server process.
 
     The server is started with stdout/stderr redirected to a log file. Readiness
-    is determined by waiting for the "listening on ..." server log line.
+    is determined by waiting for a stable server startup log line.
     """
 
     def __init__(
@@ -355,7 +355,7 @@ class HFileServer:
 
     def wait_ready(self, *, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout
-        needle = "listening on "
+        readiness_marker = "HFile server ready"
 
         while time.monotonic() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
@@ -366,7 +366,7 @@ class HFileServer:
 
             if self.log_path is not None:
                 log_text = tail_text_file(self.log_path)
-                if needle in log_text:
+                if readiness_marker in log_text:
                     return
 
             time.sleep(0.05)
@@ -374,7 +374,7 @@ class HFileServer:
         tail = tail_text_file(self.log_path or Path(""))
         raise TimeoutError(
             f"hf server not ready after {timeout:.1f}s on {self.host}:{self.port}. "
-            f"expected log line containing {needle!r}. "
+            f"expected log line containing {readiness_marker!r}. "
             f"log tail:\n{tail}"
         )
 
