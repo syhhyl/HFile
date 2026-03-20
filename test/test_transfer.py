@@ -268,14 +268,13 @@ class TestTransferCLI(TransferTestCase):
 
     def test_text_messages(self) -> None:
         cases = [
-            ("ascii", "hello hfile", "msg: hello hfile"),
-            ("empty", "", "msg: "),
-            ("utf8", "你好 hfile", "msg: 你好 hfile"),
+            ("ascii", "hello hfile"),
+            ("empty", ""),
+            ("utf8", "你好 hfile"),
         ]
 
-        for name, message, needle in cases:
+        for name, message in cases:
             with self.subTest(name=name):
-                log_offset = self._server_log_offset()
                 r = run_hf(
                     self.hf_path,
                     [
@@ -293,7 +292,6 @@ class TestTransferCLI(TransferTestCase):
                     0,
                     f"client failed argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
                 )
-                self._wait_for_server_log(needle, offset=log_offset)
 
     def test_file_chunk_boundaries(self) -> None:
         sizes = [CHUNK_SIZE - 1, CHUNK_SIZE, CHUNK_SIZE + 1]

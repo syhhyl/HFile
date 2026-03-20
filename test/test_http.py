@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import shutil
 import unittest
@@ -14,6 +15,7 @@ from test.support.hf import (
     make_temp_dir,
     reserve_free_port,
     resolve_hf_path,
+    run_hf,
     tail_text_file,
     wait_for_file_stable,
 )
@@ -89,7 +91,18 @@ class TestHTTP(unittest.TestCase):
         self.assertIn("HFile", text)
         self.assertIn("If you need to move bytes, you'll like HFile.", text)
         self.assertIn("/app.js", text)
-        self.assertNotIn("<h2>Messages</h2>", text)
+        self.assertIn("Latest Message", text)
+
+    def test_static_assets_are_served(self) -> None:
+        status, body, headers = self._request("GET", "/styles.css")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        self.assertIn("text/css", headers.get_content_type())
+        self.assertIn("--bg:", body.decode("utf-8", errors="replace"))
+
+        status, body, headers = self._request("GET", "/app.js")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        self.assertIn("application/javascript", headers.get_content_type())
+        self.assertIn("EventSource", body.decode("utf-8", errors="replace"))
 
     def test_upload_list_and_download(self) -> None:
         src = self.in_dir / "mobile.txt"
@@ -136,7 +149,7 @@ class TestHTTP(unittest.TestCase):
         )
         self.assertEqual(status, 400, body.decode("utf-8", errors="replace"))
 
-    def test_message_posts_to_server_stdout(self) -> None:
+    def test_message_post_updates_latest_message(self) -> None:
         status, body, _ = self._request(
             "POST",
             "/api/messages",
@@ -144,10 +157,76 @@ class TestHTTP(unittest.TestCase):
             headers={"Content-Type": "application/json"},
         )
         self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
-        self.assertIn(
-            "msg: hello from browser",
-            tail_text_file(self.log_path),
+
+        status, body, _ = self._request("GET", "/api/messages/latest")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(payload["has_message"], True)
+        self.assertEqual(payload["message"], "hello from browser")
+        self.assertNotIn("msg: hello from browser", tail_text_file(self.log_path))
+
+    def test_tcp_message_updates_latest_message(self) -> None:
+        r = run_hf(
+            self.hf_path,
+            [
+                "-m",
+                "hello from tcp",
+                "-i",
+                self.server.host,
+                "-p",
+                str(self.server.port),
+            ],
+            timeout=8.0,
         )
+        self.assertEqual(
+            r.returncode,
+            0,
+            f"client failed argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+
+        status, body, _ = self._request("GET", "/api/messages/latest")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(payload["has_message"], True)
+        self.assertEqual(payload["message"], "hello from tcp")
+        self.assertNotIn("msg: hello from tcp", tail_text_file(self.log_path))
+
+    def test_message_stream_receives_updates(self) -> None:
+        conn = http.client.HTTPConnection(
+            self.server.http_host, self.server.http_port, timeout=5.0
+        )
+        try:
+            conn.request("GET", "/api/messages/stream")
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.getheader("Content-Type"), "text/event-stream; charset=utf-8")
+
+            status, body, _ = self._request(
+                "POST",
+                "/api/messages",
+                data=json.dumps({"message": "hello from sse"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+            self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
+
+            saw_event = False
+            saw_data = False
+            while True:
+                line = resp.fp.readline()
+                if not line:
+                    self.fail("sse stream closed before delivering message")
+                text = line.decode("utf-8", errors="replace").strip()
+                if text == "event: message":
+                    saw_event = True
+                elif text == "data: hello from sse":
+                    saw_data = True
+                elif text == "":
+                    if saw_event and saw_data:
+                        break
+                    saw_event = False
+                    saw_data = False
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

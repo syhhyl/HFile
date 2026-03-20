@@ -1,5 +1,6 @@
 #include "cli.h"
 #include "http.h"
+#include "message_store.h"
 #include "net.h"
 #include "protocol.h"
 #include "server.h"
@@ -349,8 +350,11 @@ static int server_handle_text_message(socket_t conn,
 
   message[message_len] = '\0';
   *perf_file_bytes = (uint64_t)message_len;
-  printf("msg: %s\n", message);
-  fflush(stdout);
+  if (message_store_set(message) != 0) {
+    fprintf(stderr, "failed to store latest message\n");
+    free(message);
+    return 1;
+  }
   free(message);
   *ack = 0;
   return 0;
@@ -702,6 +706,12 @@ int server(const server_opt_t *ser_opt) {
     goto CLEAN_UP;
   }
 
+  if (message_store_init() != 0) {
+    fprintf(stderr, "failed to initialize message store\n");
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+
 #ifdef _WIN32
   SOCKET sock = INVALID_SOCKET;
   SOCKET http_sock = INVALID_SOCKET;
@@ -753,5 +763,6 @@ CLOSE_SOCK:
   }
 
 CLEAN_UP:
+  message_store_cleanup();
   return exit_code;
 }

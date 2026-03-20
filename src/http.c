@@ -2,7 +2,9 @@
 
 #include "fs.h"
 #include "helper.h"
+#include "message_store.h"
 #include "protocol.h"
+#include "webui.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -21,6 +23,7 @@
 #define strtok_r strtok_s
 #else
   #include <dirent.h>
+  #include <pthread.h>
   #include <sys/stat.h>
   #include <unistd.h>
 #endif
@@ -50,440 +53,10 @@ typedef struct {
   uint64_t mtime;
 } http_file_entry_t;
 
-static const char *http_index_html =
-  "<!doctype html>\n"
-  "<html lang=\"en\">\n"
-  "<head>\n"
-  "  <meta charset=\"utf-8\">\n"
-  "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-  "  <title>HFile</title>\n"
-  "  <link rel=\"stylesheet\" href=\"/styles.css\">\n"
-  "</head>\n"
-  "<body>\n"
-  "  <main class=\"shell\">\n"
-  "    <section class=\"hero\">\n"
-  "      <h1>HFile</h1>\n"
-  "      <p class=\"lede\">If you need to move bytes, you'll like HFile. ❤️</p>\n"
-  "    </section>\n"
-  "    <section class=\"card stack upload-card\">\n"
-  "      <h2>Upload</h2>\n"
-  "      <p id=\"upload-status\" class=\"status\"></p>\n"
-  "      <div class=\"upload-actions\">\n"
-  "        <label for=\"file-input\" class=\"button choose-btn\">Choose File</label>\n"
-  "        <button id=\"upload-btn\" type=\"button\" class=\"send-btn\">Send File</button>\n"
-  "      </div>\n"
-  "      <input id=\"file-input\" type=\"file\" class=\"sr-only\">\n"
-  "    </section>\n"
-  "    <section class=\"card stack\">\n"
-  "      <h2>Message</h2>\n"
-  "      <textarea id=\"message-input\" rows=\"4\" maxlength=\"262144\" placeholder=\"Leave a short note\"></textarea>\n"
-  "      <button id=\"message-btn\" type=\"button\">Post Message</button>\n"
-  "      <p id=\"message-status\" class=\"status\"></p>\n"
-  "    </section>\n"
-  "    <section class=\"card stack\">\n"
-  "      <div class=\"section-head\">\n"
-  "        <h2>Files</h2>\n"
-  "        <button id=\"refresh-files\" type=\"button\" class=\"quiet\">Refresh</button>\n"
-  "      </div>\n"
-  "      <div id=\"files\" class=\"list empty\">No files yet.</div>\n"
-  "    </section>\n"
-  "  </main>\n"
-  "  <script src=\"/app.js\"></script>\n"
-  "</body>\n"
-  "</html>\n";
-
-static const char *http_styles_css =
-  ":root {\n"
-  "  --bg: #f6efe2;\n"
-  "  --bg-alt: #efe3cf;\n"
-  "  --ink: #1c1712;\n"
-  "  --muted: #6d6156;\n"
-  "  --panel: rgba(255, 251, 245, 0.88);\n"
-  "  --line: rgba(47, 35, 23, 0.12);\n"
-  "  --accent: #bf5a2a;\n"
-  "  --accent-2: #1d7c69;\n"
-  "  --shadow: 0 16px 40px rgba(43, 31, 20, 0.1);\n"
-  "}\n"
-  "* { box-sizing: border-box; }\n"
-  "body {\n"
-  "  margin: 0;\n"
-  "  min-height: 100vh;\n"
-  "  color: var(--ink);\n"
-  "  background: var(--bg);\n"
-  "  font-family: \"Iowan Old Style\", \"Palatino Linotype\", \"Book Antiqua\", Georgia, serif;\n"
-  "}\n"
-  ".shell {\n"
-  "  width: min(880px, calc(100vw - 28px));\n"
-  "  margin: 0 auto;\n"
-  "  padding: 24px 0 40px;\n"
-  "}\n"
-  ".hero {\n"
-  "  padding: 8px 4px 24px;\n"
-  "  text-align: center;\n"
-  "}\n"
-  "h1, h2, p { margin: 0; }\n"
-  "h1 {\n"
-  "  font-size: clamp(2.6rem, 8vw, 4.8rem);\n"
-  "  line-height: 0.96;\n"
-  "  letter-spacing: -0.05em;\n"
-  "}\n"
-  ".lede {\n"
-  "  max-width: 36rem;\n"
-  "  margin: 12px auto 0;\n"
-  "  color: var(--muted);\n"
-  "  font-size: 1rem;\n"
-  "}\n"
-  ".card {\n"
-  "  margin-top: 16px;\n"
-  "  padding: 18px;\n"
-  "  border: 1px solid var(--line);\n"
-  "  border-radius: 22px;\n"
-  "  background: var(--panel);\n"
-  "  box-shadow: var(--shadow);\n"
-  "  -webkit-backdrop-filter: blur(12px);\n"
-  "  backdrop-filter: blur(12px);\n"
-  "}\n"
-  ".stack {\n"
-  "  display: grid;\n"
-  "  gap: 12px;\n"
-  "}\n"
-  ".upload-card {\n"
-  "  min-height: 168px;\n"
-  "  align-content: start;\n"
-  "}\n"
-  ".section-head {\n"
-  "  display: flex;\n"
-  "  align-items: center;\n"
-  "  justify-content: space-between;\n"
-  "  gap: 12px;\n"
-  "}\n"
-  "textarea {\n"
-  "  width: 100%;\n"
-  "  border: 1px solid var(--line);\n"
-  "  border-radius: 16px;\n"
-  "  background: rgba(255, 255, 255, 0.6);\n"
-  "  padding: 14px;\n"
-  "  color: var(--ink);\n"
-  "  font: inherit;\n"
-  "}\n"
-  "textarea { resize: vertical; min-height: 110px; }\n"
-  ".button,\n"
-  "button {\n"
-  "  appearance: none;\n"
-  "  border: 0;\n"
-  "  border-radius: 999px;\n"
-  "  padding: 12px 18px;\n"
-  "  display: inline-flex;\n"
-  "  align-items: center;\n"
-  "  justify-content: center;\n"
-  "  color: #fff9f0;\n"
-  "  background: linear-gradient(135deg, var(--accent), #d97a35);\n"
-  "  font: 700 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace;\n"
-  "  letter-spacing: 0.04em;\n"
-  "  text-decoration: none;\n"
-  "  text-align: center;\n"
-  "  cursor: pointer;\n"
-  "}\n"
-  ".upload-actions {\n"
-  "  width: 100%;\n"
-  "  display: grid;\n"
-  "  grid-template-columns: repeat(2, minmax(0, 1fr));\n"
-  "  gap: 12px;\n"
-  "  margin-top: auto;\n"
-  "}\n"
-  ".choose-btn {\n"
-  "  color: #17362f;\n"
-  "  background: linear-gradient(135deg, #bfe6dc, #8fceb8);\n"
-  "}\n"
-  ".choose-btn:hover {\n"
-  "  background: linear-gradient(135deg, #b1dfd1, #7fc2aa);\n"
-  "  box-shadow: 0 10px 22px rgba(29, 124, 105, 0.18);\n"
-  "}\n"
-  ".send-btn {\n"
-  "  background: linear-gradient(135deg, var(--accent), #d97a35);\n"
-  "}\n"
-  ".send-btn:hover {\n"
-  "  background: linear-gradient(135deg, #c96434, #e28a45);\n"
-  "  box-shadow: 0 10px 22px rgba(191, 90, 42, 0.22);\n"
-  "}\n"
-  "button.quiet {\n"
-  "  color: #17362f;\n"
-  "  background: linear-gradient(135deg, #d9efe7, #b8dccf);\n"
-  "  box-shadow: 0 8px 20px rgba(29, 124, 105, 0.16);\n"
-  "}\n"
-  "button.quiet:hover {\n"
-  "  background: linear-gradient(135deg, #cde8de, #a6d1c2);\n"
-  "  box-shadow: 0 12px 26px rgba(29, 124, 105, 0.22);\n"
-  "}\n"
-  ".sr-only {\n"
-  "  position: absolute;\n"
-  "  width: 1px;\n"
-  "  height: 1px;\n"
-  "  padding: 0;\n"
-  "  margin: -1px;\n"
-  "  overflow: hidden;\n"
-  "  clip: rect(0, 0, 0, 0);\n"
-  "  white-space: nowrap;\n"
-  "  border: 0;\n"
-  "}\n"
-  ".status {\n"
-  "  min-height: 3.2em;\n"
-  "  color: var(--muted);\n"
-  "  font: 500 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;\n"
-  "}\n"
-  ".list {\n"
-  "  display: grid;\n"
-  "  gap: 10px;\n"
-  "}\n"
-  ".list.empty {\n"
-  "  color: var(--muted);\n"
-  "  font-style: italic;\n"
-  "}\n"
-  ".row {\n"
-  "  display: flex;\n"
-  "  align-items: center;\n"
-  "  justify-content: space-between;\n"
-  "  gap: 12px;\n"
-  "  padding: 14px 16px;\n"
-  "  border-radius: 18px;\n"
-  "  background: rgba(255, 255, 255, 0.6);\n"
-  "  border: 1px solid rgba(28, 23, 18, 0.08);\n"
-  "}\n"
-  ".meta {\n"
-  "  display: grid;\n"
-  "  gap: 4px;\n"
-  "}\n"
-  ".meta strong {\n"
-  "  word-break: break-word;\n"
-  "}\n"
-  ".meta span {\n"
-  "  color: var(--muted);\n"
-  "  font: 500 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;\n"
-  "}\n"
-  ".row-actions {\n"
-  "  display: inline-flex;\n"
-  "  align-items: center;\n"
-  "  gap: 10px;\n"
-  "}\n"
-  ".delete,\n"
-  ".download {\n"
-  "  display: inline-flex;\n"
-  "  align-items: center;\n"
-  "  justify-content: center;\n"
-  "  padding: 10px 16px;\n"
-  "  border-radius: 999px;\n"
-  "  border: 0;\n"
-  "  color: #f4fff9;\n"
-  "  text-decoration: none;\n"
-  "  font: 700 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;\n"
-  "}\n"
-  ".delete {\n"
-  "  background: linear-gradient(135deg, #b63838, #dc5b5b);\n"
-  "  box-shadow: 0 10px 24px rgba(182, 56, 56, 0.24);\n"
-  "}\n"
-  ".delete:hover {\n"
-  "  background: linear-gradient(135deg, #a92f2f, #d44a4a);\n"
-  "  box-shadow: 0 14px 28px rgba(182, 56, 56, 0.3);\n"
-  "}\n"
-  ".download {\n"
-  "  background: #2da44e;\n"
-  "  box-shadow: 0 10px 24px rgba(45, 164, 78, 0.24);\n"
-  "}\n"
-  ".download:hover {\n"
-  "  background: #2c974b;\n"
-  "  box-shadow: 0 14px 28px rgba(45, 164, 78, 0.3);\n"
-  "}\n"
-  ".message {\n"
-  "  white-space: pre-wrap;\n"
-  "  word-break: break-word;\n"
-  "}\n"
-  "@media (hover: hover) and (pointer: fine) {\n"
-  "  .button,\n"
-  "  button,\n"
-  "  .download {\n"
-  "    transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease, background 140ms ease;\n"
-  "  }\n"
-  "  .button:hover,\n"
-  "  button:hover,\n"
-  "  .download:hover {\n"
-  "    transform: translateY(-1px);\n"
-  "    filter: brightness(1.03);\n"
-  "  }\n"
-  "}\n"
-  "@media (max-width: 640px) {\n"
-  "  .shell { width: min(100vw - 18px, 720px); padding-top: 18px; }\n"
-  "  .card {\n"
-  "    padding: 16px;\n"
-  "    border-radius: 20px;\n"
-  "    background: rgba(255, 251, 245, 0.96);\n"
-  "    box-shadow: 0 10px 24px rgba(43, 31, 20, 0.08);\n"
-  "    -webkit-backdrop-filter: none;\n"
-  "    backdrop-filter: none;\n"
-  "  }\n"
-  "  .upload-actions { width: 100%; }\n"
-  "  .row { align-items: flex-start; flex-direction: column; }\n"
-  "}\n";
-
-static const char *http_app_js =
-  "const filesNode = document.getElementById('files');\n"
-  "const uploadStatus = document.getElementById('upload-status');\n"
-  "const messageStatus = document.getElementById('message-status');\n"
-  "const fileInput = document.getElementById('file-input');\n"
-  "const messageInput = document.getElementById('message-input');\n"
-  "const fileRows = new Map();\n"
-  "\n"
-  "function fmtSize(bytes) {\n"
-  "  const units = ['B', 'KiB', 'MiB', 'GiB'];\n"
-  "  let idx = 0;\n"
-  "  let value = Number(bytes);\n"
-  "  while (value >= 1024 && idx < units.length - 1) {\n"
-  "    value /= 1024;\n"
-  "    idx += 1;\n"
-  "  }\n"
-  "  return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;\n"
-  "}\n"
-  "\n"
-  "function fmtTime(ts) {\n"
-  "  const d = new Date(Number(ts) * 1000);\n"
-  "  return d.toLocaleString();\n"
-  "}\n"
-  "\n"
-  "function renderFileMeta(file) {\n"
-  "  return `${fmtSize(file.size)} · ${fmtTime(file.mtime)}`;\n"
-  "}\n"
-  "\n"
-  "function createFileRow(file) {\n"
-  "  const row = document.createElement('div');\n"
-  "  row.className = 'row';\n"
-  "  row.dataset.fileName = file.name;\n"
-  "  row.innerHTML = `\n"
-  "    <div class=\"meta\">\n"
-  "      <strong></strong>\n"
-  "      <span></span>\n"
-  "    </div>\n"
-  "    <div class=\"row-actions\">\n"
-  "      <button class=\"delete\" type=\"button\">Delete</button>\n"
-  "      <a class=\"download\" download href=\"/api/files/${encodeURIComponent(file.name)}\">Download</a>\n"
-  "    </div>`;\n"
-  "  row.querySelector('strong').textContent = file.name;\n"
-  "  row.querySelector('span').textContent = renderFileMeta(file);\n"
-  "  row.querySelector('.delete').addEventListener('click', async () => {\n"
-  "    const res = await fetch(`/api/files/${encodeURIComponent(file.name)}`, {\n"
-  "      method: 'DELETE',\n"
-  "    });\n"
-  "    const payload = await res.json().catch(() => ({}));\n"
-  "    if (!res.ok) {\n"
-  "      uploadStatus.textContent = payload.error || 'Delete failed.';\n"
-  "      return;\n"
-  "    }\n"
-  "    uploadStatus.textContent = `Deleted ${file.name}.`;\n"
-  "    await loadFiles();\n"
-  "  });\n"
-  "  return row;\n"
-  "}\n"
-  "\n"
-  "function updateFileRow(row, file) {\n"
-  "  row.dataset.fileName = file.name;\n"
-  "  row.querySelector('strong').textContent = file.name;\n"
-  "  row.querySelector('span').textContent = renderFileMeta(file);\n"
-  "  const link = row.querySelector('.download');\n"
-  "  link.href = `/api/files/${encodeURIComponent(file.name)}`;\n"
-  "  link.setAttribute('download', '');\n"
-  "}\n"
-  "\n"
-  "function syncFileList(files) {\n"
-  "  if (!files.length) {\n"
-  "    fileRows.clear();\n"
-  "    filesNode.className = 'list empty';\n"
-  "    filesNode.textContent = 'No files yet.';\n"
-  "    return;\n"
-  "  }\n"
-  "\n"
-  "  const nextNames = new Set(files.map((file) => file.name));\n"
-  "  for (const [name, row] of fileRows.entries()) {\n"
-  "    if (!nextNames.has(name)) {\n"
-  "      row.remove();\n"
-  "      fileRows.delete(name);\n"
-  "    }\n"
-  "  }\n"
-  "\n"
-  "  filesNode.className = 'list';\n"
-  "  if (filesNode.textContent === 'No files yet.') {\n"
-  "    filesNode.textContent = '';\n"
-  "  }\n"
-  "\n"
-  "  files.forEach((file) => {\n"
-  "    let row = fileRows.get(file.name);\n"
-  "    if (!row) {\n"
-  "      row = createFileRow(file);\n"
-  "      fileRows.set(file.name, row);\n"
-  "    } else {\n"
-  "      updateFileRow(row, file);\n"
-  "    }\n"
-  "    filesNode.appendChild(row);\n"
-  "  });\n"
-  "}\n"
-  "\n"
-  "async function loadFiles() {\n"
-  "  const res = await fetch('/api/files', { cache: 'no-store' });\n"
-  "  if (!res.ok) throw new Error('failed to load files');\n"
-  "  const files = await res.json();\n"
-  "  syncFileList(files);\n"
-  "}\n"
-  "\n"
-  "async function uploadFile() {\n"
-  "  const file = fileInput.files && fileInput.files[0];\n"
-  "  if (!file) {\n"
-  "    uploadStatus.textContent = 'Pick a file first.';\n"
-  "    return;\n"
-  "  }\n"
-  "  uploadStatus.textContent = `Uploading ${file.name}...`;\n"
-  "  const res = await fetch(`/api/files/${encodeURIComponent(file.name)}`, {\n"
-  "    method: 'PUT',\n"
-  "    headers: { 'Content-Type': 'application/octet-stream' },\n"
-  "    body: file,\n"
-  "  });\n"
-  "  const payload = await res.json().catch(() => ({}));\n"
-  "  if (!res.ok) {\n"
-  "    uploadStatus.textContent = payload.error || 'Upload failed.';\n"
-  "    return;\n"
-  "  }\n"
-  "  uploadStatus.textContent = `Saved ${file.name}.`;\n"
-  "  fileInput.value = '';\n"
-  "  await loadFiles();\n"
-  "}\n"
-  "\n"
-  "async function postMessage() {\n"
-  "  const message = messageInput.value;\n"
-  "  messageStatus.textContent = 'Posting message...';\n"
-  "  const res = await fetch('/api/messages', {\n"
-  "    method: 'POST',\n"
-  "    headers: { 'Content-Type': 'application/json' },\n"
-  "    body: JSON.stringify({ message }),\n"
-  "  });\n"
-  "  const payload = await res.json().catch(() => ({}));\n"
-  "  if (!res.ok) {\n"
-  "    messageStatus.textContent = payload.error || 'Message failed.';\n"
-  "    return;\n"
-  "  }\n"
-  "  messageStatus.textContent = 'Message saved.';\n"
-  "  messageInput.value = '';\n"
-  "}\n"
-  "\n"
-  "fileInput.addEventListener('change', () => {\n"
-  "  const file = fileInput.files && fileInput.files[0];\n"
-  "  uploadStatus.textContent = file ? `Ready: ${file.name}` : '';\n"
-  "});\n"
-  "document.getElementById('upload-btn').addEventListener('click', () => {\n"
-  "  uploadFile().catch((err) => { uploadStatus.textContent = err.message; });\n"
-  "});\n"
-  "document.getElementById('message-btn').addEventListener('click', () => {\n"
-  "  postMessage().catch((err) => { messageStatus.textContent = err.message; });\n"
-  "});\n"
-  "document.getElementById('refresh-files').addEventListener('click', () => {\n"
-  "  loadFiles().catch((err) => { uploadStatus.textContent = err.message; });\n"
-  "});\n"
-  "loadFiles().catch((err) => { uploadStatus.textContent = err.message; });\n";
+typedef struct {
+  socket_t conn;
+  server_opt_t opt;
+} http_conn_ctx_t;
 
 static int http_buf_reserve(http_buf_t *buf, size_t need) {
   if (buf->cap >= need) {
@@ -638,6 +211,73 @@ static int http_send_response(socket_t conn,
   }
 
   return 0;
+}
+
+static int http_send_sse_headers(socket_t conn) {
+  static const char header[] =
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Type: text/event-stream; charset=utf-8\r\n"
+    "Cache-Control: no-cache\r\n"
+    "Connection: close\r\n"
+    "X-Accel-Buffering: no\r\n"
+    "\r\n";
+
+  return send_all(conn, header, sizeof(header) - 1u) ==
+         (ssize_t)(sizeof(header) - 1u)
+           ? 0
+           : 1;
+}
+
+static int http_send_sse_message_event(socket_t conn, const char *message) {
+  http_buf_t event = {0};
+  int exit_code = 1;
+
+  if (http_buf_append_str(&event, "event: message\n") != 0 ||
+      http_buf_append_str(&event, "data: ") != 0) {
+    goto CLEANUP;
+  }
+
+  if (message != NULL) {
+    const char *line = message;
+    const char *next = NULL;
+
+    for (;;) {
+      next = strchr(line, '\n');
+      if (next == NULL) {
+        if (http_buf_append(&event, line, strlen(line)) != 0) {
+          goto CLEANUP;
+        }
+        break;
+      }
+      if (http_buf_append(&event, line, (size_t)(next - line)) != 0 ||
+          http_buf_append_str(&event, "\ndata: ") != 0) {
+        goto CLEANUP;
+      }
+      line = next + 1;
+    }
+  }
+
+  if (http_buf_append_str(&event, "\n\n") != 0) {
+    goto CLEANUP;
+  }
+
+  if (send_all(conn, event.data, event.len) != (ssize_t)event.len) {
+    goto CLEANUP;
+  }
+
+  exit_code = 0;
+
+CLEANUP:
+  http_buf_free(&event);
+  return exit_code;
+}
+
+static int http_send_sse_keepalive(socket_t conn) {
+  static const char keepalive[] = ": keep-alive\n\n";
+  return send_all(conn, keepalive, sizeof(keepalive) - 1u) ==
+         (ssize_t)(sizeof(keepalive) - 1u)
+           ? 0
+           : 1;
 }
 
 static int http_send_json_error(socket_t conn, int status, const char *reason,
@@ -1393,20 +1033,13 @@ CLEANUP:
   return exit_code;
 }
 
-static int http_handle_index(socket_t conn) {
-  return http_send_response(conn, 200, "OK", "text/html; charset=utf-8",
-                            http_index_html, strlen(http_index_html), NULL);
-}
+static int http_handle_webui_asset(socket_t conn, const webui_asset_t *asset) {
+  if (asset == NULL) {
+    return 1;
+  }
 
-static int http_handle_app_js(socket_t conn) {
-  return http_send_response(conn, 200, "OK",
-                            "application/javascript; charset=utf-8",
-                            http_app_js, strlen(http_app_js), NULL);
-}
-
-static int http_handle_styles(socket_t conn) {
-  return http_send_response(conn, 200, "OK", "text/css; charset=utf-8",
-                            http_styles_css, strlen(http_styles_css), NULL);
+  return http_send_response(conn, 200, "OK", asset->content_type,
+                            asset->body, asset->body_len, NULL);
 }
 
 static int http_handle_files_list(socket_t conn, const server_opt_t *ser_opt) {
@@ -1472,8 +1105,11 @@ static int http_handle_messages_post(socket_t conn, const server_opt_t *ser_opt,
     goto CLEANUP;
   }
   (void)ser_opt;
-  printf("msg: %s\n", message);
-  fflush(stdout);
+  if (message_store_set(message) != 0) {
+    (void)http_send_json_error(conn, 500, "Internal Server Error",
+                               "failed to store message");
+    goto CLEANUP;
+  }
 
   if (http_buf_append_str(&response, "{\"ok\":true}") != 0) {
     goto CLEANUP;
@@ -1490,6 +1126,94 @@ CLEANUP:
   if (body != NULL) free(body);
   if (message != NULL) free(message);
   http_buf_free(&response);
+  return exit_code;
+}
+
+static int http_handle_messages_latest_get(socket_t conn) {
+  http_buf_t response = {0};
+  char *message = NULL;
+  int has_message = 0;
+  int exit_code = 1;
+
+  if (message_store_get_copy(&message, &has_message) != 0) {
+    return http_send_json_error(conn, 500, "Internal Server Error",
+                                "failed to load message");
+  }
+
+  if (http_buf_append_str(&response, "{\"has_message\":") != 0) {
+    goto CLEANUP;
+  }
+  if (http_buf_append_str(&response, has_message ? "true" : "false") != 0) {
+    goto CLEANUP;
+  }
+  if (http_buf_append_str(&response, ",\"message\":\"") != 0) {
+    goto CLEANUP;
+  }
+  if (has_message && http_json_escape(&response, message) != 0) {
+    goto CLEANUP;
+  }
+  if (http_buf_append_str(&response, "\"}") != 0) {
+    goto CLEANUP;
+  }
+
+  if (http_send_response(conn, 200, "OK", "application/json; charset=utf-8",
+                         response.data, response.len, NULL) != 0) {
+    goto CLEANUP;
+  }
+
+  exit_code = 0;
+
+CLEANUP:
+  if (message != NULL) free(message);
+  http_buf_free(&response);
+  return exit_code;
+}
+
+static int http_handle_messages_stream(socket_t conn) {
+  uint64_t version = 0;
+  char *message = NULL;
+  int has_message = 0;
+  int exit_code = 1;
+
+  if (http_send_sse_headers(conn) != 0) {
+    return 1;
+  }
+
+  if (message_store_get_snapshot(&message, &has_message, &version) != 0) {
+    return 1;
+  }
+  if (has_message && http_send_sse_message_event(conn, message) != 0) {
+    goto CLEANUP;
+  }
+  free(message);
+  message = NULL;
+
+  for (;;) {
+    if (message_store_wait_for_update(version, 15000u, &message, &has_message,
+                                      &version) != 0) {
+      goto CLEANUP;
+    }
+
+    if (message == NULL && !has_message) {
+      if (http_send_sse_keepalive(conn) != 0) {
+        goto CLEANUP;
+      }
+      continue;
+    }
+
+    if (http_send_sse_message_event(conn, message) != 0) {
+      goto CLEANUP;
+    }
+    free(message);
+    message = NULL;
+  }
+
+  exit_code = 0;
+
+CLEANUP:
+  if (message != NULL) {
+    free(message);
+  }
   return exit_code;
 }
 
@@ -1594,6 +1318,7 @@ static int http_handle_connection(socket_t conn, const server_opt_t *ser_opt) {
   char header_block[HF_HTTP_HEADER_MAX];
   char route_name[HF_PROTOCOL_MAX_FILE_NAME_LEN + 1u];
   http_request_t req = {0};
+  const webui_asset_t *asset = NULL;
   int read_res = http_read_header_block(conn, header_block, sizeof(header_block));
   int parse_res = 0;
 
@@ -1618,14 +1343,11 @@ static int http_handle_connection(socket_t conn, const server_opt_t *ser_opt) {
                                 "only HTTP/1.1 is supported");
   }
 
-  if (strcmp(req.method, "GET") == 0 && strcmp(req.path, "/") == 0) {
-    return http_handle_index(conn);
-  }
-  if (strcmp(req.method, "GET") == 0 && strcmp(req.path, "/app.js") == 0) {
-    return http_handle_app_js(conn);
-  }
-  if (strcmp(req.method, "GET") == 0 && strcmp(req.path, "/styles.css") == 0) {
-    return http_handle_styles(conn);
+  if (strcmp(req.method, "GET") == 0) {
+    asset = webui_find_asset(req.path);
+    if (asset != NULL) {
+      return http_handle_webui_asset(conn, asset);
+    }
   }
   if (strcmp(req.path, "/api/files") == 0) {
     if (strcmp(req.method, "GET") != 0) {
@@ -1634,8 +1356,23 @@ static int http_handle_connection(socket_t conn, const server_opt_t *ser_opt) {
     return http_handle_files_list(conn, ser_opt);
   }
   if (strcmp(req.path, "/api/messages") == 0) {
+    if (strcmp(req.method, "GET") == 0) {
+      return http_handle_messages_latest_get(conn);
+    }
     if (strcmp(req.method, "POST") == 0) {
       return http_handle_messages_post(conn, ser_opt, &req);
+    }
+    return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
+  }
+  if (strcmp(req.path, "/api/messages/latest") == 0) {
+    if (strcmp(req.method, "GET") == 0) {
+      return http_handle_messages_latest_get(conn);
+    }
+    return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
+  }
+  if (strcmp(req.path, "/api/messages/stream") == 0) {
+    if (strcmp(req.method, "GET") == 0) {
+      return http_handle_messages_stream(conn);
     }
     return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
   }
@@ -1658,6 +1395,59 @@ static int http_handle_connection(socket_t conn, const server_opt_t *ser_opt) {
   return http_send_json_error(conn, 404, "Not Found", "route not found");
 }
 
+#ifdef _WIN32
+static unsigned __stdcall http_connection_thread_main(void *arg) {
+#else
+static void *http_connection_thread_main(void *arg) {
+#endif
+  http_conn_ctx_t *ctx = (http_conn_ctx_t *)arg;
+  socket_t conn = ctx->conn;
+  server_opt_t opt = ctx->opt;
+
+  free(ctx);
+  (void)http_handle_connection(conn, &opt);
+  socket_close(conn);
+
+#ifdef _WIN32
+  return 0;
+#else
+  return NULL;
+#endif
+}
+
+static int http_start_connection_thread(socket_t conn, const server_opt_t *ser_opt) {
+  http_conn_ctx_t *ctx = (http_conn_ctx_t *)malloc(sizeof(*ctx));
+  if (ctx == NULL) {
+    perror("malloc(http_conn_ctx)");
+    return 1;
+  }
+
+  ctx->conn = conn;
+  ctx->opt = *ser_opt;
+
+#ifdef _WIN32
+  uintptr_t handle =
+    _beginthreadex(NULL, 0, http_connection_thread_main, ctx, 0, NULL);
+  if (handle == 0) {
+    fprintf(stderr, "_beginthreadex(http_conn) failed\n");
+    free(ctx);
+    return 1;
+  }
+  CloseHandle((HANDLE)handle);
+#else
+  pthread_t tid;
+  int err = pthread_create(&tid, NULL, http_connection_thread_main, ctx);
+  if (err != 0) {
+    fprintf(stderr, "pthread_create(http_conn): %s\n", strerror(err));
+    free(ctx);
+    return 1;
+  }
+  (void)pthread_detach(tid);
+#endif
+
+  return 0;
+}
+
 int http_server(socket_t listener, const server_opt_t *ser_opt) {
   int exit_code = 0;
 
@@ -1676,8 +1466,10 @@ int http_server(socket_t listener, const server_opt_t *ser_opt) {
       continue;
     }
 
-    (void)http_handle_connection(conn, ser_opt);
-    socket_close(conn);
+    if (http_start_connection_thread(conn, ser_opt) != 0) {
+      socket_close(conn);
+      exit_code = 1;
+    }
   }
 
   return exit_code;

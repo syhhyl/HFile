@@ -6,6 +6,8 @@ add_executable(hf
   src/hfile.c
   src/server.c
   src/http.c
+  src/message_store.c
+  src/webui.c
   src/client.c
   src/protocol.c
   src/helper.c
