@@ -15,6 +15,7 @@
 
 #ifdef _WIN32
   #include <io.h>
+  #include <process.h>
   #include <sys/stat.h>
   #include <windows.h>
 #define strtok_r strtok_s

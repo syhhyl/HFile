@@ -116,54 +116,119 @@ static int client_get_file_size(int in, uint64_t *content_size_out,
   return 0;
 }
 
-static int client_tmpfile_write_all(FILE *fp, const void *buf, size_t len,
-                                    uint64_t *perf_io_ns) {
-  const unsigned char *p = (const unsigned char *)buf;
-  size_t total = 0;
+static int client_rewind_input_file(int in, uint64_t *perf_io_ns) {
+  uint64_t t_seek_start = 0;
 
-  if (fp == NULL || perf_io_ns == NULL) {
-    fprintf(stderr, "invalid temporary file write arguments\n");
+  if (perf_io_ns == NULL) {
+    fprintf(stderr, "invalid input rewind timer\n");
     return 1;
   }
 
-  while (total < len) {
-    uint64_t t_write_start = now_ns();
-    size_t nw = fwrite(p + total, 1, len - total, fp);
-    *perf_io_ns += now_ns() - t_write_start;
-    if (nw == 0) {
-      perror("fwrite(tmpfile)");
-      return 1;
-    }
-    total += nw;
+  t_seek_start = now_ns();
+  if (fs_seek_start(in) != 0) {
+    *perf_io_ns += now_ns() - t_seek_start;
+    perror("lseek");
+    return 1;
   }
-
+  *perf_io_ns += now_ns() - t_seek_start;
   return 0;
 }
 
-static int client_prepare_compressed_body(int in, uint64_t content_size,
-                                          FILE **body_fp_out,
+static int client_measure_compressed_body(int in, uint64_t content_size,
                                           uint64_t *wire_body_size_out,
                                           uint64_t *perf_io_ns) {
   int exit_code = 1;
-  FILE *body_fp = NULL;
   char *raw_buf = NULL;
   char *cmp_buf = NULL;
   uint64_t remaining = content_size;
   uint64_t wire_body_size = 0;
   int cmp_cap = 0;
 
-  if (body_fp_out == NULL || wire_body_size_out == NULL || perf_io_ns == NULL) {
+  if (wire_body_size_out == NULL || perf_io_ns == NULL) {
     fprintf(stderr, "invalid compression outputs\n");
     return 1;
   }
 
-  *body_fp_out = NULL;
   *wire_body_size_out = 0;
 
-  body_fp = tmpfile();
-  if (body_fp == NULL) {
-    perror("tmpfile");
+  raw_buf = (char *)malloc((size_t)CHUNK_SIZE);
+  if (raw_buf == NULL) {
+    perror("malloc(raw_buf)");
     goto CLEANUP;
+  }
+
+  cmp_cap = LZ4_compressBound((int)CHUNK_SIZE);
+  if (cmp_cap <= 0) {
+    fprintf(stderr, "failed to size compression buffer\n");
+    goto CLEANUP;
+  }
+
+  cmp_buf = (char *)malloc((size_t)cmp_cap);
+  if (cmp_buf == NULL) {
+    perror("malloc(cmp_buf)");
+    goto CLEANUP;
+  }
+
+  while (remaining > 0) {
+    uint32_t raw_size = 0;
+    uint32_t stored_size = 0;
+    size_t want = (size_t)CHUNK_SIZE;
+
+    if ((uint64_t)want > remaining) {
+      want = (size_t)remaining;
+    }
+
+    uint64_t t_read_start = now_ns();
+    ssize_t nr = fs_read(in, raw_buf, want);
+    *perf_io_ns += now_ns() - t_read_start;
+    if (nr < 0) {
+      perror("read");
+      goto CLEANUP;
+    }
+    if (nr == 0) {
+      fprintf(stderr, "source file changed during compression\n");
+      goto CLEANUP;
+    }
+
+    raw_size = (uint32_t)nr;
+    stored_size = raw_size;
+
+    int cmp_n = LZ4_compress_default(raw_buf, cmp_buf, (int)raw_size, cmp_cap);
+    if (cmp_n > 0 && cmp_n < (int)raw_size) {
+      stored_size = (uint32_t)cmp_n;
+    }
+
+    if (UINT64_MAX - wire_body_size <
+        (uint64_t)proto_compressed_block_size(stored_size)) {
+      fprintf(stderr, "compressed payload is too large\n");
+      goto CLEANUP;
+    }
+
+    wire_body_size += (uint64_t)proto_compressed_block_size(stored_size);
+    remaining -= raw_size;
+  }
+  *wire_body_size_out = wire_body_size;
+  exit_code = 0;
+
+CLEANUP:
+  if (cmp_buf != NULL) free(cmp_buf);
+  if (raw_buf != NULL) free(raw_buf);
+  return exit_code;
+}
+
+static int client_send_compressed_body(int in, uint64_t content_size,
+                                       socket_t sock,
+                                       uint64_t *perf_io_ns,
+                                       uint64_t *perf_net_ns) {
+  int exit_code = 1;
+  char *raw_buf = NULL;
+  char *cmp_buf = NULL;
+  uint64_t remaining = content_size;
+  int cmp_cap = 0;
+
+  if (perf_io_ns == NULL || perf_net_ns == NULL) {
+    fprintf(stderr, "invalid compressed body sender arguments\n");
+    return 1;
   }
 
   raw_buf = (char *)malloc((size_t)CHUNK_SIZE);
@@ -191,7 +256,6 @@ static int client_prepare_compressed_body(int in, uint64_t content_size,
     uint32_t raw_size = 0;
     uint32_t stored_size = 0;
     size_t want = (size_t)CHUNK_SIZE;
-
     if ((uint64_t)want > remaining) {
       want = (size_t)remaining;
     }
@@ -224,105 +288,30 @@ static int client_prepare_compressed_body(int in, uint64_t content_size,
       goto CLEANUP;
     }
 
-    if (client_tmpfile_write_all(body_fp, block_header,
-                                 sizeof(block_header), perf_io_ns) != 0) {
-      goto CLEANUP;
-    }
-    if (client_tmpfile_write_all(body_fp, stored_buf, stored_size,
-                                 perf_io_ns) != 0) {
-      goto CLEANUP;
-    }
-
-    if (UINT64_MAX - wire_body_size <
-        (uint64_t)proto_compressed_block_size(stored_size)) {
-      fprintf(stderr, "compressed payload is too large\n");
+    uint64_t t_send_header_start = now_ns();
+    ssize_t sent = send_all(sock, block_header, sizeof(block_header));
+    *perf_net_ns += now_ns() - t_send_header_start;
+    if (sent != (ssize_t)sizeof(block_header)) {
+      sock_perror("send(compressed_block_header)");
       goto CLEANUP;
     }
 
-    wire_body_size += (uint64_t)proto_compressed_block_size(stored_size);
+    uint64_t t_send_body_start = now_ns();
+    sent = send_all(sock, stored_buf, stored_size);
+    *perf_net_ns += now_ns() - t_send_body_start;
+    if (sent != (ssize_t)stored_size) {
+      sock_perror("send(compressed_block_data)");
+      goto CLEANUP;
+    }
+
     remaining -= raw_size;
   }
 
-  uint64_t t_flush_start = now_ns();
-  if (fflush(body_fp) != 0) {
-    *perf_io_ns += now_ns() - t_flush_start;
-    perror("fflush(tmpfile)");
-    goto CLEANUP;
-  }
-  *perf_io_ns += now_ns() - t_flush_start;
-
-  uint64_t t_seek_start = now_ns();
-  if (fseek(body_fp, 0, SEEK_SET) != 0) {
-    *perf_io_ns += now_ns() - t_seek_start;
-    perror("fseek(tmpfile)");
-    goto CLEANUP;
-  }
-  *perf_io_ns += now_ns() - t_seek_start;
-
-  *body_fp_out = body_fp;
-  *wire_body_size_out = wire_body_size;
-  body_fp = NULL;
   exit_code = 0;
 
 CLEANUP:
   if (cmp_buf != NULL) free(cmp_buf);
   if (raw_buf != NULL) free(raw_buf);
-  if (body_fp != NULL) fclose(body_fp);
-  return exit_code;
-}
-
-static int client_send_tmpfile_body(FILE *body_fp, socket_t sock,
-                                    uint64_t body_size,
-                                    uint64_t *perf_io_ns,
-                                    uint64_t *perf_net_ns) {
-  int exit_code = 1;
-  char *buf = NULL;
-  uint64_t remaining = body_size;
-
-  if (body_fp == NULL || perf_io_ns == NULL || perf_net_ns == NULL) {
-    fprintf(stderr, "invalid temporary body sender arguments\n");
-    return 1;
-  }
-
-  buf = (char *)malloc((size_t)CHUNK_SIZE);
-  if (buf == NULL) {
-    perror("malloc(buf)");
-    goto CLEANUP;
-  }
-
-  while (remaining > 0) {
-    size_t want = (size_t)CHUNK_SIZE;
-    if ((uint64_t)want > remaining) {
-      want = (size_t)remaining;
-    }
-
-    uint64_t t_read_start = now_ns();
-    size_t nr = fread(buf, 1, want, body_fp);
-    *perf_io_ns += now_ns() - t_read_start;
-    if (nr != want) {
-      if (ferror(body_fp)) {
-        perror("fread(tmpfile)");
-      } else {
-        fprintf(stderr, "temporary compressed body truncated\n");
-      }
-      goto CLEANUP;
-    }
-
-    uint64_t t_send_start = now_ns();
-    ssize_t sent = send_all(sock, buf, nr);
-    *perf_net_ns += now_ns() - t_send_start;
-    if (sent != (ssize_t)nr) {
-      sock_perror("send");
-      goto CLEANUP;
-    }
-
-    remaining -= (uint64_t)nr;
-  }
-
-  exit_code = 0;
-
-CLEANUP:
-  if (buf != NULL) free(buf);
   return exit_code;
 }
 
@@ -537,7 +526,6 @@ static int client_send_compressed_file_transfer(const client_opt_t *opt) {
   uint64_t perf_wire_bytes = 0;
 
   int in = -1;
-  FILE *body_fp = NULL;
 #ifdef _WIN32
   socket_t sock = INVALID_SOCKET;
 #else
@@ -579,21 +567,16 @@ static int client_send_compressed_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  if (client_prepare_compressed_body(in, content_size, &body_fp, &wire_body_size,
+  if (client_measure_compressed_body(in, content_size, &wire_body_size,
                                      &perf_io_ns) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
-  
-  // if (content_size < wire_body_size) {
-  //   return client_send_plain_file_transfer(opt);
-  // }
 
-  if (in != -1) {
-    fs_close(in);
-    in = -1;
+  if (client_rewind_input_file(in, &perf_io_ns) != 0) {
+    exit_code = 1;
+    goto CLEANUP;
   }
-
 
   if (client_connect(opt->ip, opt->port, &sock, &perf_net_ns) != 0) {
     exit_code = 1;
@@ -647,8 +630,8 @@ static int client_send_compressed_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  if (client_send_tmpfile_body(body_fp, sock, wire_body_size, &perf_io_ns,
-                               &perf_net_ns) != 0) {
+  if (client_send_compressed_body(in, content_size, sock, &perf_io_ns,
+                                  &perf_net_ns) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
@@ -677,7 +660,6 @@ CLEANUP:
   if (sock != -1)
     socket_close(sock);
 #endif
-  if (body_fp != NULL) fclose(body_fp);
   if (in != -1) fs_close(in);
 
   if (opt->perf) {

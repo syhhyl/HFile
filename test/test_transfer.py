@@ -345,6 +345,17 @@ class TestTransferCLI(TransferTestCase):
             f"expected compressed transfer to shrink wire bytes; stderr={r.stderr!r}",
         )
 
+    def test_file_transfer_compresses_multi_chunk_file(self) -> None:
+        size = (CHUNK_SIZE * 2) + 137
+        data = (b"multi-chunk-compress-" * ((size // 21) + 1))[:size]
+        src = self._write_input_file("compress_multi_chunk.txt", data)
+        dst = self._send_and_assert_ok(
+            src,
+            extra_args=("--compress",),
+            timeout=20.0,
+        )
+        assert_files_equal(self, src, dst)
+
     def test_server_rejects_invalid_file_name_from_client(self) -> None:
         src = self._write_input_file("bad..name.txt", b"bad name\n")
         dst = self.out_dir / src.name

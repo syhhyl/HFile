@@ -47,6 +47,14 @@ int fs_close(int fd) {
 #endif
 }
 
+int fs_seek_start(int fd) {
+#ifdef _WIN32
+  return _lseeki64(fd, 0, SEEK_SET) < 0 ? -1 : 0;
+#else
+  return lseek(fd, 0, SEEK_SET) < 0 ? -1 : 0;
+#endif
+}
+
 
 ssize_t fs_write_all(int fd, const void *buf, size_t len) {
   const char *p = buf;
