@@ -680,6 +680,19 @@ static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
   return exit_code;
 }
 
+static void server_print_startup_summary(const server_opt_t *ser_opt) {
+  printf("HFile server ready\n");
+  printf("  receive dir: %s\n", ser_opt->path);
+  printf("  tcp listen : 0.0.0.0:%u\n", (unsigned)ser_opt->port);
+  if (ser_opt->http_port != 0) {
+    printf("  web ui     : http://%s:%u/\n",
+           ser_opt->http_bind != NULL ? ser_opt->http_bind : "0.0.0.0",
+           (unsigned)ser_opt->http_port);
+  }
+  printf("  status     : waiting for files and messages\n");
+  fflush(stdout);
+}
+
 int server(const server_opt_t *ser_opt) {
   int exit_code = 0;
   int http_started = 0;
@@ -713,14 +726,9 @@ int server(const server_opt_t *ser_opt) {
       goto CLOSE_SOCK;
     }
     http_started = 1;
-    printf("http ready on %s port %u\n",
-           ser_opt->http_bind != NULL ? ser_opt->http_bind : "0.0.0.0",
-           (unsigned)ser_opt->http_port);
-    fflush(stdout);
   }
 
-  printf("listening on %s port %u\n", ser_opt->path, (unsigned)ser_opt->port);
-  fflush(stdout);
+  server_print_startup_summary(ser_opt);
 
   exit_code = server_run_tcp(sock, ser_opt);
 

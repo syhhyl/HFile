@@ -86,7 +86,8 @@ class TestHTTP(unittest.TestCase):
         status, body, _ = self._request("GET", "/")
         self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
         text = body.decode("utf-8", errors="replace")
-        self.assertIn("HFile Mobile", text)
+        self.assertIn("HFile", text)
+        self.assertIn("If you need to move bytes, you'll like HFile.", text)
         self.assertIn("/app.js", text)
         self.assertNotIn("<h2>Messages</h2>", text)
 
@@ -120,6 +121,12 @@ class TestHTTP(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, src.read_bytes())
         assert_files_equal(self, src, dst)
+
+        status, body, _ = self._request(
+            "DELETE", f"/api/files/{urllib.parse.quote(src.name)}"
+        )
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        self.assertFalse(dst.exists(), f"file not deleted: {dst}")
 
     def test_rejects_invalid_file_name(self) -> None:
         invalid_name = urllib.parse.quote("\\bad.txt", safe="")
