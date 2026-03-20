@@ -9,6 +9,7 @@ static const char webui_index_html[] =
   "  <meta charset=\"utf-8\">\n"
   "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
   "  <title>HFile</title>\n"
+  "  <link rel=\"icon\" href=\"/favicon.svg\" type=\"image/svg+xml\">\n"
   "  <link rel=\"stylesheet\" href=\"/styles.css\">\n"
   "</head>\n"
   "<body>\n"
@@ -304,6 +305,17 @@ static const char webui_styles_css[] =
   "  .row { align-items: flex-start; flex-direction: column; }\n"
   "}\n";
 
+static const char webui_favicon_svg[] =
+  "<svg width=\"128\" height=\"128\" viewBox=\"0 0 128 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">"
+  "<path d=\"M18 14H78L110 46V100C110 108.837 102.837 116 94 116H34C25.163 116 18 108.837 18 100V14Z\" fill=\"#F6EFE2\" stroke=\"#1C1712\" stroke-width=\"6\" stroke-linejoin=\"round\"/>"
+  "<path d=\"M78 14V46H110\" stroke=\"#1C1712\" stroke-width=\"6\" stroke-linejoin=\"round\"/>"
+  "<path d=\"M34 34V96\" stroke=\"#1C1712\" stroke-width=\"14\" stroke-linecap=\"round\"/>"
+  "<path d=\"M34 66H62\" stroke=\"#1C1712\" stroke-width=\"14\" stroke-linecap=\"round\"/>"
+  "<path d=\"M62 34V96\" stroke=\"#1C1712\" stroke-width=\"14\" stroke-linecap=\"round\"/>"
+  "<path d=\"M78 96V34C78 28.477 82.477 24 88 24\" stroke=\"#1C1712\" stroke-width=\"14\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>"
+  "<path d=\"M72 58H94\" stroke=\"#1C1712\" stroke-width=\"14\" stroke-linecap=\"round\"/>"
+  "</svg>";
+
 static const char webui_app_js[] =
   "const filesNode = document.getElementById('files');\n"
   "const uploadStatus = document.getElementById('upload-status');\n"
@@ -490,6 +502,9 @@ static const char webui_app_js[] =
   "  latestMessageStream.onerror = () => {\n"
   "    latestMessageStatus.textContent = 'Live message stream reconnecting...';\n"
   "  };\n"
+  "  latestMessageStream.onopen = () => {\n"
+  "    latestMessageStatus.textContent = '';\n"
+  "  };\n"
   "}\n"
   "\n"
   "async function copyText(text) {\n"
@@ -561,6 +576,12 @@ static const webui_asset_t webui_assets[] = {
     "text/css; charset=utf-8",
     webui_styles_css,
     sizeof(webui_styles_css) - 1u,
+  },
+  {
+    "/favicon.svg",
+    "image/svg+xml",
+    webui_favicon_svg,
+    sizeof(webui_favicon_svg) - 1u,
   },
 };
 
