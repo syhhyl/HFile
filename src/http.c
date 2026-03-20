@@ -1,7 +1,6 @@
 #include "http.h"
 
 #include "fs.h"
-#include "helper.h"
 #include "message_store.h"
 #include "protocol.h"
 #include "webui.h"
