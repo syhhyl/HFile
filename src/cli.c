@@ -9,9 +9,9 @@ void usage(const char *argv0) {
   fprintf(stderr,
           "usage:\n"
           "  %s -s <server_path> [-p <port>] [--http-port <port>]\n"
-          "     [--http-bind <ip>] [--perf]\n"
-          "  %s -c <file_path> [-i <ip>] [-p <port>] [--perf] [--compress]\n"
-          "  %s -m <message> [-i <ip>] [-p <port>] [--perf]\n",
+          "     [--http-bind <ip>]\n"
+          "  %s -c <file_path> [-i <ip>] [-p <port>] [--compress]\n"
+          "  %s -m <message> [-i <ip>] [-p <port>]\n",
           argv0, argv0, argv0);
 }
 
@@ -43,7 +43,6 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->http_bind = "0.0.0.0";
   opt->port = 9000;
   opt->http_port = 0;
-  opt->perf = 0;
   opt->msg_type = 0;
   opt->msg_flags = HF_MSG_FLAG_NONE;
 
@@ -63,10 +62,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
 
     if (a[1] == '-') {
-      if (strcmp(a, "--perf") == 0) {
-        opt->perf = 1;
-        continue;
-      } else if (strcmp(a, "--compress") == 0) {
+      if (strcmp(a, "--compress") == 0) {
         opt->msg_flags |= HF_MSG_FLAG_COMPRESS;
         continue;
       } else if (strcmp(a, "--http-port") == 0) {

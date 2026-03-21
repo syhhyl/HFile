@@ -3,7 +3,6 @@ from __future__ import annotations
 import shutil
 import socket
 import struct
-import re
 import unittest
 from pathlib import Path
 
@@ -170,12 +169,6 @@ class TransferTestCase(unittest.TestCase):
     def _make_compressed_raw_block(self, data: bytes) -> bytes:
         return struct.pack("!BII", COMPRESS_BLOCK_TYPE_RAW, len(data), len(data)) + data
 
-    def _client_wire_bytes(self, stderr: str) -> int:
-        m = re.search(r"wire_bytes=(\d+)B", stderr)
-        self.assertIsNotNone(m, f"missing wire_bytes in stderr={stderr!r}")
-        assert m is not None
-        return int(m.group(1))
-
     def _sendall_or_fail(self, sock: socket.socket, data: bytes, *, phase: str) -> None:
         try:
             sock.sendall(data)
@@ -317,7 +310,7 @@ class TestTransferCLI(TransferTestCase):
         src = self._write_input_file("compress.txt", data)
         r, dst = self._run_client_file_transfer(
             src,
-            extra_args=("--compress", "--perf"),
+            extra_args=("--compress",),
             timeout=15.0,
         )
         self.assertEqual(
@@ -325,23 +318,11 @@ class TestTransferCLI(TransferTestCase):
             0,
             f"client failed argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
-        self.assertIn("perf mode=client ok=1", r.stderr)
         self.assertTrue(
             wait_for_file_stable(dst, timeout=15.0),
             f"file not saved: {dst}; client_stderr={r.stderr!r}; server_log_tail={self._server_log_tail()!r}",
         )
         assert_files_equal(self, src, dst)
-
-        plain_wire_bytes = (
-            protocol_define("HF_PROTOCOL_HEADER_SIZE")
-            + len(self._make_file_prefix(src.name.encode("utf-8"), src.stat().st_size))
-            + src.stat().st_size
-        )
-        self.assertLess(
-            self._client_wire_bytes(r.stderr),
-            plain_wire_bytes,
-            f"expected compressed transfer to shrink wire bytes; stderr={r.stderr!r}",
-        )
 
     def test_file_transfer_compresses_multi_chunk_file(self) -> None:
         size = (CHUNK_SIZE * 2) + 137
@@ -370,57 +351,6 @@ class TestTransferCLI(TransferTestCase):
         self._wait_for_server_log(f"invalid file name: {src.name}", offset=log_offset)
         self.assertFalse(dst.exists(), f"unexpected output file: {dst}")
         self._assert_no_temp_files(src.name)
-
-    def test_perf_option_reports_on_client_and_server(self) -> None:
-        with make_temp_dir(prefix="hf_perf_") as tmp_dir:
-            base_dir = Path(tmp_dir)
-            out_dir = base_dir / "out"
-            out_dir.mkdir(parents=True, exist_ok=True)
-
-            server = HFileServer(
-                hf_path=self.hf_path,
-                out_dir=out_dir,
-                extra_args=["--perf"],
-            )
-            server.start(startup_timeout=5.0)
-            try:
-                src = self._write_input_file("perf.txt", b"perf\n")
-                dst = out_dir / src.name
-                r = run_hf(
-                    self.hf_path,
-                    [
-                        "-c",
-                        src,
-                        "-i",
-                        server.host,
-                        "-p",
-                        str(server.port),
-                        "--perf",
-                    ],
-                    timeout=8.0,
-                )
-                self.assertEqual(
-                    r.returncode,
-                    0,
-                    f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
-                )
-                self.assertIn("perf mode=client ok=1", r.stderr)
-                self.assertTrue(
-                    wait_for_file_stable(dst, timeout=8.0),
-                    f"perf transfer did not save {dst}; server_log_tail={tail_text_file(server.log_path or Path(''))!r}",
-                )
-
-                log_text = wait_for_text_in_file(
-                    server.log_path or Path(""),
-                    "perf mode=server ok=1",
-                    timeout=5.0,
-                )
-                if log_text is None:
-                    self.fail(
-                        f"missing 'perf mode=server ok=1' in server log: {tail_text_file(server.log_path or Path(''))!r}"
-                    )
-            finally:
-                server.stop()
 
     def test_fixtures(self) -> None:
         if not FIXTURES_DIR.exists():

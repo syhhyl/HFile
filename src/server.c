@@ -10,7 +10,6 @@
 #include <stdio.h>
 #include "fs.h"
 #include <fcntl.h>
-#include "helper.h"
 #include "lz4.h"
 
 #include <errno.h>
@@ -155,20 +154,13 @@ static int start_http_thread(socket_t sock, const server_opt_t *ser_opt) {
 
 static int server_recv_compressed_file_body(socket_t conn, int out,
                                             uint64_t wire_body_size,
-                                            uint64_t content_size,
-                                            uint64_t *perf_io_ns,
-                                            uint64_t *perf_net_ns) {
+                                            uint64_t content_size) {
   int exit_code = 1;
   char *raw_buf = NULL;
   char *stored_buf = NULL;
   uint64_t wire_remaining = wire_body_size;
   uint64_t raw_total = 0;
   int stored_cap = LZ4_compressBound((int)CHUNK_SIZE);
-
-  if (perf_io_ns == NULL || perf_net_ns == NULL) {
-    fprintf(stderr, "invalid compressed receive timers\n");
-    return 1;
-  }
 
   raw_buf = (char *)malloc((size_t)CHUNK_SIZE);
   if (raw_buf == NULL) {
@@ -198,9 +190,7 @@ static int server_recv_compressed_file_body(socket_t conn, int out,
       goto CLEANUP;
     }
 
-    uint64_t t_recv_header_start = now_ns();
     ssize_t n = recv_all(conn, block_header, sizeof(block_header));
-    *perf_net_ns += now_ns() - t_recv_header_start;
     if (n != (ssize_t)sizeof(block_header)) {
       if (n < 0) {
         sock_perror("recv_all(compressed_block_header)");
@@ -241,9 +231,7 @@ static int server_recv_compressed_file_body(socket_t conn, int out,
       goto CLEANUP;
     }
 
-    uint64_t t_recv_body_start = now_ns();
     n = recv_all(conn, stored_buf, stored_size);
-    *perf_net_ns += now_ns() - t_recv_body_start;
     if (n != (ssize_t)stored_size) {
       if (n < 0) {
         sock_perror("recv_all(compressed_block_data)");
@@ -261,9 +249,7 @@ static int server_recv_compressed_file_body(socket_t conn, int out,
         goto CLEANUP;
       }
 
-      uint64_t t_write_start = now_ns();
       ssize_t nw = fs_write_all(out, stored_buf, stored_size);
-      *perf_io_ns += now_ns() - t_write_start;
       if (nw != (ssize_t)stored_size) {
         perror("write_all");
         goto CLEANUP;
@@ -276,9 +262,7 @@ static int server_recv_compressed_file_body(socket_t conn, int out,
         goto CLEANUP;
       }
 
-      uint64_t t_write_start = now_ns();
       ssize_t nw = fs_write_all(out, raw_buf, raw_size);
-      *perf_io_ns += now_ns() - t_write_start;
       if (nw != (ssize_t)raw_size) {
         perror("write_all");
         goto CLEANUP;
@@ -303,14 +287,10 @@ CLEANUP:
 
 static int server_handle_text_message(socket_t conn,
                                       const protocol_header_t *proto_header,
-                                      uint8_t *ack,
-                                      uint64_t *perf_io_ns,
-                                      uint64_t *perf_net_ns,
-                                      uint64_t *perf_file_bytes) {
+                                      uint8_t *ack) {
   char *message = NULL;
 
-  if (ack == NULL || perf_io_ns == NULL || perf_net_ns == NULL ||
-      perf_file_bytes == NULL) {
+  if (ack == NULL) {
     fprintf(stderr, "invalid text message handler arguments\n");
     return 1;
   }
@@ -333,9 +313,7 @@ static int server_handle_text_message(socket_t conn,
   }
 
   if (message_len > 0) {
-    uint64_t t_recv_msg_start = now_ns();
     ssize_t n = recv_all(conn, message, message_len);
-    *perf_net_ns += now_ns() - t_recv_msg_start;
     if (n != (ssize_t)message_len) {
       free(message);
       if (n < 0) {
@@ -349,7 +327,6 @@ static int server_handle_text_message(socket_t conn,
   }
 
   message[message_len] = '\0';
-  *perf_file_bytes = (uint64_t)message_len;
   if (message_store_set(message) != 0) {
     fprintf(stderr, "failed to store latest message\n");
     free(message);
@@ -363,10 +340,7 @@ static int server_handle_text_message(socket_t conn,
 static int server_handle_file_transfer(socket_t conn,
                                        const server_opt_t *ser_opt,
                                        const protocol_header_t *proto_header,
-                                       uint8_t *ack,
-                                       uint64_t *perf_io_ns,
-                                       uint64_t *perf_net_ns,
-                                       uint64_t *perf_file_bytes) {
+                                       uint8_t *ack) {
   int exit_code = 1;
   char *file_name = NULL;
   char *buf = NULL;
@@ -380,8 +354,7 @@ static int server_handle_file_transfer(socket_t conn,
 
   tmp_path[0] = '\0';
 
-  if (ack == NULL || ser_opt == NULL || perf_io_ns == NULL ||
-      perf_net_ns == NULL || perf_file_bytes == NULL) {
+  if (ack == NULL || ser_opt == NULL) {
     fprintf(stderr, "invalid file transfer handler arguments\n");
     return 1;
   }
@@ -394,10 +367,8 @@ static int server_handle_file_transfer(socket_t conn,
     return 1;
   }
 
-  uint64_t t_recv_payload_start = now_ns();
   protocol_result_t header_res = proto_recv_file_transfer_prefix(conn,
     &file_name, &content_size);
-  *perf_net_ns += now_ns() - t_recv_payload_start;
   if (header_res != PROTOCOL_OK) {
     if (header_res == PROTOCOL_ERR_FILE_NAME_LEN) {
       fprintf(stderr, "protocol error: invalid file name length\n");
@@ -435,8 +406,6 @@ static int server_handle_file_transfer(socket_t conn,
     wire_body_size = content_size;
   }
 
-  *perf_file_bytes = content_size;
-
   char full_path[4096];
   int full_n = 0;
   if (fs_join_path(full_path, sizeof(full_path), ser_opt->path, file_name) != 0) {
@@ -461,9 +430,7 @@ static int server_handle_file_transfer(socket_t conn,
       goto CLEANUP;
     }
 
-    uint64_t t_open_start = now_ns();
     out = fs_open_temp_file(tmp_path);
-    *perf_io_ns += now_ns() - t_open_start;
     if (out != -1) break;
     if (errno == EEXIST) continue;
     perror("open(temp)");
@@ -484,9 +451,7 @@ static int server_handle_file_transfer(socket_t conn,
   }
 
   uint8_t ready_ack = 0;
-  uint64_t t_ack_start = now_ns();
   ssize_t ready_ack_sent = send_all(conn, &ready_ack, sizeof(ready_ack));
-  *perf_net_ns += now_ns() - t_ack_start;
   if (ready_ack_sent != (ssize_t)sizeof(ready_ack)) {
     sock_perror("send_all(file_transfer_ready_ack)");
     goto CLEANUP;
@@ -494,8 +459,7 @@ static int server_handle_file_transfer(socket_t conn,
 
   if (compressed_transfer) {
     if (server_recv_compressed_file_body(conn, out, wire_body_size,
-                                         content_size, perf_io_ns,
-                                         perf_net_ns) != 0) {
+                                         content_size) != 0) {
       ok = 0;
     } else {
       ok = 1;
@@ -510,37 +474,29 @@ static int server_handle_file_transfer(socket_t conn,
         want = (size_t)remaining;
 
 #ifdef _WIN32
-      uint64_t t_recv_chunk_start = now_ns();
       int tmp = recv(conn, buf, (int)want, 0);
       if (tmp == SOCKET_ERROR) {
-        *perf_net_ns += now_ns() - t_recv_chunk_start;
         int err = WSAGetLastError();
         if (err == WSAEINTR) continue;
         sock_perror("recv");
         break;
       }
-      *perf_net_ns += now_ns() - t_recv_chunk_start;
       n = (ssize_t)tmp;
 #else
-      uint64_t t_recv_chunk_start = now_ns();
       n = recv(conn, buf, want, 0);
       if (n < 0) {
-        *perf_net_ns += now_ns() - t_recv_chunk_start;
         if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
           continue;
         sock_perror("recv");
         break;
       }
-      *perf_net_ns += now_ns() - t_recv_chunk_start;
 #endif
       if (n == 0) {
         fprintf(stderr, "protocol error: unexpected EOF while receiving file\n");
         break;
       }
 
-      uint64_t t_write_start = now_ns();
       ssize_t nw = fs_write_all(out, buf, (size_t)n);
-      *perf_io_ns += now_ns() - t_write_start;
       if (nw != (ssize_t)n) {
         perror("write_all");
         break;
@@ -560,9 +516,7 @@ static int server_handle_file_transfer(socket_t conn,
 
   if (ok) {
     unsigned long win_err = 0;
-    uint64_t t_rename_start = now_ns();
     if (fs_finalize_temp_file(tmp_path, full_path, &win_err) != 0) {
-      *perf_io_ns += now_ns() - t_rename_start;
 #ifdef _WIN32
       fprintf(stderr, "failed to finalize temporary file (err=%lu)\n",
               (unsigned long)win_err);
@@ -571,7 +525,6 @@ static int server_handle_file_transfer(socket_t conn,
 #endif
       fs_remove_quiet(tmp_path);
     } else {
-      *perf_io_ns += now_ns() - t_rename_start;
       *ack = 0;
       printf("saved to %s\n", full_path);
       fflush(stdout);
@@ -591,6 +544,7 @@ CLEANUP:
 
 static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
   int exit_code = 0;
+  ssize_t ack_sent = 0;
 
   for (;;) {
 #ifdef _WIN32
@@ -607,18 +561,10 @@ static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
     }
 
     uint8_t ack = 1;
-    uint64_t perf_conn_start_ns = now_ns();
-    uint64_t perf_io_ns = 0;
-    uint64_t perf_net_ns = 0;
-    uint64_t perf_file_bytes = 0;
-    uint64_t perf_wire_bytes = 0;
-    uint64_t t_ack_start = 0;
     uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
     protocol_header_t proto_header = {0};
 
-    uint64_t t_recv_header_start = now_ns();
     protocol_result_t header_res = recv_header(conn, header_buf);
-    perf_net_ns += now_ns() - t_recv_header_start;
     if (header_res != PROTOCOL_OK) {
       if (header_res == PROTOCOL_ERR_EOF) {
         fprintf(stderr, "protocol error: unexpected EOF while receiving header\n");
@@ -636,20 +582,15 @@ static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
       goto CLEANUP_CONN;
     }
 
-    perf_wire_bytes = (uint64_t)HF_PROTOCOL_HEADER_SIZE + proto_header.payload_size;
-
     switch (proto_header.msg_type) {
       case HF_MSG_TYPE_TEXT_MESSAGE: {
-        exit_code = server_handle_text_message(conn, &proto_header, &ack,
-                                               &perf_io_ns, &perf_net_ns,
-                                               &perf_file_bytes);
+        exit_code = server_handle_text_message(conn, &proto_header, &ack);
         goto CLEANUP_CONN;
       }
 
       case HF_MSG_TYPE_FILE_TRANSFER: {
         exit_code = server_handle_file_transfer(conn, ser_opt, &proto_header,
-                                                &ack, &perf_io_ns,
-                                                &perf_net_ns, &perf_file_bytes);
+                                                &ack);
         break;
       }
 
@@ -661,23 +602,9 @@ static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
     }
 
     CLEANUP_CONN:
-    t_ack_start = now_ns();
-    ssize_t ack_sent = send_all(conn, &ack, sizeof(ack));
-    perf_net_ns += now_ns() - t_ack_start;
+    ack_sent = send_all(conn, &ack, sizeof(ack));
     if (ack_sent != (ssize_t)sizeof(ack)) {
       sock_perror("send_all(ack)");
-    }
-
-    if (ser_opt->perf) {
-      uint64_t perf_total_ns = now_ns() - perf_conn_start_ns;
-      report_transfer_perf(
-        "server",
-        ack == 0 ? 1 : 0,
-        ns_to_s(perf_total_ns),
-        ns_to_s(perf_io_ns),
-        ns_to_s(perf_net_ns),
-        perf_file_bytes,
-        perf_wire_bytes);
     }
     socket_close(conn);
   }

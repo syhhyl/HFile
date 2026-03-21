@@ -37,15 +37,6 @@ class TestCLI(unittest.TestCase):
                 ],
             },
             {
-                "name": "no_mode_with_perf",
-                "args": ["--perf"],
-                "rc": 1,
-                "stderr_contains": [
-                    "must specify one of -s, -c, or -m",
-                    "usage:",
-                ],
-            },
-            {
                 "name": "invalid_token",
                 "args": ["a"],
                 "rc": 1,

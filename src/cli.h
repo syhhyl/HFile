@@ -23,7 +23,6 @@ typedef struct {
   const char *http_bind;
   uint16_t port;
   uint16_t http_port;
-  int perf;
   uint8_t msg_type;
   uint8_t msg_flags;
 } Opt;
@@ -33,7 +32,6 @@ typedef struct {
   const char *message;
   const char *ip;
   uint16_t port;
-  int perf;
   uint8_t msg_type;
   uint8_t msg_flags;
 } client_opt_t;
@@ -44,7 +42,6 @@ typedef struct {
   const char *http_bind;
   uint16_t port;
   uint16_t http_port;
-  int perf;
 } server_opt_t;
 
 

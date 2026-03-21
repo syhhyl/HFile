@@ -1,5 +1,4 @@
 #include "cli.h"
-#include "helper.h"
 #include "net.h"
 #include "protocol.h"
 #include "client.h"
@@ -7,7 +6,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <inttypes.h>
 #include <fcntl.h>
 #include <errno.h>
 #include "fs.h"
@@ -15,17 +13,13 @@
 #include "lz4.h"
 
 
-static int client_recv_ack(socket_t sock, uint64_t *perf_net_ns,
-                           const char *recv_ctx,
+static int client_recv_ack(socket_t sock, const char *recv_ctx,
                            const char *failure_ctx) {
   uint8_t ack = 1;
-  uint64_t t_ack_start = now_ns();
   if (recv_all(sock, &ack, sizeof(ack)) != (ssize_t)sizeof(ack)) {
-    *perf_net_ns += now_ns() - t_ack_start;
     sock_perror(recv_ctx);
     return 1;
   }
-  *perf_net_ns += now_ns() - t_ack_start;
   if (ack != 0) {
     fprintf(stderr, "%s (ack=%u)\n", failure_ctx, (unsigned)ack);
     return 1;
@@ -34,8 +28,7 @@ static int client_recv_ack(socket_t sock, uint64_t *perf_net_ns,
   return 0;
 }
 
-static int client_connect(const char *ip, uint16_t port, socket_t *sock_out,
-                          uint64_t *perf_net_ns) {
+static int client_connect(const char *ip, uint16_t port, socket_t *sock_out) {
 #ifdef _WIN32
   socket_t sock = INVALID_SOCKET;
 #else
@@ -64,33 +57,28 @@ static int client_connect(const char *ip, uint16_t port, socket_t *sock_out,
     return 1;
   }
 
-  uint64_t t_connect_start = now_ns();
 #ifdef _WIN32
   if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
 #else
   if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 #endif
-    *perf_net_ns += now_ns() - t_connect_start;
     sock_perror("connect");
     socket_close(sock);
     return 1;
   }
-  *perf_net_ns += now_ns() - t_connect_start;
 
   *sock_out = sock;
   return 0;
 }
 
-static int client_get_file_size(int in, uint64_t *content_size_out,
-                                uint64_t *perf_io_ns) {
+static int client_get_file_size(int in, uint64_t *content_size_out) {
 #ifdef _WIN32
   struct _stat64 st;
 #else
   struct stat st;
 #endif
-  uint64_t t_stat_start = now_ns();
 
-  if (content_size_out == NULL || perf_io_ns == NULL) {
+  if (content_size_out == NULL) {
     fprintf(stderr, "invalid file size output\n");
     return 1;
   }
@@ -102,11 +90,9 @@ static int client_get_file_size(int in, uint64_t *content_size_out,
   if (fstat(in, &st) != 0) {
     perror("fstat");
 #endif
-    *perf_io_ns += now_ns() - t_stat_start;
     return 1;
   }
 
-  *perf_io_ns += now_ns() - t_stat_start;
   if (st.st_size < 0) {
     fprintf(stderr, "invalid source file size\n");
     return 1;
@@ -116,27 +102,16 @@ static int client_get_file_size(int in, uint64_t *content_size_out,
   return 0;
 }
 
-static int client_rewind_input_file(int in, uint64_t *perf_io_ns) {
-  uint64_t t_seek_start = 0;
-
-  if (perf_io_ns == NULL) {
-    fprintf(stderr, "invalid input rewind timer\n");
-    return 1;
-  }
-
-  t_seek_start = now_ns();
+static int client_rewind_input_file(int in) {
   if (fs_seek_start(in) != 0) {
-    *perf_io_ns += now_ns() - t_seek_start;
     perror("lseek");
     return 1;
   }
-  *perf_io_ns += now_ns() - t_seek_start;
   return 0;
 }
 
 static int client_measure_compressed_body(int in, uint64_t content_size,
-                                          uint64_t *wire_body_size_out,
-                                          uint64_t *perf_io_ns) {
+                                          uint64_t *wire_body_size_out) {
   int exit_code = 1;
   char *raw_buf = NULL;
   char *cmp_buf = NULL;
@@ -144,7 +119,7 @@ static int client_measure_compressed_body(int in, uint64_t content_size,
   uint64_t wire_body_size = 0;
   int cmp_cap = 0;
 
-  if (wire_body_size_out == NULL || perf_io_ns == NULL) {
+  if (wire_body_size_out == NULL) {
     fprintf(stderr, "invalid compression outputs\n");
     return 1;
   }
@@ -178,9 +153,7 @@ static int client_measure_compressed_body(int in, uint64_t content_size,
       want = (size_t)remaining;
     }
 
-    uint64_t t_read_start = now_ns();
     ssize_t nr = fs_read(in, raw_buf, want);
-    *perf_io_ns += now_ns() - t_read_start;
     if (nr < 0) {
       perror("read");
       goto CLEANUP;
@@ -217,19 +190,12 @@ CLEANUP:
 }
 
 static int client_send_compressed_body(int in, uint64_t content_size,
-                                       socket_t sock,
-                                       uint64_t *perf_io_ns,
-                                       uint64_t *perf_net_ns) {
+                                       socket_t sock) {
   int exit_code = 1;
   char *raw_buf = NULL;
   char *cmp_buf = NULL;
   uint64_t remaining = content_size;
   int cmp_cap = 0;
-
-  if (perf_io_ns == NULL || perf_net_ns == NULL) {
-    fprintf(stderr, "invalid compressed body sender arguments\n");
-    return 1;
-  }
 
   raw_buf = (char *)malloc((size_t)CHUNK_SIZE);
   if (raw_buf == NULL) {
@@ -260,9 +226,7 @@ static int client_send_compressed_body(int in, uint64_t content_size,
       want = (size_t)remaining;
     }
 
-    uint64_t t_read_start = now_ns();
     ssize_t nr = fs_read(in, raw_buf, want);
-    *perf_io_ns += now_ns() - t_read_start;
     if (nr < 0) {
       perror("read");
       goto CLEANUP;
@@ -288,17 +252,13 @@ static int client_send_compressed_body(int in, uint64_t content_size,
       goto CLEANUP;
     }
 
-    uint64_t t_send_header_start = now_ns();
     ssize_t sent = send_all(sock, block_header, sizeof(block_header));
-    *perf_net_ns += now_ns() - t_send_header_start;
     if (sent != (ssize_t)sizeof(block_header)) {
       sock_perror("send(compressed_block_header)");
       goto CLEANUP;
     }
 
-    uint64_t t_send_body_start = now_ns();
     sent = send_all(sock, stored_buf, stored_size);
-    *perf_net_ns += now_ns() - t_send_body_start;
     if (sent != (ssize_t)stored_size) {
       sock_perror("send(compressed_block_data)");
       goto CLEANUP;
@@ -317,12 +277,6 @@ CLEANUP:
 
 static int client_send_plain_file_transfer(const client_opt_t *opt) {
   int exit_code = 0;
-
-  uint64_t perf_start_ns = now_ns();
-  uint64_t perf_io_ns = 0;
-  uint64_t perf_net_ns = 0;
-  uint64_t perf_file_bytes = 0;
-  uint64_t perf_wire_bytes = 0;
 
   int in = -1;
   char *buf = NULL;
@@ -348,13 +302,11 @@ static int client_send_plain_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  uint64_t t_open_start = now_ns();
 #ifdef _WIN32
   in = fs_open(path, O_RDONLY | O_BINARY, 0);
 #else
   in = fs_open(path, O_RDONLY, 0);
 #endif
-  perf_io_ns += now_ns() - t_open_start;
   if (in == -1) {
     perror("open");
     exit_code = 1;
@@ -367,20 +319,18 @@ static int client_send_plain_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  if (client_get_file_size(in, &content_size, &perf_io_ns) != 0) {
+  if (client_get_file_size(in, &content_size) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
 
-  if (client_connect(opt->ip, opt->port, &sock, &perf_net_ns) != 0) {
+  if (client_connect(opt->ip, opt->port, &sock) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
 
-  perf_file_bytes = content_size;
   uint64_t payload_size =
     (uint64_t)proto_file_transfer_prefix_size(file_name_len) + content_size;
-  perf_wire_bytes = (uint64_t)HF_PROTOCOL_HEADER_SIZE + payload_size;
 
   protocol_header_t header = {0};
   init_header(&header);
@@ -396,18 +346,14 @@ static int client_send_plain_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  uint64_t t_header_start = now_ns();
   proto_res = send_header(sock, header_buf);
-  perf_net_ns += now_ns() - t_header_start;
   if (proto_res != PROTOCOL_OK) {
     sock_perror("send_header");
     exit_code = 1;
     goto CLEANUP;
   }
 
-  uint64_t t_prefix_start = now_ns();
   proto_res = proto_send_file_transfer_prefix(sock, file_name, content_size);
-  perf_net_ns += now_ns() - t_prefix_start;
   if (proto_res != PROTOCOL_OK) {
     if (proto_res == PROTOCOL_ERR_FILE_NAME_LEN) {
       fprintf(stderr, "invalid file name length\n");
@@ -418,7 +364,7 @@ static int client_send_plain_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  if (client_recv_ack(sock, &perf_net_ns, "recv_all(file_transfer_ready_ack)",
+  if (client_recv_ack(sock, "recv_all(file_transfer_ready_ack)",
                       "server reported transfer failure") != 0) {
     exit_code = 1;
     goto CLEANUP;
@@ -439,9 +385,7 @@ static int client_send_plain_file_transfer(const client_opt_t *opt) {
       if ((uint64_t)want > remaining)
         want = (size_t)remaining;
 
-      uint64_t t_read_start = now_ns();
       ssize_t nr = fs_read(in, buf + pos, want);
-      perf_io_ns += now_ns() - t_read_start;
       if (nr < 0) {
         perror("read");
         exit_code = 1;
@@ -458,9 +402,7 @@ static int client_send_plain_file_transfer(const client_opt_t *opt) {
 
     //TODO can we use multithreading ?
     if (pos > 0) {
-      uint64_t t_send_start = now_ns();
       ssize_t sent = send_all(sock, buf, pos);
-      perf_net_ns += now_ns() - t_send_start;
       if (sent != (ssize_t)pos) {
         sock_perror("send");
         exit_code = 1;
@@ -484,7 +426,7 @@ static int client_send_plain_file_transfer(const client_opt_t *opt) {
   }
 #endif
 
-  if (client_recv_ack(sock, &perf_net_ns, "recv_all(file_transfer_final_ack)",
+  if (client_recv_ack(sock, "recv_all(file_transfer_final_ack)",
                       "server reported transfer failure") != 0) {
     exit_code = 1;
     goto CLEANUP;
@@ -501,29 +443,11 @@ CLEANUP:
   if (buf != NULL) free(buf);
   if (in != -1) fs_close(in);
 
-  if (opt->perf) {
-    uint64_t perf_total_ns = now_ns() - perf_start_ns;
-    report_transfer_perf(
-      "client",
-      exit_code == 0 ? 1 : 0,
-      ns_to_s(perf_total_ns),
-      ns_to_s(perf_io_ns),
-      ns_to_s(perf_net_ns),
-      perf_file_bytes,
-      perf_wire_bytes);
-  }
-
   return exit_code;
 }
 
 static int client_send_compressed_file_transfer(const client_opt_t *opt) {
   int exit_code = 0;
-
-  uint64_t perf_start_ns = now_ns();
-  uint64_t perf_io_ns = 0;
-  uint64_t perf_net_ns = 0;
-  uint64_t perf_file_bytes = 0;
-  uint64_t perf_wire_bytes = 0;
 
   int in = -1;
 #ifdef _WIN32
@@ -549,44 +473,39 @@ static int client_send_compressed_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  uint64_t t_open_start = now_ns();
 #ifdef _WIN32
   in = fs_open(path, O_RDONLY | O_BINARY, 0);
 #else
   in = fs_open(path, O_RDONLY, 0);
 #endif
-  perf_io_ns += now_ns() - t_open_start;
   if (in == -1) {
     perror("open");
     exit_code = 1;
     goto CLEANUP;
   }
 
-  if (client_get_file_size(in, &content_size, &perf_io_ns) != 0) {
+  if (client_get_file_size(in, &content_size) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
 
-  if (client_measure_compressed_body(in, content_size, &wire_body_size,
-                                     &perf_io_ns) != 0) {
+  if (client_measure_compressed_body(in, content_size, &wire_body_size) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
 
-  if (client_rewind_input_file(in, &perf_io_ns) != 0) {
+  if (client_rewind_input_file(in) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
 
-  if (client_connect(opt->ip, opt->port, &sock, &perf_net_ns) != 0) {
+  if (client_connect(opt->ip, opt->port, &sock) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
 
-  perf_file_bytes = content_size;
   uint64_t payload_size =
     (uint64_t)proto_file_transfer_prefix_size(file_name_len) + wire_body_size;
-  perf_wire_bytes = (uint64_t)HF_PROTOCOL_HEADER_SIZE + payload_size;
 
   protocol_header_t header = {0};
   init_header(&header);
@@ -602,18 +521,14 @@ static int client_send_compressed_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  uint64_t t_header_start = now_ns();
   proto_res = send_header(sock, header_buf);
-  perf_net_ns += now_ns() - t_header_start;
   if (proto_res != PROTOCOL_OK) {
     sock_perror("send_header");
     exit_code = 1;
     goto CLEANUP;
   }
 
-  uint64_t t_prefix_start = now_ns();
   proto_res = proto_send_file_transfer_prefix(sock, file_name, content_size);
-  perf_net_ns += now_ns() - t_prefix_start;
   if (proto_res != PROTOCOL_OK) {
     if (proto_res == PROTOCOL_ERR_FILE_NAME_LEN) {
       fprintf(stderr, "invalid file name length\n");
@@ -624,14 +539,13 @@ static int client_send_compressed_file_transfer(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  if (client_recv_ack(sock, &perf_net_ns, "recv_all(file_transfer_ready_ack)",
+  if (client_recv_ack(sock, "recv_all(file_transfer_ready_ack)",
                       "server reported transfer failure") != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
 
-  if (client_send_compressed_body(in, content_size, sock, &perf_io_ns,
-                                  &perf_net_ns) != 0) {
+  if (client_send_compressed_body(in, content_size, sock) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
@@ -646,7 +560,7 @@ static int client_send_compressed_file_transfer(const client_opt_t *opt) {
   }
 #endif
 
-  if (client_recv_ack(sock, &perf_net_ns, "recv_all(file_transfer_final_ack)",
+  if (client_recv_ack(sock, "recv_all(file_transfer_final_ack)",
                       "server reported transfer failure") != 0) {
     exit_code = 1;
     goto CLEANUP;
@@ -662,28 +576,11 @@ CLEANUP:
 #endif
   if (in != -1) fs_close(in);
 
-  if (opt->perf) {
-    uint64_t perf_total_ns = now_ns() - perf_start_ns;
-    report_transfer_perf(
-      "client",
-      exit_code == 0 ? 1 : 0,
-      ns_to_s(perf_total_ns),
-      ns_to_s(perf_io_ns),
-      ns_to_s(perf_net_ns),
-      perf_file_bytes,
-      perf_wire_bytes);
-  }
-
   return exit_code;
 }
 
 static int client_send_text_message(const client_opt_t *opt) {
   int exit_code = 0;
-  uint64_t perf_start_ns = now_ns();
-  uint64_t perf_io_ns = 0;
-  uint64_t perf_net_ns = 0;
-  uint64_t perf_file_bytes = 0;
-  uint64_t perf_wire_bytes = 0;
 #ifdef _WIN32
   socket_t sock = INVALID_SOCKET;
 #else
@@ -700,14 +597,12 @@ static int client_send_text_message(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  if (client_connect(opt->ip, opt->port, &sock, &perf_net_ns) != 0) {
+  if (client_connect(opt->ip, opt->port, &sock) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
 
   uint64_t payload_size = (uint64_t)message_len;
-  perf_file_bytes = payload_size;
-  perf_wire_bytes = (uint64_t)HF_PROTOCOL_HEADER_SIZE + payload_size;
 
   protocol_header_t header = {0};
   init_header(&header);
@@ -723,9 +618,7 @@ static int client_send_text_message(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  uint64_t t_header_start = now_ns();
   proto_res = send_header(sock, header_buf);
-  perf_net_ns += now_ns() - t_header_start;
   if (proto_res != PROTOCOL_OK) {
     sock_perror("send_header");
     exit_code = 1;
@@ -733,9 +626,7 @@ static int client_send_text_message(const client_opt_t *opt) {
   }
 
   if (message_len > 0) {
-    uint64_t t_send_start = now_ns();
     ssize_t sent = send_all(sock, message, message_len);
-    perf_net_ns += now_ns() - t_send_start;
     if (sent != (ssize_t)message_len) {
       sock_perror("send(message)");
       exit_code = 1;
@@ -753,7 +644,7 @@ static int client_send_text_message(const client_opt_t *opt) {
   }
 #endif
 
-  if (client_recv_ack(sock, &perf_net_ns, "recv_all(message_ack)",
+  if (client_recv_ack(sock, "recv_all(message_ack)",
                       "server reported transfer failure") != 0) {
     exit_code = 1;
     goto CLEANUP;
@@ -767,18 +658,6 @@ CLEANUP:
   if (sock != -1)
     socket_close(sock);
 #endif
-
-  if (opt->perf) {
-    uint64_t perf_total_ns = now_ns() - perf_start_ns;
-    report_transfer_perf(
-      "client",
-      exit_code == 0 ? 1 : 0,
-      ns_to_s(perf_total_ns),
-      ns_to_s(perf_io_ns),
-      ns_to_s(perf_net_ns),
-      perf_file_bytes,
-      perf_wire_bytes);
-  }
 
   return exit_code;
 }

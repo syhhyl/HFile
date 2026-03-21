@@ -10,7 +10,6 @@ add_executable(hf
   src/webui.c
   src/client.c
   src/protocol.c
-  src/helper.c
   src/cli.c
   src/net.c
   src/fs.c
