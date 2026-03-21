@@ -5,6 +5,27 @@ BUILD_TYPE=${BUILD_TYPE:-Debug}
 USE_WINDOWS=0
 DO_INSTALL=0
 
+usage() {
+  cat <<EOF
+Usage: $0 [options]
+
+Configure and build the project with CMake + Ninja.
+
+Options:
+  -t, --target <type>  Set CMake build type (default: $BUILD_TYPE)
+  -w, --windows        Cross-compile for Windows using MinGW
+  -i, --install        Install after a successful non-Windows build
+  -h, --help           Show this help message
+
+Examples:
+  $0
+  BUILD_TYPE=Release $0
+  $0 -t Release
+  $0 -w
+  $0 -i
+EOF
+}
+
 need_value() {
   if [ -z "${2:-}" ]; then
     echo "Missing value for $1" >&2
@@ -27,14 +48,12 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 [-w|--windows][-t|--target <target>]"
-      echo "  -w, --windows  Cross-compile for Windows using MinGW"
-      echo "  -t, --target <target> Build the specified target" 
+      usage
       exit 0
       ;;
     *)
-      echo "Unknown option: $1"
-      echo "Usage: $0 [-w|--windows]"
+      echo "Unknown option: $1" >&2
+      usage >&2
       exit 1
       ;;
   esac
