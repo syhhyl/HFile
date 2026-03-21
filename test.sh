@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -e
+
+usage() {
+  cat <<EOF
+Usage: ./test.sh [suite]
+Usage: ./test.sh [unittest args...]
+
+Short suites:
+  full      Run the full documented test suite
+  support   Run shared test helper tests
+  cli       Run CLI tests
+  http      Run HTTP tests
+  transfer  Run transfer tests
+
+Examples:
+  ./test.sh
+  ./test.sh transfer
+  ./test.sh -v test.test_transfer
+EOF
+}
+
+if [ $# -eq 0 ]; then
+  exec python3 -m unittest -v test.test_hf
+fi
+
+case "$1" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  full)
+    shift
+    exec python3 -m unittest -v test.test_hf "$@"
+    ;;
+  support)
+    shift
+    exec python3 -m unittest -v test.test_support "$@"
+    ;;
+  cli)
+    shift
+    exec python3 -m unittest -v test.test_cli "$@"
+    ;;
+  http)
+    shift
+    exec python3 -m unittest -v test.test_http "$@"
+    ;;
+  transfer)
+    shift
+    exec python3 -m unittest -v test.test_transfer "$@"
+    ;;
+esac
+
+exec python3 -m unittest "$@"

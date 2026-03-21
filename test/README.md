@@ -8,3 +8,10 @@
 - `test/fixtures/transfer/`: checked-in payloads used by transfer tests.
 
 Runtime input and output files are created under temporary directories during test runs.
+
+Common commands:
+
+- `./test.sh`: run the full documented test suite.
+- `./test.sh transfer`: run the transfer suite.
+- `./test.sh cli`: run the CLI suite.
+- `./test.sh -v test.test_transfer`: pass raw `unittest` arguments through.
