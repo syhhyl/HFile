@@ -313,11 +313,8 @@ static int client_send_file_raw(const client_opt_t *opt) {
 
   int in = -1;
   char *buf = NULL;
-#ifdef _WIN32
-  socket_t sock = INVALID_SOCKET;
-#else
-  socket_t sock = -1;
-#endif
+  socket_t sock;
+  socket_init(&sock);
   const char *path = opt->path;
   const char *file_name = NULL;
   uint16_t file_name_len = 0;
@@ -465,13 +462,7 @@ static int client_send_file_raw(const client_opt_t *opt) {
   }
 
 CLEANUP:
-#ifdef _WIN32
-  if (sock != INVALID_SOCKET)
-    socket_close(sock);
-#else
-  if (sock != -1)
-    socket_close(sock);
-#endif
+  socket_close(sock);
   if (buf != NULL) free(buf);
   if (in != -1) fs_close(in);
 
@@ -482,11 +473,8 @@ static int client_send_file_compressed(const client_opt_t *opt) {
   int exit_code = 0;
 
   int in = -1;
-#ifdef _WIN32
-  socket_t sock = INVALID_SOCKET;
-#else
-  socket_t sock = -1;
-#endif
+  socket_t sock;
+  socket_init(&sock);
   const char *path = opt->path;
   const char *file_name = NULL;
   uint16_t file_name_len = 0;
@@ -598,13 +586,7 @@ static int client_send_file_compressed(const client_opt_t *opt) {
   }
 
 CLEANUP:
-#ifdef _WIN32
-  if (sock != INVALID_SOCKET)
-    socket_close(sock);
-#else
-  if (sock != -1)
-    socket_close(sock);
-#endif
+  socket_close(sock);
   if (in != -1) fs_close(in);
 
   return exit_code;
@@ -612,12 +594,8 @@ CLEANUP:
 
 static int client_send_message(const client_opt_t *opt) {
   int exit_code = 0;
-#ifdef _WIN32
-  socket_t sock = INVALID_SOCKET;
-#else
-  socket_t sock = -1;
-#endif
-
+  socket_t sock;
+  socket_init(&sock);
   const char *message = opt->message;
   size_t message_len = 0;
 
@@ -682,13 +660,7 @@ static int client_send_message(const client_opt_t *opt) {
   }
 
 CLEANUP:
-#ifdef _WIN32
-  if (sock != INVALID_SOCKET)
-    socket_close(sock);
-#else
-  if (sock != -1)
-    socket_close(sock);
-#endif
+  socket_close(sock);
 
   return exit_code;
 }
