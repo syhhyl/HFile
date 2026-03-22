@@ -152,10 +152,30 @@ static int start_http_thread(socket_t sock, const server_opt_t *ser_opt) {
   return 0;
 }
 
+static int server_discard_body_bytes(socket_t conn, uint64_t remaining) {
+  char buf[4096];
+
+  while (remaining > 0) {
+    size_t want = sizeof(buf);
+    if ((uint64_t)want > remaining) {
+      want = (size_t)remaining;
+    }
+
+    ssize_t n = recv_all(conn, buf, want);
+    if (n != (ssize_t)want) {
+      return 1;
+    }
+    remaining -= (uint64_t)want;
+  }
+
+  return 0;
+}
+
 static int server_recv_compressed_file_body(socket_t conn, int out,
                                             uint64_t wire_body_size,
                                             uint64_t content_size) {
   int exit_code = 1;
+  int drain_remaining = 0;
   char *raw_buf = NULL;
   char *stored_buf = NULL;
   uint64_t wire_remaining = wire_body_size;
@@ -206,28 +226,34 @@ static int server_recv_compressed_file_body(socket_t conn, int out,
                                              &raw_size, &stored_size) !=
         PROTOCOL_OK) {
       fprintf(stderr, "protocol error: failed to decode compressed block header\n");
+      drain_remaining = 1;
       goto CLEANUP;
     }
 
     if (block_type != HF_COMPRESS_BLOCK_TYPE_RAW &&
         block_type != HF_COMPRESS_BLOCK_TYPE_LZ4) {
       fprintf(stderr, "protocol error: invalid compressed block type\n");
+      drain_remaining = 1;
       goto CLEANUP;
     }
     if (raw_size == 0 || raw_size > (uint32_t)CHUNK_SIZE) {
       fprintf(stderr, "protocol error: invalid compressed block raw size\n");
+      drain_remaining = 1;
       goto CLEANUP;
     }
     if (stored_size == 0 || stored_size > (uint32_t)stored_cap) {
       fprintf(stderr, "protocol error: invalid compressed block stored size\n");
+      drain_remaining = 1;
       goto CLEANUP;
     }
     if ((uint64_t)stored_size > wire_remaining) {
       fprintf(stderr, "protocol error: compressed block size mismatch\n");
+      drain_remaining = 1;
       goto CLEANUP;
     }
     if (raw_total > content_size || content_size - raw_total < (uint64_t)raw_size) {
       fprintf(stderr, "protocol error: decompressed size mismatch\n");
+      drain_remaining = 1;
       goto CLEANUP;
     }
 
@@ -246,12 +272,14 @@ static int server_recv_compressed_file_body(socket_t conn, int out,
     if (block_type == HF_COMPRESS_BLOCK_TYPE_RAW) {
       if (stored_size != raw_size) {
         fprintf(stderr, "protocol error: raw compressed block size mismatch\n");
+        drain_remaining = 1;
         goto CLEANUP;
       }
 
       ssize_t nw = fs_write_all(out, stored_buf, stored_size);
       if (nw != (ssize_t)stored_size) {
         perror("write_all");
+        drain_remaining = 1;
         goto CLEANUP;
       }
     } else {
@@ -259,12 +287,14 @@ static int server_recv_compressed_file_body(socket_t conn, int out,
                                         (int)raw_size);
       if (decoded != (int)raw_size) {
         fprintf(stderr, "protocol error: failed to decompress file block\n");
+        drain_remaining = 1;
         goto CLEANUP;
       }
 
       ssize_t nw = fs_write_all(out, raw_buf, raw_size);
       if (nw != (ssize_t)raw_size) {
         perror("write_all");
+        drain_remaining = 1;
         goto CLEANUP;
       }
     }
@@ -280,6 +310,9 @@ static int server_recv_compressed_file_body(socket_t conn, int out,
   exit_code = 0;
 
 CLEANUP:
+  if (drain_remaining && wire_remaining > 0) {
+    (void)server_discard_body_bytes(conn, wire_remaining);
+  }
   if (stored_buf != NULL) free(stored_buf);
   if (raw_buf != NULL) free(raw_buf);
   return exit_code;
@@ -337,16 +370,22 @@ static int server_handle_text_message(socket_t conn,
   return 0;
 }
 
+typedef enum {
+  SERVER_REPLY_ACK_SUCCESS = 0,
+  SERVER_REPLY_ACK_FAILURE = 1,
+  SERVER_REPLY_CLOSE = 2
+} server_reply_t;
+
 static int server_handle_file_transfer(socket_t conn,
                                        const server_opt_t *ser_opt,
                                        const protocol_header_t *proto_header,
-                                       uint8_t *ack) {
+                                       server_reply_t *reply) {
   int exit_code = 1;
   char *file_name = NULL;
   char *buf = NULL;
   char tmp_path[4096];
   int out = -1;
-  int ok = 0;
+  int body_complete = 0;
   uint64_t content_size = 0;
   uint64_t wire_body_size = 0;
   uint16_t file_len = 0;
@@ -354,11 +393,12 @@ static int server_handle_file_transfer(socket_t conn,
 
   tmp_path[0] = '\0';
 
-  if (ack == NULL || ser_opt == NULL) {
+  if (reply == NULL || ser_opt == NULL) {
     fprintf(stderr, "invalid file transfer handler arguments\n");
     return 1;
   }
 
+  *reply = SERVER_REPLY_ACK_FAILURE;
   compressed_transfer = (proto_header->flags & HF_MSG_FLAG_COMPRESS) != 0;
 
   if (proto_header->payload_size <
@@ -454,15 +494,17 @@ static int server_handle_file_transfer(socket_t conn,
   ssize_t ready_ack_sent = send_all(conn, &ready_ack, sizeof(ready_ack));
   if (ready_ack_sent != (ssize_t)sizeof(ready_ack)) {
     sock_perror("send_all(file_transfer_ready_ack)");
+    *reply = SERVER_REPLY_CLOSE;
     goto CLEANUP;
   }
+  *reply = SERVER_REPLY_ACK_FAILURE;
 
   if (compressed_transfer) {
     if (server_recv_compressed_file_body(conn, out, wire_body_size,
                                          content_size) != 0) {
-      ok = 0;
+      body_complete = 0;
     } else {
-      ok = 1;
+      body_complete = 1;
     }
   } else {
     uint64_t remaining = content_size;
@@ -499,13 +541,17 @@ static int server_handle_file_transfer(socket_t conn,
       ssize_t nw = fs_write_all(out, buf, (size_t)n);
       if (nw != (ssize_t)n) {
         perror("write_all");
+        remaining -= (uint64_t)n;
+        if (server_discard_body_bytes(conn, remaining) != 0) {
+          *reply = SERVER_REPLY_CLOSE;
+        }
         break;
       }
       remaining -= (uint64_t)n;
     }
 
     if (remaining == 0) {
-      ok = 1;
+      body_complete = 1;
     }
   }
 
@@ -514,7 +560,8 @@ static int server_handle_file_transfer(socket_t conn,
   fs_close(out);
   out = -1;
 
-  if (ok) {
+  if (body_complete) {
+    *reply = SERVER_REPLY_ACK_FAILURE;
     unsigned long win_err = 0;
     if (fs_finalize_temp_file(tmp_path, full_path, &win_err) != 0) {
 #ifdef _WIN32
@@ -525,7 +572,7 @@ static int server_handle_file_transfer(socket_t conn,
 #endif
       fs_remove_quiet(tmp_path);
     } else {
-      *ack = 0;
+      *reply = SERVER_REPLY_ACK_SUCCESS;
       printf("saved to %s\n", full_path);
       fflush(stdout);
       exit_code = 0;
@@ -533,7 +580,7 @@ static int server_handle_file_transfer(socket_t conn,
   }
 
 CLEANUP:
-  if (ack != NULL && *ack != 0 && tmp_path[0] != '\0') {
+  if (reply != NULL && *reply != SERVER_REPLY_ACK_SUCCESS && tmp_path[0] != '\0') {
     fs_remove_quiet(tmp_path);
   }
   if (buf != NULL) free(buf);
@@ -560,7 +607,7 @@ static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
       continue;
     }
 
-    uint8_t ack = 1;
+    server_reply_t reply = SERVER_REPLY_ACK_FAILURE;
     uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
     protocol_header_t proto_header = {0};
 
@@ -584,13 +631,15 @@ static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
 
     switch (proto_header.msg_type) {
       case HF_MSG_TYPE_TEXT_MESSAGE: {
+        uint8_t ack = 1;
         exit_code = server_handle_text_message(conn, &proto_header, &ack);
+        reply = (ack == 0) ? SERVER_REPLY_ACK_SUCCESS : SERVER_REPLY_ACK_FAILURE;
         goto CLEANUP_CONN;
       }
 
       case HF_MSG_TYPE_FILE_TRANSFER: {
         exit_code = server_handle_file_transfer(conn, ser_opt, &proto_header,
-                                                &ack);
+                                                &reply);
         break;
       }
 
@@ -602,9 +651,12 @@ static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
     }
 
     CLEANUP_CONN:
-    ack_sent = send_all(conn, &ack, sizeof(ack));
-    if (ack_sent != (ssize_t)sizeof(ack)) {
-      sock_perror("send_all(ack)");
+    if (reply != SERVER_REPLY_CLOSE) {
+      uint8_t ack = (reply == SERVER_REPLY_ACK_SUCCESS) ? 0 : 1;
+      ack_sent = send_all(conn, &ack, sizeof(ack));
+      if (ack_sent != (ssize_t)sizeof(ack)) {
+        sock_perror("send_all(ack)");
+      }
     }
     socket_close(conn);
   }

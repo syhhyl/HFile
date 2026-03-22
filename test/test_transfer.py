@@ -247,7 +247,6 @@ class TransferTestCase(unittest.TestCase):
             final_ack = self._recv_ack_or_fail(s, phase="file final ack")
             return ready_ack, final_ack
 
-
 class TestTransferCLI(TransferTestCase):
     def test_common_file(self) -> None:
         src = self._write_input_file("hello.txt", b"hello hfile\n")
@@ -629,7 +628,6 @@ class TestTransferProtocol(TransferTestCase):
             payload_size=len(prefix) + len(body),
             flags=MSG_FLAG_COMPRESS,
         )
-
         log_offset = self._server_log_offset()
         ready_ack, final_ack = self._send_raw_file_transfer(header, prefix, body)
         self.assertEqual(
@@ -637,11 +635,11 @@ class TestTransferProtocol(TransferTestCase):
             b"\x00",
             f"unexpected ready ack: {ready_ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
-        # self.assertEqual(
-        #     final_ack,
-        #     b"\x01",
-        #     f"unexpected final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
-        # )
+        self.assertEqual(
+            final_ack,
+            b"\x01",
+            f"unexpected final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
         self._wait_for_server_log(
             "protocol error: invalid compressed block type", offset=log_offset
         )

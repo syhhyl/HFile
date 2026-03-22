@@ -28,6 +28,39 @@ static int client_recv_ack(socket_t sock, const char *recv_ctx,
   return 0;
 }
 
+static int client_recv_file_final_result(socket_t sock) {
+  uint8_t ack = 1;
+  ssize_t n = recv_all(sock, &ack, sizeof(ack));
+  if (n == (ssize_t)sizeof(ack)) {
+    if (ack == 0) {
+      return 0;
+    }
+    fprintf(stderr, "server reported transfer failure (ack=%u)\n",
+            (unsigned)ack);
+    return 1;
+  }
+
+  if (n == 0) {
+    fprintf(stderr, "server aborted transfer after ready ack\n");
+    return 1;
+  }
+
+#ifdef _WIN32
+  if (WSAGetLastError() == WSAECONNRESET) {
+    fprintf(stderr, "server aborted transfer after ready ack\n");
+    return 1;
+  }
+#else
+  if (errno == ECONNRESET) {
+    fprintf(stderr, "server aborted transfer after ready ack\n");
+    return 1;
+  }
+#endif
+
+  sock_perror("recv_all(file_transfer_final_ack)");
+  return 1;
+}
+
 static int client_connect(const char *ip, uint16_t port, socket_t *sock_out) {
 #ifdef _WIN32
   socket_t sock = INVALID_SOCKET;
@@ -426,8 +459,7 @@ static int client_send_file_raw(const client_opt_t *opt) {
   }
 #endif
 
-  if (client_recv_ack(sock, "recv_all(file_transfer_final_ack)",
-                      "server reported transfer failure") != 0) {
+  if (client_recv_file_final_result(sock) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
@@ -560,8 +592,7 @@ static int client_send_file_compressed(const client_opt_t *opt) {
   }
 #endif
 
-  if (client_recv_ack(sock, "recv_all(file_transfer_final_ack)",
-                      "server reported transfer failure") != 0) {
+  if (client_recv_file_final_result(sock) != 0) {
     exit_code = 1;
     goto CLEANUP;
   }
