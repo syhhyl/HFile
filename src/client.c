@@ -275,7 +275,7 @@ CLEANUP:
   return exit_code;
 }
 
-static int client_send_plain_file_transfer(const client_opt_t *opt) {
+static int client_send_file_raw(const client_opt_t *opt) {
   int exit_code = 0;
 
   int in = -1;
@@ -446,7 +446,7 @@ CLEANUP:
   return exit_code;
 }
 
-static int client_send_compressed_file_transfer(const client_opt_t *opt) {
+static int client_send_file_compressed(const client_opt_t *opt) {
   int exit_code = 0;
 
   int in = -1;
@@ -579,7 +579,7 @@ CLEANUP:
   return exit_code;
 }
 
-static int client_send_text_message(const client_opt_t *opt) {
+static int client_send_message(const client_opt_t *opt) {
   int exit_code = 0;
 #ifdef _WIN32
   socket_t sock = INVALID_SOCKET;
@@ -671,11 +671,11 @@ int client(const client_opt_t *cli_opt) {
   switch (cli_opt->msg_type) {
     case HF_MSG_TYPE_FILE_TRANSFER:
       if ((cli_opt->msg_flags & HF_MSG_FLAG_COMPRESS) != 0) {
-        return client_send_compressed_file_transfer(cli_opt);
+        return client_send_file_compressed(cli_opt);
       }
-      return client_send_plain_file_transfer(cli_opt);
+      return client_send_file_raw(cli_opt);
     case HF_MSG_TYPE_TEXT_MESSAGE:
-      return client_send_text_message(cli_opt);
+      return client_send_message(cli_opt);
     default:
       fprintf(stderr, "unsupported client message type: %u\n",
               (unsigned)cli_opt->msg_type);
