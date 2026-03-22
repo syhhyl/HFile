@@ -11,8 +11,8 @@
 #include "fs.h"
 #include <fcntl.h>
 #include "lz4.h"
-
 #include <errno.h>
+
 #ifdef _WIN32
   #include <process.h>
 #else
@@ -36,11 +36,8 @@ static inline int create_listener_socket(
     return 1;
   }
 
-#ifdef _WIN32
-  socket_t sock = INVALID_SOCKET;
-#else
-  socket_t sock = -1;
-#endif
+  socket_t sock;
+  socket_init(&sock);
 
 #ifdef _WIN32
   sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -691,13 +688,10 @@ int server(const server_opt_t *ser_opt) {
     goto CLEAN_UP;
   }
 
-#ifdef _WIN32
-  SOCKET sock = INVALID_SOCKET;
-  SOCKET http_sock = INVALID_SOCKET;
-#else
-  int sock = -1;
-  int http_sock = -1;
-#endif
+  socket_t sock;
+  socket_t http_sock;
+  socket_init(&sock);
+  socket_init(&http_sock);
 
   if (create_listener_socket(NULL, ser_opt->port, &sock) != 0) {
     exit_code = 1;
@@ -722,24 +716,10 @@ int server(const server_opt_t *ser_opt) {
   exit_code = server_run_tcp(sock, ser_opt);
 
 CLOSE_SOCK:
-  if (!http_started && http_sock !=
-#ifdef _WIN32
-      INVALID_SOCKET
-#else
-      -1
-#endif
-  ) {
+  if (!http_started) {
     socket_close(http_sock);
   }
-  if (sock !=
-#ifdef _WIN32
-      INVALID_SOCKET
-#else
-      -1
-#endif
-  ) {
-    socket_close(sock);
-  }
+  socket_close(sock);
 
 CLEAN_UP:
   message_store_cleanup();
