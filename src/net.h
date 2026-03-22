@@ -58,6 +58,7 @@ uint32_t decode_u32_be(const uint8_t in[4]);
 
 void sock_perror(const char *msg);
 
+void socket_init(socket_t *s);
 int socket_close(socket_t s);
 
 

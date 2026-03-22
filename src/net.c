@@ -155,10 +155,20 @@ void sock_perror(const char *msg) {
 #endif
 }
 
+void socket_init(socket_t *s) {
+#ifdef _WIN32
+  *s = INVALID_SOCKET;
+#else
+  *s = -1;
+#endif
+}
+
 int socket_close(socket_t s) {
 #ifdef _WIN32
+  if (s == INVALID_SOCKET) return 0;
   return closesocket(s);
 #else
+  if (s < 0) return 0;
   return close(s);
 #endif
 }
