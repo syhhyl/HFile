@@ -6,65 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#ifdef _WIN32
-  #include <windows.h>
-  #include <shellapi.h>
-#endif
-
-#ifdef _WIN32
-static void free_windows_argv(char **argv, int argc) {
-  if (argv == NULL) {
-    return;
-  }
-
-  for (int i = 0; i < argc; i++) {
-    free(argv[i]);
-  }
-  free(argv);
-}
-
-static int load_windows_utf8_argv(int *argc_out, char ***argv_out) {
-  int argc = 0;
-  wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
-  if (wargv == NULL) {
-    return 1;
-  }
-
-  char **argv = (char **)calloc((size_t)argc + 1, sizeof(*argv));
-  if (argv == NULL) {
-    LocalFree(wargv);
-    return 1;
-  }
-
-  for (int i = 0; i < argc; i++) {
-    int size = WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, NULL, 0, NULL, NULL);
-    if (size <= 0) {
-      free_windows_argv(argv, argc);
-      LocalFree(wargv);
-      return 1;
-    }
-
-    argv[i] = (char *)malloc((size_t)size);
-    if (argv[i] == NULL) {
-      free_windows_argv(argv, argc);
-      LocalFree(wargv);
-      return 1;
-    }
-
-    if (WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, argv[i], size, NULL, NULL) <= 0) {
-      free_windows_argv(argv, argc);
-      LocalFree(wargv);
-      return 1;
-    }
-  }
-
-  LocalFree(wargv);
-  *argc_out = argc;
-  *argv_out = argv;
-  return 0;
-}
-#endif
-
 static inline void init_server_opt(const Opt *opt, server_opt_t *server_opt) {
   server_opt->path = opt->path;
   server_opt->http_bind = opt->http_bind;
