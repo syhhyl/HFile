@@ -308,11 +308,87 @@ CLEANUP:
   return exit_code;
 }
 
+static int client_send_file_raw_body_buffered(int in,
+                                              socket_t sock,
+                                              uint64_t content_size) {
+  int exit_code = 1;
+  char *buf = (char *)malloc(CHUNK_SIZE);
+  if (buf == NULL) {
+    perror("malloc(buf)");
+    return 1;
+  }
+
+  size_t pos = 0;
+  uint64_t remaining = content_size;
+  for (;;) {
+    while (pos < CHUNK_SIZE && remaining > 0) {
+      size_t want = CHUNK_SIZE - pos;
+      if ((uint64_t)want > remaining)
+        want = (size_t)remaining;
+
+      ssize_t nr = fs_read(in, buf + pos, want);
+      if (nr < 0) {
+        perror("read");
+        goto CLEANUP;
+      }
+      if (nr == 0) {
+        fprintf(stderr, "source file changed during transfer\n");
+        goto CLEANUP;
+      }
+      pos += (size_t)nr;
+      remaining -= (uint64_t)nr;
+    }
+
+    if (pos > 0) {
+      ssize_t sent = send_all(sock, buf, pos);
+      if (sent != (ssize_t)pos) {
+        sock_perror("send");
+        goto CLEANUP;
+      }
+      pos = 0;
+    }
+
+    if (remaining == 0) {
+      break;
+    }
+  }
+
+  exit_code = 0;
+
+CLEANUP:
+  if (buf != NULL) free(buf);
+  return exit_code;
+}
+
+static int client_send_file_raw_body(int in, socket_t sock, uint64_t content_size) {
+  net_send_file_result_t send_file_res =
+    net_send_file_all(sock, in, content_size);
+  if (send_file_res == NET_SEND_FILE_OK) {
+    return 0;
+  }
+
+  if (send_file_res == NET_SEND_FILE_UNSUPPORTED) {
+    if (client_rewind_input_file(in) != 0) {
+      return 1;
+    }
+    return client_send_file_raw_body_buffered(in, sock, content_size);
+  }
+
+  if (send_file_res == NET_SEND_FILE_SOURCE_CHANGED) {
+    fprintf(stderr, "source file changed during transfer\n");
+  } else if (send_file_res == NET_SEND_FILE_INVALID_ARGUMENT) {
+    fprintf(stderr, "invalid raw transfer arguments\n");
+  } else {
+    sock_perror("sendfile");
+  }
+
+  return 1;
+}
+
 static int client_send_file_raw(const client_opt_t *opt) {
   int exit_code = 0;
 
   int in = -1;
-  char *buf = NULL;
   socket_t sock;
   socket_init(&sock);
   const char *path = opt->path;
@@ -400,50 +476,9 @@ static int client_send_file_raw(const client_opt_t *opt) {
     goto CLEANUP;
   }
 
-  buf = (char *)malloc(CHUNK_SIZE);
-  if (buf == NULL) {
-    perror("malloc(buf)");
+  if (client_send_file_raw_body(in, sock, content_size) != 0) {
     exit_code = 1;
     goto CLEANUP;
-  }
-
-  size_t pos = 0;
-  uint64_t remaining = content_size;
-  for (;;) {
-    while (pos < CHUNK_SIZE && remaining > 0) {
-      size_t want = CHUNK_SIZE - pos;
-      if ((uint64_t)want > remaining)
-        want = (size_t)remaining;
-
-      ssize_t nr = fs_read(in, buf + pos, want);
-      if (nr < 0) {
-        perror("read");
-        exit_code = 1;
-        goto CLEANUP;
-      }
-      if (nr == 0) {
-        fprintf(stderr, "source file changed during transfer\n");
-        exit_code = 1;
-        goto CLEANUP;
-      }
-      pos += (size_t)nr;
-      remaining -= (uint64_t)nr;
-    }
-
-    //TODO can we use multithreading ?
-    if (pos > 0) {
-      ssize_t sent = send_all(sock, buf, pos);
-      if (sent != (ssize_t)pos) {
-        sock_perror("send");
-        exit_code = 1;
-        goto CLEANUP;
-      }
-      pos = 0;
-    }
-
-    if (remaining == 0) {
-      break;
-    }
   }
 
 #ifdef _WIN32
@@ -463,7 +498,6 @@ static int client_send_file_raw(const client_opt_t *opt) {
 
 CLEANUP:
   socket_close(sock);
-  if (buf != NULL) free(buf);
   if (in != -1) fs_close(in);
 
   return exit_code;

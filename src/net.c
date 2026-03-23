@@ -4,6 +4,12 @@
 
 #ifndef _WIN32
   #include <unistd.h>
+  #if defined(__linux__)
+    #include <sys/sendfile.h>
+  #elif defined(__APPLE__)
+    #include <sys/socket.h>
+    #include <sys/uio.h>
+  #endif
 #endif
 
 
@@ -170,5 +176,89 @@ int socket_close(socket_t s) {
 #else
   if (s < 0) return 0;
   return close(s);
+#endif
+}
+
+net_send_file_result_t net_send_file_all(socket_t sock,
+                                         int in_fd,
+                                         uint64_t content_size) {
+  if (content_size == 0) {
+    return NET_SEND_FILE_OK;
+  }
+
+#ifdef _WIN32
+  (void)sock;
+  (void)in_fd;
+  (void)content_size;
+  return NET_SEND_FILE_UNSUPPORTED;
+#else
+  if (sock < 0 || in_fd < 0) {
+    return NET_SEND_FILE_INVALID_ARGUMENT;
+  }
+
+  uint64_t remaining = content_size;
+
+  #if defined(__linux__)
+    off_t offset = 0;
+    while (remaining > 0) {
+      size_t want = (remaining > (uint64_t)SIZE_MAX)
+                      ? (size_t)SIZE_MAX
+                      : (size_t)remaining;
+      ssize_t n = sendfile(sock, in_fd, &offset, want);
+      if (n < 0) {
+        if ((errno == EINVAL || errno == ENOSYS || errno == ENOTSUP) &&
+            offset == 0) {
+          return NET_SEND_FILE_UNSUPPORTED;
+        }
+        if (errno == EINTR) continue;
+        return NET_SEND_FILE_IO;
+      }
+      if (n == 0) {
+        return NET_SEND_FILE_SOURCE_CHANGED;
+      }
+      remaining -= (uint64_t)n;
+    }
+    return NET_SEND_FILE_OK;
+  #elif defined(__APPLE__)
+    off_t offset = 0;
+    while (remaining > 0) {
+      off_t want = (remaining > (uint64_t)INT64_MAX)
+                     ? (off_t)INT64_MAX
+                     : (off_t)remaining;
+      off_t sent = want;
+      int rc = sendfile(in_fd, sock, offset, &sent, NULL, 0);
+      if (rc == 0) {
+        if (sent <= 0) {
+          return NET_SEND_FILE_SOURCE_CHANGED;
+        }
+        remaining -= (uint64_t)sent;
+        offset += sent;
+        continue;
+      }
+
+      if (sent > 0) {
+        remaining -= (uint64_t)sent;
+        offset += sent;
+      }
+
+      if (errno == EINTR || errno == EAGAIN) {
+        continue;
+      }
+      if ((errno == EINVAL || errno == ENOTSUP || errno == ENOSYS) &&
+          offset == 0 && sent == 0) {
+        return NET_SEND_FILE_UNSUPPORTED;
+      }
+      if (errno == EPIPE) {
+        return NET_SEND_FILE_IO;
+      }
+      return NET_SEND_FILE_IO;
+    }
+    return NET_SEND_FILE_OK;
+  #else
+    (void)sock;
+    (void)in_fd;
+    (void)content_size;
+    return NET_SEND_FILE_UNSUPPORTED;
+  #endif
 #endif
 }

@@ -34,6 +34,14 @@
 int net_init();
 void net_cleanup();
 
+typedef enum {
+  NET_SEND_FILE_OK = 0,
+  NET_SEND_FILE_UNSUPPORTED,
+  NET_SEND_FILE_SOURCE_CHANGED,
+  NET_SEND_FILE_IO,
+  NET_SEND_FILE_INVALID_ARGUMENT
+} net_send_file_result_t;
+
 ssize_t send_all(
 #ifdef _WIN32
   SOCKET sock,
@@ -60,6 +68,10 @@ void sock_perror(const char *msg);
 
 void socket_init(socket_t *s);
 int socket_close(socket_t s);
+
+net_send_file_result_t net_send_file_all(socket_t sock,
+                                         int in_fd,
+                                         uint64_t content_size);
 
 
 #endif  // HF_NET_H
