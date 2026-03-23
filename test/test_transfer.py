@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import signal
 import shutil
 import socket
 import struct
@@ -744,6 +746,42 @@ class TestTransferProtocol(TransferTestCase):
         final_name = file_name.decode("ascii")
         self.assertFalse((self.out_dir / final_name).exists())
         self._assert_no_temp_files(final_name)
+
+    def test_server_graceful_shutdown_on_signal(self) -> None:
+        with make_temp_dir(prefix="hf_transfer_shutdown_") as tmp_dir:
+            base_dir = Path(tmp_dir)
+            out_dir = base_dir / "outputs"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            log_path = base_dir / "hf_server_shutdown.log"
+
+            server = HFileServer(
+                hf_path=self.hf_path,
+                out_dir=out_dir,
+                log_path=log_path,
+            )
+            server.start(startup_timeout=5.0)
+            try:
+                proc = server.proc
+
+                if os.name == "nt":
+                    proc.terminate()
+                else:
+                    proc.send_signal(signal.SIGINT)
+
+                rc = proc.wait(timeout=5.0)
+
+                log_text = tail_text_file(log_path)
+                if os.name != "nt":
+                    self.assertEqual(130, rc)
+                    self.assertIn("shutdown requested, stopping server", log_text)
+                self.assertNotIn("http server stopped unexpectedly", log_text)
+
+                leftovers = [p.name for p in out_dir.iterdir() if ".tmp." in p.name]
+                self.assertFalse(
+                    leftovers, f"unexpected temp files left after shutdown: {leftovers}"
+                )
+            finally:
+                server.stop()
 
 
 if __name__ == "__main__":

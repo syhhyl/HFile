@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
+import signal
 import shutil
 import unittest
 import urllib.error
@@ -199,7 +201,9 @@ class TestHTTP(unittest.TestCase):
             conn.request("GET", "/api/messages/stream")
             resp = conn.getresponse()
             self.assertEqual(resp.status, 200)
-            self.assertEqual(resp.getheader("Content-Type"), "text/event-stream; charset=utf-8")
+            self.assertEqual(
+                resp.getheader("Content-Type"), "text/event-stream; charset=utf-8"
+            )
 
             status, body, _ = self._request(
                 "POST",
@@ -227,6 +231,40 @@ class TestHTTP(unittest.TestCase):
                     saw_data = False
         finally:
             conn.close()
+
+    def test_http_server_graceful_shutdown_on_signal(self) -> None:
+        with make_temp_dir(prefix="hf_http_shutdown_") as tmp_dir:
+            base_dir = Path(tmp_dir)
+            out_dir = base_dir / "outputs"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            log_path = base_dir / "hf_http_shutdown.log"
+            http_port = reserve_free_port()
+
+            server = HFileServer(
+                hf_path=self.hf_path,
+                out_dir=out_dir,
+                http_port=http_port,
+                log_path=log_path,
+            )
+            server.start(startup_timeout=5.0)
+            try:
+                proc = server.proc
+
+                if os.name == "nt":
+                    proc.terminate()
+                else:
+                    proc.send_signal(signal.SIGINT)
+
+                rc = proc.wait(timeout=5.0)
+
+                log_text = tail_text_file(log_path)
+                if os.name != "nt":
+                    self.assertEqual(130, rc)
+                    self.assertIn("shutdown requested, stopping server", log_text)
+                self.assertNotIn("http server stopped unexpectedly", log_text)
+                self.assertNotIn("accept(http)", log_text)
+            finally:
+                server.stop()
 
 
 if __name__ == "__main__":
