@@ -3,6 +3,7 @@
 #include "fs.h"
 #include "message_store.h"
 #include "protocol.h"
+#include "shutdown.h"
 #include "webui.h"
 
 #include <ctype.h>
@@ -1451,14 +1452,41 @@ int http_server(socket_t listener, const server_opt_t *ser_opt) {
   int exit_code = 0;
 
   for (;;) {
+    int ready = 0;
+    if (shutdown_requested()) {
+      exit_code = shutdown_exit_code();
+      break;
+    }
+
+    if (net_wait_readable(listener, 250u, &ready) != 0) {
+      if (shutdown_requested()) {
+        exit_code = shutdown_exit_code();
+        break;
+      }
+      sock_perror("select(accept(http))");
+      exit_code = 1;
+      continue;
+    }
+    if (!ready) {
+      continue;
+    }
+
 #ifdef _WIN32
     SOCKET conn = accept(listener, NULL, NULL);
     if (conn == INVALID_SOCKET) {
       if (WSAGetLastError() == WSAEINTR) continue;
+      if (shutdown_requested()) {
+        exit_code = shutdown_exit_code();
+        break;
+      }
 #else
     int conn = accept(listener, NULL, NULL);
     if (conn < 0) {
       if (errno == EINTR) continue;
+      if (shutdown_requested()) {
+        exit_code = shutdown_exit_code();
+        break;
+      }
 #endif
       sock_perror("accept(http)");
       exit_code = 1;

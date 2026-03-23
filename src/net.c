@@ -179,6 +179,58 @@ int socket_close(socket_t s) {
 #endif
 }
 
+int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out) {
+  if (ready_out == NULL) {
+    return 1;
+  }
+
+  *ready_out = 0;
+
+#ifdef _WIN32
+  if (sock == INVALID_SOCKET) {
+    return 1;
+  }
+#else
+  if (sock < 0) {
+    return 1;
+  }
+#endif
+
+  fd_set readfds;
+  FD_ZERO(&readfds);
+  FD_SET(sock, &readfds);
+
+  struct timeval tv;
+  tv.tv_sec = (long)(timeout_ms / 1000u);
+  tv.tv_usec = (long)((timeout_ms % 1000u) * 1000u);
+
+#ifdef _WIN32
+  int rc = select(0, &readfds, NULL, NULL, &tv);
+  if (rc == SOCKET_ERROR) {
+    int err = WSAGetLastError();
+    if (err == WSAEINTR) {
+      return 0;
+    }
+    return 1;
+  }
+#else
+  int rc = select(sock + 1, &readfds, NULL, NULL, &tv);
+  if (rc < 0) {
+    if (errno == EINTR) {
+      return 0;
+    }
+    return 1;
+  }
+#endif
+
+  if (rc == 0) {
+    return 0;
+  }
+
+  *ready_out = FD_ISSET(sock, &readfds) ? 1 : 0;
+  return 0;
+}
+
 net_send_file_result_t net_send_file_all(socket_t sock,
                                          int in_fd,
                                          uint64_t content_size) {

@@ -3,6 +3,7 @@
 #include "message_store.h"
 #include "net.h"
 #include "protocol.h"
+#include "shutdown.h"
 #include "server.h"
 #include <stddef.h>
 #include <string.h>
@@ -24,6 +25,15 @@ typedef struct {
   socket_t sock;
   server_opt_t opt;
 } http_thread_ctx_t;
+
+typedef struct {
+  int started;
+#ifdef _WIN32
+  HANDLE handle;
+#else
+  pthread_t tid;
+#endif
+} http_thread_t;
 
 static inline int create_listener_socket(
   const char *bind_ip,
@@ -107,7 +117,9 @@ static void *http_thread_main(void *arg) {
   free(ctx);
 
   if (http_server(sock, &opt) != 0) {
-    fprintf(stderr, "http server stopped unexpectedly\n");
+    if (!shutdown_requested()) {
+      fprintf(stderr, "http server stopped unexpectedly\n");
+    }
   }
 
 #ifdef _WIN32
@@ -117,7 +129,13 @@ static void *http_thread_main(void *arg) {
 #endif
 }
 
-static int start_http_thread(socket_t sock, const server_opt_t *ser_opt) {
+static int start_http_thread(socket_t sock,
+                             const server_opt_t *ser_opt,
+                             http_thread_t *thread_out) {
+  if (thread_out == NULL) {
+    return 1;
+  }
+
   http_thread_ctx_t *ctx = (http_thread_ctx_t *)malloc(sizeof(*ctx));
   if (ctx == NULL) {
     perror("malloc(http_thread_ctx)");
@@ -134,19 +152,35 @@ static int start_http_thread(socket_t sock, const server_opt_t *ser_opt) {
     free(ctx);
     return 1;
   }
-  CloseHandle((HANDLE)handle);
+  thread_out->handle = (HANDLE)handle;
 #else
-  pthread_t tid;
-  int err = pthread_create(&tid, NULL, http_thread_main, ctx);
+  int err = pthread_create(&thread_out->tid, NULL, http_thread_main, ctx);
   if (err != 0) {
     fprintf(stderr, "pthread_create(http): %s\n", strerror(err));
     free(ctx);
     return 1;
   }
-  (void)pthread_detach(tid);
 #endif
 
+  thread_out->started = 1;
+
   return 0;
+}
+
+static void join_http_thread(http_thread_t *thread) {
+  if (thread == NULL || !thread->started) {
+    return;
+  }
+
+#ifdef _WIN32
+  (void)WaitForSingleObject(thread->handle, INFINITE);
+  CloseHandle(thread->handle);
+  thread->handle = NULL;
+#else
+  (void)pthread_join(thread->tid, NULL);
+#endif
+
+  thread->started = 0;
 }
 
 static int server_discard_body_bytes(socket_t conn, uint64_t remaining) {
@@ -589,16 +623,44 @@ CLEANUP:
 static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
   int exit_code = 0;
   ssize_t ack_sent = 0;
+  (void)ser_opt;
 
   for (;;) {
+    int ready = 0;
+    if (shutdown_requested()) {
+      exit_code = shutdown_exit_code();
+      break;
+    }
+
+    if (net_wait_readable(sock, 250u, &ready) != 0) {
+      if (shutdown_requested()) {
+        exit_code = shutdown_exit_code();
+        break;
+      }
+      sock_perror("select(accept)");
+      exit_code = 1;
+      continue;
+    }
+    if (!ready) {
+      continue;
+    }
+
 #ifdef _WIN32
     SOCKET conn = accept(sock, NULL, NULL);
     if (conn == INVALID_SOCKET) {
       if (WSAGetLastError() == WSAEINTR) continue;
+      if (shutdown_requested()) {
+        exit_code = shutdown_exit_code();
+        break;
+      }
 #else
     int conn = accept(sock, NULL, NULL);
     if (conn < 0) {
       if (errno == EINTR) continue;
+      if (shutdown_requested()) {
+        exit_code = shutdown_exit_code();
+        break;
+      }
 #endif
       sock_perror("accept");
       continue;
@@ -657,6 +719,7 @@ static int server_run_tcp(socket_t sock, const server_opt_t *ser_opt) {
     }
     socket_close(conn);
   }
+
   return exit_code;
 }
 
@@ -676,6 +739,7 @@ static void server_print_startup_summary(const server_opt_t *ser_opt) {
 int server(const server_opt_t *ser_opt) {
   int exit_code = 0;
   int http_started = 0;
+  http_thread_t http_thread = {0};
 
   if (ser_opt->path == NULL || strlen(ser_opt->path) == 0) {
     exit_code = 1;
@@ -704,7 +768,7 @@ int server(const server_opt_t *ser_opt) {
       exit_code = 1;
       goto CLOSE_SOCK;
     }
-    if (start_http_thread(http_sock, ser_opt) != 0) {
+    if (start_http_thread(http_sock, ser_opt, &http_thread) != 0) {
       exit_code = 1;
       goto CLOSE_SOCK;
     }
@@ -714,12 +778,19 @@ int server(const server_opt_t *ser_opt) {
   server_print_startup_summary(ser_opt);
 
   exit_code = server_run_tcp(sock, ser_opt);
+  if (shutdown_requested()) {
+    fprintf(stderr, "shutdown requested, stopping server\n");
+  }
 
 CLOSE_SOCK:
-  if (!http_started) {
-    socket_close(http_sock);
-  }
+  shutdown_request();
+
+  socket_close(http_sock);
   socket_close(sock);
+
+  if (http_started) {
+    join_http_thread(&http_thread);
+  }
 
 CLEAN_UP:
   message_store_cleanup();

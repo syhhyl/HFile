@@ -1,5 +1,6 @@
 #include "cli.h"
 #include "net.h"
+#include "shutdown.h"
 #include "server.h"
 #include "client.h"
 
@@ -37,6 +38,10 @@ int main(int argc, char **argv) {
 #endif
 
   if (net_init() != 0) goto CLEAN_UP;
+  if (shutdown_init() != 0) {
+    fprintf(stderr, "failed to initialize shutdown handler\n");
+    goto CLEAN_UP;
+  }
 
   Opt opt = {0};
   parse_result_t res = parse_args(argc, argv, &opt);
@@ -61,7 +66,12 @@ int main(int argc, char **argv) {
     ret = client(&client_opt);
   } else usage(argv[0]);
 
+  if (shutdown_requested()) {
+    ret = shutdown_exit_code();
+  }
+
 CLEAN_UP:
+  shutdown_cleanup();
   net_cleanup();
 
 #ifdef _WIN32

@@ -13,6 +13,7 @@ add_executable(hf
   src/cli.c
   src/net.c
   src/fs.c
+  src/shutdown.c
 )
 
 add_library(lz4 STATIC
