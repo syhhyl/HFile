@@ -247,6 +247,7 @@ class TransferTestCase(unittest.TestCase):
             final_ack = self._recv_ack_or_fail(s, phase="file final ack")
             return ready_ack, final_ack
 
+
 class TestTransferCLI(TransferTestCase):
     def test_common_file(self) -> None:
         src = self._write_input_file("hello.txt", b"hello hfile\n")
@@ -294,6 +295,13 @@ class TestTransferCLI(TransferTestCase):
                 src = self._write_input_file(f"chunk_{size}.bin", pattern)
                 dst = self._send_and_assert_ok(src, timeout=15.0)
                 assert_files_equal(self, src, dst)
+
+    def test_raw_file_transfer_large_multi_chunk(self) -> None:
+        size = (CHUNK_SIZE * 3) + 517
+        data = (b"raw-multi-chunk-" * ((size // 16) + 1))[:size]
+        src = self._write_input_file("raw_multi_chunk.bin", data)
+        dst = self._send_and_assert_ok(src, timeout=20.0)
+        assert_files_equal(self, src, dst)
 
     def test_existing_file_is_overwritten(self) -> None:
         src = self._write_input_file("overwrite.txt", b"first version\n")
@@ -425,7 +433,8 @@ class TestTransferProtocol(TransferTestCase):
             f"unexpected text-unsupported-flags ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
-            "protocol error: text message has unsupported compress flag", offset=log_offset
+            "protocol error: text message has unsupported compress flag",
+            offset=log_offset,
         )
 
     def test_file_protocol_rejects_unsupported_flags(self) -> None:
@@ -582,6 +591,36 @@ class TestTransferProtocol(TransferTestCase):
         self.assertEqual(
             body, dst.read_bytes(), f"raw transfer content mismatch for {dst}"
         )
+        self._assert_no_temp_files(file_name.decode("ascii"))
+
+    def test_raw_file_transfer_two_phase_empty_body_success(self) -> None:
+        file_name = b"raw_empty.bin"
+        body = b""
+        prefix = self._make_file_prefix(file_name, len(body))
+        header = self._make_header(
+            msg_type=MSG_TYPE_FILE_TRANSFER,
+            payload_size=len(prefix) + len(body),
+        )
+
+        dst = self.out_dir / file_name.decode("ascii")
+        self._reset_output_path(dst)
+
+        ready_ack, final_ack = self._send_raw_file_transfer(header, prefix, body)
+        self.assertEqual(
+            ready_ack,
+            b"\x00",
+            f"unexpected ready ack: {ready_ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self.assertEqual(
+            final_ack,
+            b"\x00",
+            f"unexpected final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self.assertTrue(
+            wait_for_file_stable(dst, timeout=8.0),
+            f"raw empty transfer did not save {dst}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self.assertEqual(b"", dst.read_bytes(), f"raw empty content mismatch for {dst}")
         self._assert_no_temp_files(file_name.decode("ascii"))
 
     def test_compressed_file_protocol_accepts_raw_blocks(self) -> None:
