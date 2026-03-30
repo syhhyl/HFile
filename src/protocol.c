@@ -21,10 +21,6 @@ size_t proto_file_transfer_prefix_size(uint16_t file_name_len) {
   return sizeof(uint16_t) + (size_t)file_name_len + sizeof(uint64_t);
 }
 
-size_t proto_compressed_block_size(uint32_t stored_size) {
-  return HF_COMPRESS_BLOCK_HEADER_SIZE + (size_t)stored_size;
-}
-
 protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
                                                      const char *file_name,
                                                      uint64_t content_size) {
@@ -101,44 +97,6 @@ protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
   return PROTOCOL_OK;
 }
 
-protocol_result_t proto_encode_compressed_block_header(
-  uint8_t *out,
-  uint8_t block_type,
-  uint32_t raw_size,
-  uint32_t stored_size) {
-  uint8_t *base = out;
-
-  if (out == NULL) {
-    return PROTOCOL_ERR_INVALID_ARGUMENT;
-  }
-
-  *base++ = block_type;
-  encode_u32_be(raw_size, base);
-  base += sizeof(uint32_t);
-  encode_u32_be(stored_size, base);
-  return PROTOCOL_OK;
-}
-
-protocol_result_t proto_decode_compressed_block_header(
-  const uint8_t *in,
-  uint8_t *block_type_out,
-  uint32_t *raw_size_out,
-  uint32_t *stored_size_out) {
-  const uint8_t *base = in;
-
-  if (in == NULL || block_type_out == NULL || raw_size_out == NULL ||
-      stored_size_out == NULL) {
-    return PROTOCOL_ERR_INVALID_ARGUMENT;
-  }
-
-  *block_type_out = *base++;
-  *raw_size_out = decode_u32_be(base);
-  base += sizeof(uint32_t);
-  *stored_size_out = decode_u32_be(base);
-  return PROTOCOL_OK;
-}
-
-
 void init_header(protocol_header_t *header) {
   if (header == NULL) {
     return;
@@ -200,7 +158,7 @@ protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in) {
   }
   
   header->flags = *base++;
-  if (header->flags & ~(HF_MSG_FLAG_NONE | HF_MSG_FLAG_COMPRESS)) {
+  if (header->flags != HF_MSG_FLAG_NONE) {
     return PROTOCOL_ERR_HEADER_MAG_FLAG;
   }
 

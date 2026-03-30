@@ -121,24 +121,6 @@ class TestCLI(unittest.TestCase):
                 "stderr_contains": ["cannot use -s -m together", "usage:"],
             },
             {
-                "name": "message_mode_has_compress",
-                "args": ["-m", "hello", "--compress"],
-                "rc": 1,
-                "stderr_contains": [
-                    "message mode does not accept --compress",
-                    "usage:",
-                ],
-            },
-            {
-                "name": "server_mode_has_compress",
-                "args": ["-s", "out", "--compress"],
-                "rc": 1,
-                "stderr_contains": [
-                    "server mode does not accept --compress",
-                    "usage:",
-                ],
-            },
-            {
                 "name": "server_mode_has_ip",
                 "args": ["-s", "out", "-i", "10.0.0.1"],
                 "rc": 1,
@@ -179,7 +161,16 @@ class TestCLI(unittest.TestCase):
             },
             {
                 "name": "duplicate_http_bind",
-                "args": ["-s", "out", "--http-port", "8080", "--http-bind", "127.0.0.1", "--http-bind", "0.0.0.0"],
+                "args": [
+                    "-s",
+                    "out",
+                    "--http-port",
+                    "8080",
+                    "--http-bind",
+                    "127.0.0.1",
+                    "--http-bind",
+                    "0.0.0.0",
+                ],
                 "rc": 1,
                 "stderr_contains": ["duplicate --http-bind", "usage:"],
             },

@@ -7,6 +7,7 @@ add_executable(hf
   src/server.c
   src/http.c
   src/message_store.c
+  src/transfer_io.c
   src/webui.c
   src/client.c
   src/protocol.c
@@ -16,19 +17,9 @@ add_executable(hf
   src/shutdown.c
 )
 
-add_library(lz4 STATIC
-  external/lz4/lz4.c
-)
-
-target_include_directories(lz4 PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/external/lz4
-)
-
 target_include_directories(hf PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-
-target_link_libraries(hf PRIVATE lz4)
 
 if (MSVC)
   target_compile_options(hf PRIVATE /W4)

@@ -34,7 +34,7 @@ class TestSupport(unittest.TestCase):
     def test_protocol_define_reads_protocol_header(self) -> None:
         self.assertEqual(protocol_define("HF_PROTOCOL_MAGIC"), 0x0429)
         self.assertGreater(protocol_define("HF_PROTOCOL_VERSION"), 0)
-        self.assertEqual(protocol_define("HF_MSG_FLAG_COMPRESS"), 0x01)
+        self.assertEqual(protocol_define("HF_MSG_FLAG_NONE"), 0x00)
         self.assertEqual(
             protocol_define("HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE"), 256 * 1024
         )

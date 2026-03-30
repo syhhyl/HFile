@@ -67,7 +67,7 @@ void usage(const char *argv0) {
           "usage:\n"
           "  %s -s <server_path> [-p <port>] [--http-port <port>]\n"
           "     [--http-bind <ip>]\n"
-          "  %s -c <file_path> [-i <ip>] [-p <port>] [--compress]\n"
+          "  %s -c <file_path> [-i <ip>] [-p <port>]\n"
           "  %s -m <message> [-i <ip>] [-p <port>]\n",
           argv0, argv0, argv0);
 }
@@ -101,7 +101,6 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->port = 9000;
   opt->http_port = 0;
   opt->msg_type = 0;
-  opt->msg_flags = HF_MSG_FLAG_NONE;
 
   int seen_s = 0;
   int seen_c = 0;
@@ -119,10 +118,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
 
     if (a[1] == '-') {
-      if (strcmp(a, "--compress") == 0) {
-        opt->msg_flags |= HF_MSG_FLAG_COMPRESS;
-        continue;
-      } else if (strcmp(a, "--http-port") == 0) {
+      if (strcmp(a, "--http-port") == 0) {
         const char *v = NULL;
         if (http_port_set) {
           fprintf(stderr, "duplicate --http-port\n");
@@ -283,17 +279,6 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   if (ip_set && opt->mode != client_mode) {
     fprintf(stderr, "server mode does not accept -i\n");
     return PARSE_ERR;
-  }
-
-  if (seen_m && ((opt->msg_flags & HF_MSG_FLAG_COMPRESS) != 0)) {
-    fprintf(stderr, "message mode does not accept --compress\n");
-    return PARSE_ERR;
-  }
-
-  if (seen_s && ((opt->msg_flags & HF_MSG_FLAG_COMPRESS) != 0)) {
-    fprintf(stderr, "server mode does not accept --compress\n");
-    return PARSE_ERR;
-
   }
 
   if ((http_port_set || http_bind_set) && !seen_s) {

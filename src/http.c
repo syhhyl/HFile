@@ -4,6 +4,7 @@
 #include "message_store.h"
 #include "protocol.h"
 #include "shutdown.h"
+#include "transfer_io.h"
 #include "webui.h"
 
 #include <ctype.h>
@@ -870,94 +871,10 @@ CLEANUP:
   return exit_code;
 }
 
-static int http_save_file_body(socket_t conn, const server_opt_t *ser_opt,
-                               const char *file_name, uint64_t content_length) {
-  char full_path[4096];
-  char tmp_path[4096];
-  char buf[8192];
-  int out = -1;
-  int exit_code = 1;
-  uint64_t remaining = content_length;
-
-  if (fs_join_path(full_path, sizeof(full_path), ser_opt->path, file_name) != 0) {
-    return 1;
-  }
-
-#ifdef _WIN32
-  int pid = _getpid();
-#else
-  int pid = (int)getpid();
-#endif
-
-  for (int attempt = 0; attempt < 16; attempt++) {
-    if (fs_make_temp_path(tmp_path, sizeof(tmp_path), full_path, pid, attempt) != 0) {
-      return 1;
-    }
-    out = fs_open_temp_file(tmp_path);
-    if (out != -1) {
-      break;
-    }
-    if (errno != EEXIST) {
-      perror("open(http_temp)");
-      return 1;
-    }
-  }
-
-  if (out == -1) {
-    fprintf(stderr, "failed to create temporary http file\n");
-    return 1;
-  }
-
-  while (remaining > 0) {
-    size_t want = sizeof(buf);
-    if ((uint64_t)want > remaining) {
-      want = (size_t)remaining;
-    }
-
-    ssize_t n = recv(conn, buf, want, 0);
-    if (n < 0) {
-      sock_perror("recv(http_body)");
-      goto CLEANUP;
-    }
-    if (n == 0) {
-      fprintf(stderr, "http upload ended early\n");
-      goto CLEANUP;
-    }
-
-    if (fs_write_all(out, buf, (size_t)n) != n) {
-      perror("write(http_body)");
-      goto CLEANUP;
-    }
-    remaining -= (uint64_t)n;
-  }
-
-  if (fs_close(out) != 0) {
-    perror("close(http_temp)");
-    out = -1;
-    goto CLEANUP;
-  }
-  out = -1;
-
-  if (fs_finalize_temp_file(tmp_path, full_path, NULL) != 0) {
-    perror("rename(http_temp)");
-    goto CLEANUP;
-  }
-
-  exit_code = 0;
-
-CLEANUP:
-  if (out != -1) fs_close(out);
-  if (exit_code != 0) {
-    fs_remove_quiet(tmp_path);
-  }
-  return exit_code;
-}
-
 static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
                           const char *file_name) {
   char path[4096];
   char header[1024];
-  char buf[8192];
   int fd = -1;
   uint64_t size = 0;
   uint64_t mtime = 0;
@@ -1012,18 +929,15 @@ static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
     goto CLEANUP;
   }
 
-  for (;;) {
-    ssize_t nr = fs_read(fd, buf, sizeof(buf));
-    if (nr < 0) {
-      perror("read(http_download)");
-      goto CLEANUP;
+  net_send_file_result_t send_file_res =
+    net_send_file_best_effort(conn, fd, size);
+  if (send_file_res != NET_SEND_FILE_OK) {
+    if (send_file_res == NET_SEND_FILE_SOURCE_CHANGED) {
+      fprintf(stderr, "source file changed during http download\n");
+    } else {
+      sock_perror("sendfile(http_download)");
     }
-    if (nr == 0) {
-      break;
-    }
-    if (send_all(conn, buf, (size_t)nr) != nr) {
-      goto CLEANUP;
-    }
+    goto CLEANUP;
   }
 
   exit_code = 0;
@@ -1220,7 +1134,6 @@ CLEANUP:
 static int http_handle_file_put(socket_t conn, const server_opt_t *ser_opt,
                                 const http_request_t *req, const char *file_name) {
   http_buf_t response = {0};
-  char path[4096];
   uint64_t size = 0;
   uint64_t mtime = 0;
   int exit_code = 1;
@@ -1242,12 +1155,15 @@ static int http_handle_file_put(socket_t conn, const server_opt_t *ser_opt,
     return http_send_json_error(conn, 400, "Bad Request", "invalid file name");
   }
 
-  if (http_save_file_body(conn, ser_opt, file_name, req->content_length) != 0) {
+  char saved_path[4096];
+  if (transfer_recv_socket_file(conn, ser_opt->path, file_name,
+                                req->content_length, "recv(http_body)",
+                                "http upload ended early", saved_path,
+                                sizeof(saved_path)) != 0) {
     return http_send_json_error(conn, 500, "Internal Server Error", "failed to save file");
   }
 
-  if (fs_join_path(path, sizeof(path), ser_opt->path, file_name) != 0 ||
-      http_get_file_info(path, &size, &mtime) != 0) {
+  if (http_get_file_info(saved_path, &size, &mtime) != 0) {
     return http_send_json_error(conn, 500, "Internal Server Error", "saved file missing");
   }
 
@@ -1356,9 +1272,6 @@ static int http_handle_connection(socket_t conn, const server_opt_t *ser_opt) {
     return http_handle_files_list(conn, ser_opt);
   }
   if (strcmp(req.path, "/api/messages") == 0) {
-    if (strcmp(req.method, "GET") == 0) {
-      return http_handle_messages_latest_get(conn);
-    }
     if (strcmp(req.method, "POST") == 0) {
       return http_handle_messages_post(conn, ser_opt, &req);
     }

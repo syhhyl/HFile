@@ -1,5 +1,8 @@
 #include "net.h"
+#include "fs.h"
+
 #include <errno.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 #ifndef _WIN32
@@ -313,4 +316,63 @@ net_send_file_result_t net_send_file_all(socket_t sock,
     return NET_SEND_FILE_UNSUPPORTED;
   #endif
 #endif
+}
+
+static net_send_file_result_t net_send_file_buffered(socket_t sock,
+                                                     int in_fd,
+                                                     uint64_t content_size) {
+  int exit_code = NET_SEND_FILE_OK;
+  char *buf = NULL;
+  uint64_t remaining = content_size;
+
+  if (sock < 0 || in_fd < 0) {
+    return NET_SEND_FILE_INVALID_ARGUMENT;
+  }
+
+  if (content_size == 0) {
+    return NET_SEND_FILE_OK;
+  }
+
+  buf = (char *)malloc(CHUNK_SIZE);
+  if (buf == NULL) {
+    return NET_SEND_FILE_IO;
+  }
+
+  while (remaining > 0) {
+    size_t want = CHUNK_SIZE;
+    if ((uint64_t)want > remaining) {
+      want = (size_t)remaining;
+    }
+
+    ssize_t nr = fs_read(in_fd, buf, want);
+    if (nr < 0) {
+      exit_code = NET_SEND_FILE_IO;
+      goto CLEANUP;
+    }
+    if (nr == 0) {
+      exit_code = NET_SEND_FILE_SOURCE_CHANGED;
+      goto CLEANUP;
+    }
+    if (send_all(sock, buf, (size_t)nr) != nr) {
+      exit_code = NET_SEND_FILE_IO;
+      goto CLEANUP;
+    }
+
+    remaining -= (uint64_t)nr;
+  }
+
+CLEANUP:
+  free(buf);
+  return (net_send_file_result_t)exit_code;
+}
+
+net_send_file_result_t net_send_file_best_effort(socket_t sock,
+                                                 int in_fd,
+                                                 uint64_t content_size) {
+  net_send_file_result_t res = net_send_file_all(sock, in_fd, content_size);
+  if (res != NET_SEND_FILE_UNSUPPORTED) {
+    return res;
+  }
+
+  return net_send_file_buffered(sock, in_fd, content_size);
 }

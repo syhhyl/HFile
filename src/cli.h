@@ -24,7 +24,6 @@ typedef struct {
   uint16_t port;
   uint16_t http_port;
   uint8_t msg_type;
-  uint8_t msg_flags;
 } Opt;
 
 typedef struct {
@@ -33,7 +32,6 @@ typedef struct {
   const char *ip;
   uint16_t port;
   uint8_t msg_type;
-  uint8_t msg_flags;
 } client_opt_t;
 
 

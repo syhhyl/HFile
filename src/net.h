@@ -74,6 +74,9 @@ int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out);
 net_send_file_result_t net_send_file_all(socket_t sock,
                                          int in_fd,
                                          uint64_t content_size);
+net_send_file_result_t net_send_file_best_effort(socket_t sock,
+                                                 int in_fd,
+                                                 uint64_t content_size);
 
 
 #endif  // HF_NET_H
