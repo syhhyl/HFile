@@ -40,14 +40,14 @@ class TestHTTP(unittest.TestCase):
         cls.out_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            http_port = reserve_free_port()
+            port = reserve_free_port()
         except OSError as e:
             raise unittest.SkipTest(str(e))
 
         cls.server = HFileServer(
             hf_path=cls.hf_path,
             out_dir=cls.out_dir,
-            http_port=http_port,
+            port=port,
             log_path=cls.log_path,
         )
         cls.server.start(startup_timeout=5.0)
@@ -195,7 +195,7 @@ class TestHTTP(unittest.TestCase):
 
     def test_message_stream_receives_updates(self) -> None:
         conn = http.client.HTTPConnection(
-            self.server.http_host, self.server.http_port, timeout=5.0
+            self.server.host, self.server.port, timeout=5.0
         )
         try:
             conn.request("GET", "/api/messages/stream")
@@ -238,12 +238,12 @@ class TestHTTP(unittest.TestCase):
             out_dir = base_dir / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
             log_path = base_dir / "hf_http_shutdown.log"
-            http_port = reserve_free_port()
+            port = reserve_free_port()
 
             server = HFileServer(
                 hf_path=self.hf_path,
                 out_dir=out_dir,
-                http_port=http_port,
+                port=port,
                 log_path=log_path,
             )
             server.start(startup_timeout=5.0)

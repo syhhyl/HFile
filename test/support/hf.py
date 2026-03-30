@@ -294,20 +294,16 @@ class HFileServer:
         out_dir: Path,
         host: str = "127.0.0.1",
         port: int | None = None,
-        http_host: str = "127.0.0.1",
-        http_port: int | None = None,
         log_path: Path | None = None,
+        foreground: bool = True,
         extra_args: Sequence[os.PathLike[str] | str] = (),
     ) -> None:
         self.hf_path = Path(hf_path)
         self.out_dir = Path(out_dir)
         self.host = host
         self.port = int(port) if port is not None else reserve_free_port(host=host)
-        self.http_host = http_host
-        self.http_port = (
-            int(http_port) if http_port is not None else None
-        )
         self.log_path = Path(log_path) if log_path is not None else None
+        self.foreground = bool(foreground)
         self.extra_args = tuple(str(arg) for arg in extra_args)
         self._proc: subprocess.Popen[str] | None = None
         self._log_fh = None
@@ -328,20 +324,11 @@ class HFileServer:
         self._log_fh = self.log_path.open("w", encoding="utf-8", errors="replace")
         argv = [
             str(self.hf_path),
-            "-s",
+            "-s" if self.foreground else "-d",
             str(self.out_dir),
             "-p",
             str(self.port),
         ]
-        if self.http_port is not None:
-            argv.extend(
-                [
-                    "--http-port",
-                    str(self.http_port),
-                    "--http-bind",
-                    self.http_host,
-                ]
-            )
         argv.extend(self.extra_args)
 
         self._proc = subprocess.Popen(
@@ -355,14 +342,17 @@ class HFileServer:
 
     def wait_ready(self, *, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout
-        readiness_marker = "HFile server ready"
+        readiness_marker = (
+            "HFile server ready" if self.foreground else "HFile daemon ready"
+        )
 
         while time.monotonic() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
-                tail = tail_text_file(self.log_path or Path(""))
-                raise RuntimeError(
-                    f"hf server exited early (rc={self._proc.returncode}). log tail:\n{tail}"
-                )
+                if self.foreground or self._proc.returncode != 0:
+                    tail = tail_text_file(self.log_path or Path(""))
+                    raise RuntimeError(
+                        f"hf server exited early (rc={self._proc.returncode}). log tail:\n{tail}"
+                    )
 
             if self.log_path is not None:
                 log_text = tail_text_file(self.log_path)
@@ -382,7 +372,17 @@ class HFileServer:
         if self._proc is None:
             return
 
-        if self._proc.poll() is None:
+        if not self.foreground:
+            subprocess.run(
+                [str(self.hf_path), "stop"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            self._proc.wait(timeout=timeout)
+        elif self._proc.poll() is None:
             self._proc.terminate()
             try:
                 self._proc.wait(timeout=timeout)
@@ -410,6 +410,4 @@ class HFileServer:
 
     @property
     def http_url(self) -> str:
-        if self.http_port is None:
-            raise RuntimeError("http server not configured")
-        return f"http://{self.http_host}:{self.http_port}"
+        return f"http://{self.host}:{self.port}"

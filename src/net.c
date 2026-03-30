@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 #ifndef _WIN32
   #include <unistd.h>
@@ -231,6 +232,51 @@ int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out) {
   }
 
   *ready_out = FD_ISSET(sock, &readfds) ? 1 : 0;
+  return 0;
+}
+
+int net_primary_ipv4(char *out, size_t out_cap) {
+  struct sockaddr_in remote = {0};
+  struct sockaddr_in local = {0};
+  socket_t sock;
+  socklen_t local_len = (socklen_t)sizeof(local);
+
+  if (out == NULL || out_cap == 0) {
+    return 1;
+  }
+
+  socket_init(&sock);
+  sock = socket(AF_INET, SOCK_DGRAM, 0);
+#ifdef _WIN32
+  if (sock == INVALID_SOCKET) {
+#else
+  if (sock < 0) {
+#endif
+    return 1;
+  }
+
+  remote.sin_family = AF_INET;
+  remote.sin_port = htons(53);
+  if (inet_pton(AF_INET, "8.8.8.8", &remote.sin_addr) != 1) {
+    socket_close(sock);
+    return 1;
+  }
+
+  (void)connect(sock, (struct sockaddr *)&remote, sizeof(remote));
+  if (getsockname(sock, (struct sockaddr *)&local, &local_len) != 0) {
+    socket_close(sock);
+    return 1;
+  }
+
+  if (inet_ntop(AF_INET, &local.sin_addr, out, (socklen_t)out_cap) == NULL) {
+    socket_close(sock);
+    return 1;
+  }
+
+  socket_close(sock);
+  if (strcmp(out, "0.0.0.0") == 0 || strcmp(out, "127.0.0.1") == 0) {
+    return 1;
+  }
   return 0;
 }
 

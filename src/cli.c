@@ -65,11 +65,14 @@ int load_windows_utf8_argv(int *argc_out, char ***argv_out) {
 void usage(const char *argv0) {
   fprintf(stderr,
           "usage:\n"
-          "  %s -s <server_path> [-p <port>] [--http-port <port>]\n"
-          "     [--http-bind <ip>]\n"
+          "  %s -s <server_path> [-p <port>]\n"
+          "  %s -d <server_path> [-p <port>]\n"
           "  %s -c <file_path> [-i <ip>] [-p <port>]\n"
-          "  %s -m <message> [-i <ip>] [-p <port>]\n",
-          argv0, argv0, argv0);
+          "  %s -m <message> [-i <ip>] [-p <port>]\n"
+          "  %s status\n"
+          "  %s stop\n"
+          "  %s -q\n",
+          argv0, argv0, argv0, argv0, argv0, argv0, argv0);
 }
 
 int parse_port(const char *s, uint16_t *out) {
@@ -97,20 +100,36 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->path = NULL;
   opt->message = NULL;
   opt->ip = "127.0.0.1";
-  opt->http_bind = "0.0.0.0";
-  opt->port = 9000;
-  opt->http_port = 0;
+  opt->port = 8888;
   opt->msg_type = 0;
+  opt->daemonize = 0;
 
   int seen_s = 0;
+  int seen_d = 0;
   int seen_c = 0;
   int seen_m = 0;
   int ip_set = 0;
-  int http_port_set = 0;
-  int http_bind_set = 0;
+  int control_mode_selected = 0;
   int mode_count = 0;
+  int arg_start = 1;
 
-  for (int i = 1; i < argc; i++) {
+  if (argc > 1) {
+    if (strcmp(argv[1], "status") == 0) {
+      opt->mode = status_mode;
+      control_mode_selected = 1;
+      arg_start = 2;
+    } else if (strcmp(argv[1], "stop") == 0) {
+      opt->mode = stop_mode;
+      control_mode_selected = 1;
+      arg_start = 2;
+    } else if (strcmp(argv[1], "-q") == 0) {
+      opt->mode = qr_mode;
+      control_mode_selected = 1;
+      arg_start = 2;
+    }
+  }
+
+  for (int i = arg_start; i < argc; i++) {
     const char *a = argv[i];
     if (a == NULL || a[0] != '-' || a[1] == '\0') {
       fprintf(stderr, "invalid argument\n");
@@ -118,37 +137,6 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
 
     if (a[1] == '-') {
-      if (strcmp(a, "--http-port") == 0) {
-        const char *v = NULL;
-        if (http_port_set) {
-          fprintf(stderr, "duplicate --http-port\n");
-          return PARSE_ERR;
-        }
-        if (need_value(argc, argv, &i, &v) != 0) {
-          fprintf(stderr, "invalid http port\n");
-          return PARSE_ERR;
-        }
-        if (parse_port(v, &opt->http_port) != 0) {
-          fprintf(stderr, "invalid http port\n");
-          return PARSE_ERR;
-        }
-        http_port_set = 1;
-        continue;
-      } else if (strcmp(a, "--http-bind") == 0) {
-        const char *v = NULL;
-        if (http_bind_set) {
-          fprintf(stderr, "duplicate --http-bind\n");
-          return PARSE_ERR;
-        }
-        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
-          fprintf(stderr, "invalid http bind\n");
-          return PARSE_ERR;
-        }
-        opt->http_bind = v;
-        http_bind_set = 1;
-        continue;
-      }
-
       fprintf(stderr, "invalid argument\n");
       return PARSE_ERR;
     }
@@ -164,6 +152,10 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
       case 's': {
         const char *v = NULL;
+        if (control_mode_selected) {
+          fprintf(stderr, "control mode does not accept -s\n");
+          return PARSE_ERR;
+        }
         if (seen_s) {
           fprintf(stderr, "duplicate -s\n");
           return PARSE_ERR;
@@ -173,14 +165,41 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           return PARSE_ERR;
         }
 
-        opt->mode = server_mode;
         opt->path = v;
+        opt->mode = server_mode;
+        opt->daemonize = 0;
         seen_s = 1;
+        break;
+      }
+
+      case 'd': {
+        const char *v = NULL;
+        if (control_mode_selected) {
+          fprintf(stderr, "control mode does not accept -d\n");
+          return PARSE_ERR;
+        }
+        if (seen_d) {
+          fprintf(stderr, "duplicate -d\n");
+          return PARSE_ERR;
+        }
+        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
+          fprintf(stderr, "invalid server path\n");
+          return PARSE_ERR;
+        }
+
+        opt->path = v;
+        opt->mode = server_mode;
+        opt->daemonize = 1;
+        seen_d = 1;
         break;
       }
 
       case 'c': {
         const char *v = NULL;
+        if (control_mode_selected) {
+          fprintf(stderr, "control mode does not accept -c\n");
+          return PARSE_ERR;
+        }
         if (seen_c) {
           fprintf(stderr, "duplicate -c\n");
           return PARSE_ERR;
@@ -200,6 +219,10 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
       
       case 'm': {
         const char *v = NULL;
+        if (control_mode_selected) {
+          fprintf(stderr, "control mode does not accept -m\n");
+          return PARSE_ERR;
+        }
         if (seen_m) {
           fprintf(stderr, "duplicate -m\n");
           return PARSE_ERR;
@@ -231,6 +254,10 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
       case 'p': {
         const char *v = NULL;
+        if (control_mode_selected) {
+          fprintf(stderr, "control mode does not accept -p\n");
+          return PARSE_ERR;
+        }
         if (need_value(argc, argv, &i, &v) != 0) {
           fprintf(stderr, "invalid port\n");
           return PARSE_ERR;
@@ -248,20 +275,25 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
   }
 
-  mode_count = seen_s + seen_c + seen_m;
+  mode_count = seen_s + seen_d + seen_c + seen_m + (control_mode_selected ? 1 : 0);
 
   if (mode_count == 0) {
-    fprintf(stderr, "must specify one of -s, -c, or -m\n");
+    fprintf(stderr, "must specify one of -s, -d, -c, -m, status, stop, or -q\n");
     return PARSE_ERR;
   }
 
-  if (seen_s && seen_c) {
-    fprintf(stderr, "cannot use -s -c together\n");
+  if (seen_s && seen_d) {
+    fprintf(stderr, "cannot use -s -d together\n");
     return PARSE_ERR;
   }
 
-  if (seen_s && seen_m) {
-    fprintf(stderr, "cannot use -s -m together\n");
+  if ((seen_s || seen_d) && seen_c) {
+    fprintf(stderr, "cannot use server and client modes together\n");
+    return PARSE_ERR;
+  }
+
+  if ((seen_s || seen_d) && seen_m) {
+    fprintf(stderr, "cannot use server and client modes together\n");
     return PARSE_ERR;
   }
 
@@ -270,24 +302,17 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     return PARSE_ERR;
   }
 
-  opt->mode = seen_s ? server_mode : client_mode;
+  if (!control_mode_selected) {
+    opt->mode = (seen_s || seen_d) ? server_mode : client_mode;
+  }
   if (opt->mode == server_mode && opt->path == NULL) return PARSE_ERR;
   if (opt->mode == client_mode && seen_c && opt->path == NULL) return PARSE_ERR;
   if (opt->mode == client_mode && seen_m && opt->message == NULL) {
     return PARSE_ERR;
   }
   if (ip_set && opt->mode != client_mode) {
-    fprintf(stderr, "server mode does not accept -i\n");
-    return PARSE_ERR;
-  }
-
-  if ((http_port_set || http_bind_set) && !seen_s) {
-    fprintf(stderr, "server mode only accepts --http-port/--http-bind\n");
-    return PARSE_ERR;
-  }
-
-  if (http_bind_set && !http_port_set) {
-    fprintf(stderr, "server mode requires --http-port with --http-bind\n");
+    fprintf(stderr, "%s mode does not accept -i\n",
+            opt->mode == server_mode ? "server" : "control");
     return PARSE_ERR;
   }
 

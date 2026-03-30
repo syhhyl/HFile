@@ -70,6 +70,7 @@ void socket_init(socket_t *s);
 int socket_close(socket_t s);
 
 int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out);
+int net_primary_ipv4(char *out, size_t out_cap);
 
 net_send_file_result_t net_send_file_all(socket_t sock,
                                          int in_fd,

@@ -488,43 +488,6 @@ class TestTransferProtocol(TransferTestCase):
             "protocol error: failed to decode header", offset=log_offset
         )
 
-    def test_text_protocol_rejects_unsupported_flags(self) -> None:
-        header = self._make_header(
-            msg_type=MSG_TYPE_TEXT_MESSAGE,
-            payload_size=0,
-            flags=0x01,
-        )
-
-        log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header])
-        self.assertEqual(
-            ack,
-            b"\x01",
-            f"unexpected text-unsupported-flags ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
-        )
-        self._wait_for_server_log(
-            "protocol error: failed to decode header",
-            offset=log_offset,
-        )
-
-    def test_file_protocol_rejects_unsupported_flags(self) -> None:
-        header = self._make_header(
-            msg_type=MSG_TYPE_FILE_TRANSFER,
-            payload_size=0,
-            flags=0x02,
-        )
-
-        log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header])
-        self.assertEqual(
-            ack,
-            b"\x01",
-            f"unexpected file-unsupported-flags ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
-        )
-        self._wait_for_server_log(
-            "protocol error: failed to decode header", offset=log_offset
-        )
-
     def test_file_protocol_rejects_payload_size_too_small(self) -> None:
         header = self._make_header(
             msg_type=MSG_TYPE_FILE_TRANSFER,

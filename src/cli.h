@@ -12,6 +12,9 @@ typedef enum {
 typedef enum {
   server_mode,
   client_mode,
+  status_mode,
+  stop_mode,
+  qr_mode,
   init_mode
 } Mode;
 
@@ -20,10 +23,9 @@ typedef struct {
   const char *path;
   const char *message;
   const char *ip;
-  const char *http_bind;
   uint16_t port;
-  uint16_t http_port;
   uint8_t msg_type;
+  uint8_t daemonize;
 } Opt;
 
 typedef struct {
@@ -37,9 +39,8 @@ typedef struct {
 
 typedef struct {
   const char *path;
-  const char *http_bind;
   uint16_t port;
-  uint16_t http_port;
+  uint8_t daemonize;
 } server_opt_t;
 
 

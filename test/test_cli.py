@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import http.client
+import os
+import urllib.request
 import unittest
 from pathlib import Path
 
-from test.support.hf import make_temp_dir, resolve_hf_path, run_hf
+from test.support.hf import (
+    make_temp_dir,
+    reserve_free_port,
+    resolve_hf_path,
+    run_hf,
+)
 
 
 class TestCLI(unittest.TestCase):
@@ -25,202 +33,82 @@ class TestCLI(unittest.TestCase):
                 "name": "no_args",
                 "args": [],
                 "rc": 1,
-                "stderr_contains": ["must specify one of -s, -c, or -m", "usage:"],
-            },
-            {
-                "name": "no_mode_with_ip",
-                "args": ["-i", "10.0.0.1"],
-                "rc": 1,
                 "stderr_contains": [
-                    "must specify one of -s, -c, or -m",
+                    "must specify one of -s, -d, -c, -m, status, stop, or -q",
                     "usage:",
                 ],
             },
             {
                 "name": "invalid_token",
-                "args": ["a"],
+                "args": ["daemon"],
                 "rc": 1,
                 "stderr_contains": ["invalid argument", "usage:"],
             },
             {
-                "name": "unknown_flag",
-                "args": ["-z"],
-                "rc": 1,
-                "stderr_contains": ["usage:"],
-            },
-            {
-                "name": "mutual_exclusion_c_then_s",
-                "args": ["-c", "in", "-s", "out"],
-                "rc": 1,
-                "stderr_contains": ["cannot use -s -c together", "usage:"],
-            },
-            {
-                "name": "mutual_exclusion_s_then_c",
-                "args": ["-s", "out", "-c", "in"],
-                "rc": 1,
-                "stderr_contains": ["cannot use -s -c together", "usage:"],
-            },
-            {
-                "name": "duplicate_server_mode",
+                "name": "duplicate_s",
                 "args": ["-s", "out1", "-s", "out2"],
                 "rc": 1,
                 "stderr_contains": ["duplicate -s", "usage:"],
             },
             {
-                "name": "server_path_missing",
-                "args": ["-s"],
+                "name": "duplicate_d",
+                "args": ["-d", "out1", "-d", "out2"],
                 "rc": 1,
-                "stderr_contains": ["invalid server path", "usage:"],
+                "stderr_contains": ["duplicate -d", "usage:"],
             },
             {
-                "name": "server_path_is_flag",
-                "args": ["-s", "-c"],
+                "name": "s_and_d",
+                "args": ["-s", "out", "-d", "out2"],
                 "rc": 1,
-                "stderr_contains": ["invalid server path", "usage:"],
+                "stderr_contains": ["cannot use -s -d together", "usage:"],
             },
             {
-                "name": "client_path_missing",
-                "args": ["-c"],
+                "name": "server_and_client",
+                "args": ["-d", "out", "-c", "in"],
                 "rc": 1,
-                "stderr_contains": ["invalid client path", "usage:"],
+                "stderr_contains": [
+                    "cannot use server and client modes together",
+                    "usage:",
+                ],
             },
             {
-                "name": "client_path_is_flag",
-                "args": ["-c", "-s"],
-                "rc": 1,
-                "stderr_contains": ["invalid client path", "usage:"],
-            },
-            {
-                "name": "duplicate_client_mode",
-                "args": ["-c", "in1", "-c", "in2"],
-                "rc": 1,
-                "stderr_contains": ["duplicate -c", "usage:"],
-            },
-            {
-                "name": "message_missing",
-                "args": ["-m"],
-                "rc": 1,
-                "stderr_contains": ["invalid message", "usage:"],
-            },
-            {
-                "name": "duplicate_message_mode",
-                "args": ["-m", "hello", "-m", "world"],
-                "rc": 1,
-                "stderr_contains": ["duplicate -m", "usage:"],
-            },
-            {
-                "name": "mutual_exclusion_c_then_m",
-                "args": ["-c", "in", "-m", "hello"],
-                "rc": 1,
-                "stderr_contains": ["cannot use -c -m together", "usage:"],
-            },
-            {
-                "name": "mutual_exclusion_s_then_m",
+                "name": "server_and_message",
                 "args": ["-s", "out", "-m", "hello"],
                 "rc": 1,
-                "stderr_contains": ["cannot use -s -m together", "usage:"],
+                "stderr_contains": [
+                    "cannot use server and client modes together",
+                    "usage:",
+                ],
             },
             {
-                "name": "server_mode_has_ip",
-                "args": ["-s", "out", "-i", "10.0.0.1"],
+                "name": "control_with_s",
+                "args": ["status", "-s", "out"],
+                "rc": 1,
+                "stderr_contains": ["control mode does not accept -s", "usage:"],
+            },
+            {
+                "name": "control_with_p",
+                "args": ["stop", "-p", "9999"],
+                "rc": 1,
+                "stderr_contains": ["control mode does not accept -p", "usage:"],
+            },
+            {
+                "name": "server_has_i",
+                "args": ["-s", "out", "-i", "127.0.0.1"],
                 "rc": 1,
                 "stderr_contains": ["server mode does not accept -i", "usage:"],
             },
             {
-                "name": "server_mode_http_bind_without_port",
-                "args": ["-s", "out", "--http-bind", "127.0.0.1"],
+                "name": "control_has_i",
+                "args": ["-q", "-i", "127.0.0.1"],
                 "rc": 1,
-                "stderr_contains": [
-                    "server mode requires --http-port with --http-bind",
-                    "usage:",
-                ],
+                "stderr_contains": ["control mode does not accept -i", "usage:"],
             },
             {
-                "name": "client_mode_has_http_port",
-                "args": ["-c", "in", "--http-port", "8080"],
-                "rc": 1,
-                "stderr_contains": [
-                    "server mode only accepts --http-port/--http-bind",
-                    "usage:",
-                ],
-            },
-            {
-                "name": "message_mode_has_http_bind",
-                "args": ["-m", "hello", "--http-bind", "127.0.0.1"],
-                "rc": 1,
-                "stderr_contains": [
-                    "server mode only accepts --http-port/--http-bind",
-                    "usage:",
-                ],
-            },
-            {
-                "name": "duplicate_http_port",
-                "args": ["-s", "out", "--http-port", "8080", "--http-port", "8081"],
-                "rc": 1,
-                "stderr_contains": ["duplicate --http-port", "usage:"],
-            },
-            {
-                "name": "duplicate_http_bind",
-                "args": [
-                    "-s",
-                    "out",
-                    "--http-port",
-                    "8080",
-                    "--http-bind",
-                    "127.0.0.1",
-                    "--http-bind",
-                    "0.0.0.0",
-                ],
-                "rc": 1,
-                "stderr_contains": ["duplicate --http-bind", "usage:"],
-            },
-            {
-                "name": "invalid_http_port",
-                "args": ["-s", "out", "--http-port", "nope"],
-                "rc": 1,
-                "stderr_contains": ["invalid http port", "usage:"],
-            },
-            {
-                "name": "port_missing_value",
-                "args": ["-s", "out", "-p"],
+                "name": "invalid_port",
+                "args": ["-d", "out", "-p", "nope"],
                 "rc": 1,
                 "stderr_contains": ["invalid port", "usage:"],
-            },
-            {
-                "name": "port_not_number_server",
-                "args": ["-s", "out", "-p", "hfile"],
-                "rc": 1,
-                "stderr_contains": ["invalid port", "usage:"],
-            },
-            {
-                "name": "port_not_number_client",
-                "args": ["-c", "in", "-p", "hfile"],
-                "rc": 1,
-                "stderr_contains": ["invalid port", "usage:"],
-            },
-            {
-                "name": "port_zero",
-                "args": ["-s", "out", "-p", "0"],
-                "rc": 1,
-                "stderr_contains": ["invalid port", "usage:"],
-            },
-            {
-                "name": "port_too_large",
-                "args": ["-s", "out", "-p", "65536"],
-                "rc": 1,
-                "stderr_contains": ["invalid port", "usage:"],
-            },
-            {
-                "name": "ip_missing_value",
-                "args": ["-c", "in", "-i"],
-                "rc": 1,
-                "stderr_contains": ["invalid argument", "usage:"],
-            },
-            {
-                "name": "ip_value_is_flag",
-                "args": ["-c", "in", "-i", "-p"],
-                "rc": 1,
-                "stderr_contains": ["invalid argument", "usage:"],
             },
         ]
 
@@ -268,6 +156,102 @@ class TestCLI(unittest.TestCase):
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
         self.assertIn("open", r.stderr)
+
+    def test_qr_requires_running_daemon(self) -> None:
+        run_hf(self.hf_path, ["stop"], timeout=5.0)
+        r = run_hf(self.hf_path, ["-q"], timeout=5.0)
+        self.assertEqual(
+            1, r.returncode, f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}"
+        )
+        self.assertIn("no running daemon found", r.stderr)
+
+    @unittest.skipIf(os.name == "nt", "daemon mode is POSIX-only for now")
+    def test_daemon_lifecycle_commands(self) -> None:
+        run_hf(self.hf_path, ["stop"], timeout=5.0)
+
+        with make_temp_dir(prefix="hf_cli_daemon_") as tmp_dir:
+            base_dir = Path(tmp_dir)
+            out_dir = base_dir / "outputs"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            port = reserve_free_port()
+
+            start = run_hf(self.hf_path, ["-d", out_dir, "-p", str(port)], timeout=5.0)
+            self.assertEqual(
+                0,
+                start.returncode,
+                f"argv={start.argv} stdout={start.stdout!r} stderr={start.stderr!r}",
+            )
+            self.assertIn("HFile daemon ready", start.stdout)
+            self.assertIn(f":{port}", start.stdout)
+
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/", timeout=5.0
+            ) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+            self.assertEqual(200, resp.status)
+            self.assertIn("HFile", body)
+
+            status = run_hf(self.hf_path, ["status"], timeout=5.0)
+            self.assertEqual(
+                0,
+                status.returncode,
+                f"argv={status.argv} stdout={status.stdout!r} stderr={status.stderr!r}",
+            )
+            self.assertIn("status: running", status.stdout)
+            self.assertIn(f"port: {port}", status.stdout)
+            self.assertIn(f"receive dir: {out_dir}", status.stdout)
+            error_log_line = next(
+                line
+                for line in status.stdout.splitlines()
+                if line.startswith("error log: ")
+            )
+            error_log_path = Path(error_log_line.split(": ", 1)[1])
+
+            qr = run_hf(self.hf_path, ["-q"], timeout=5.0)
+            self.assertEqual(
+                0,
+                qr.returncode,
+                f"argv={qr.argv} stdout={qr.stdout!r} stderr={qr.stderr!r}",
+            )
+            self.assertIn(f":{port}/", qr.stdout)
+            self.assertTrue(any(ch in qr.stdout for ch in ("█", "▀", "▄")))
+
+            src = base_dir / "hello.txt"
+            src.write_bytes(b"hello daemon\n")
+            send = run_hf(
+                self.hf_path,
+                ["-c", src, "-i", "127.0.0.1", "-p", str(port)],
+                timeout=5.0,
+            )
+            self.assertEqual(
+                0, send.returncode, f"argv={send.argv} stderr={send.stderr!r}"
+            )
+            self.assertEqual(b"hello daemon\n", (out_dir / src.name).read_bytes())
+            self.assertNotIn(
+                "saved to", error_log_path.read_text(encoding="utf-8", errors="replace")
+            )
+
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5.0)
+            conn.request("GET", "/api/messages/stream")
+            resp = conn.getresponse()
+            self.assertEqual(200, resp.status)
+
+            second = run_hf(self.hf_path, ["-d", out_dir, "-p", str(port)], timeout=5.0)
+            self.assertEqual(1, second.returncode)
+            self.assertIn("HFile is already running", second.stderr)
+
+            stop = run_hf(self.hf_path, ["stop"], timeout=5.0)
+            self.assertEqual(
+                0,
+                stop.returncode,
+                f"argv={stop.argv} stdout={stop.stdout!r} stderr={stop.stderr!r}",
+            )
+            self.assertIn("stopped pid", stop.stdout)
+            conn.close()
+
+            stopped = run_hf(self.hf_path, ["status"], timeout=5.0)
+            self.assertEqual(1, stopped.returncode)
+            self.assertIn("status: stopped", stopped.stdout)
 
 
 if __name__ == "__main__":

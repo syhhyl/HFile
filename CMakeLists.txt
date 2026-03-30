@@ -7,6 +7,9 @@ add_executable(hf
   src/server.c
   src/http.c
   src/message_store.c
+  src/daemon_state.c
+  src/control.c
+  src/mobile_ui.c
   src/transfer_io.c
   src/webui.c
   src/client.c
@@ -15,10 +18,12 @@ add_executable(hf
   src/net.c
   src/fs.c
   src/shutdown.c
+  third_party/qrcodegen.c
 )
 
 target_include_directories(hf PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 )
 
 if (MSVC)

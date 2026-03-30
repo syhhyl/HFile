@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 int message_store_init(void);
+void message_store_shutdown(void);
 void message_store_cleanup(void);
 int message_store_set(const char *message);
 int message_store_get_copy(char **message_out, int *has_message_out);

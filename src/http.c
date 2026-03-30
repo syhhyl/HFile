@@ -54,10 +54,203 @@ typedef struct {
   uint64_t mtime;
 } http_file_entry_t;
 
+typedef struct http_conn_entry_t {
+  socket_t conn;
+  int closing;
+  struct http_conn_entry_t *next;
+} http_conn_entry_t;
+
 typedef struct {
   socket_t conn;
   server_opt_t opt;
+  http_conn_entry_t *entry;
 } http_conn_ctx_t;
+
+typedef struct {
+  int initialized;
+  int shutting_down;
+  unsigned int active_count;
+  http_conn_entry_t *head;
+#ifdef _WIN32
+  CRITICAL_SECTION mutex;
+  CONDITION_VARIABLE cond;
+#else
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+#endif
+} http_conn_tracker_t;
+
+static http_conn_tracker_t g_http_conn_tracker = {0};
+
+static int http_conn_tracker_init(void) {
+  if (g_http_conn_tracker.initialized) {
+    return 0;
+  }
+
+#ifdef _WIN32
+  InitializeCriticalSection(&g_http_conn_tracker.mutex);
+  InitializeConditionVariable(&g_http_conn_tracker.cond);
+#else
+  if (pthread_mutex_init(&g_http_conn_tracker.mutex, NULL) != 0) {
+    return 1;
+  }
+  if (pthread_cond_init(&g_http_conn_tracker.cond, NULL) != 0) {
+    (void)pthread_mutex_destroy(&g_http_conn_tracker.mutex);
+    return 1;
+  }
+#endif
+
+  g_http_conn_tracker.initialized = 1;
+  g_http_conn_tracker.shutting_down = 0;
+  g_http_conn_tracker.active_count = 0;
+  g_http_conn_tracker.head = NULL;
+  return 0;
+}
+
+static void http_conn_tracker_abort_entry(http_conn_entry_t *entry) {
+  if (entry == NULL || entry->closing) {
+    return;
+  }
+  entry->closing = 1;
+#ifdef _WIN32
+  (void)shutdown(entry->conn, SD_BOTH);
+#else
+  (void)shutdown(entry->conn, SHUT_RDWR);
+#endif
+}
+
+static http_conn_entry_t *http_conn_tracker_begin(socket_t conn) {
+  http_conn_entry_t *entry = (http_conn_entry_t *)malloc(sizeof(*entry));
+  if (entry == NULL) {
+    return NULL;
+  }
+
+  entry->conn = conn;
+  entry->closing = 0;
+  entry->next = NULL;
+
+#ifdef _WIN32
+  EnterCriticalSection(&g_http_conn_tracker.mutex);
+#else
+  (void)pthread_mutex_lock(&g_http_conn_tracker.mutex);
+#endif
+  if (g_http_conn_tracker.shutting_down) {
+#ifdef _WIN32
+    LeaveCriticalSection(&g_http_conn_tracker.mutex);
+#else
+    (void)pthread_mutex_unlock(&g_http_conn_tracker.mutex);
+#endif
+    free(entry);
+    return NULL;
+  }
+
+  entry->next = g_http_conn_tracker.head;
+  g_http_conn_tracker.head = entry;
+  g_http_conn_tracker.active_count++;
+#ifdef _WIN32
+  LeaveCriticalSection(&g_http_conn_tracker.mutex);
+#else
+  (void)pthread_mutex_unlock(&g_http_conn_tracker.mutex);
+#endif
+  return entry;
+}
+
+static void http_conn_tracker_end(http_conn_entry_t *entry) {
+#ifdef _WIN32
+  EnterCriticalSection(&g_http_conn_tracker.mutex);
+#else
+  (void)pthread_mutex_lock(&g_http_conn_tracker.mutex);
+#endif
+
+  http_conn_entry_t **link = &g_http_conn_tracker.head;
+  while (*link != NULL) {
+    if (*link == entry) {
+      *link = entry->next;
+      break;
+    }
+    link = &(*link)->next;
+  }
+  if (g_http_conn_tracker.active_count > 0) {
+    g_http_conn_tracker.active_count--;
+  }
+  if (g_http_conn_tracker.shutting_down && g_http_conn_tracker.active_count == 0) {
+#ifdef _WIN32
+    WakeAllConditionVariable(&g_http_conn_tracker.cond);
+#else
+    (void)pthread_cond_broadcast(&g_http_conn_tracker.cond);
+#endif
+  }
+#ifdef _WIN32
+  LeaveCriticalSection(&g_http_conn_tracker.mutex);
+#else
+  (void)pthread_mutex_unlock(&g_http_conn_tracker.mutex);
+#endif
+
+  if (entry != NULL) {
+    free(entry);
+  }
+}
+
+static void http_conn_tracker_shutdown(void) {
+#ifdef _WIN32
+  EnterCriticalSection(&g_http_conn_tracker.mutex);
+#else
+  (void)pthread_mutex_lock(&g_http_conn_tracker.mutex);
+#endif
+  g_http_conn_tracker.shutting_down = 1;
+  for (http_conn_entry_t *entry = g_http_conn_tracker.head;
+       entry != NULL;
+       entry = entry->next) {
+    http_conn_tracker_abort_entry(entry);
+  }
+  if (g_http_conn_tracker.active_count == 0) {
+#ifdef _WIN32
+    WakeAllConditionVariable(&g_http_conn_tracker.cond);
+#else
+    (void)pthread_cond_broadcast(&g_http_conn_tracker.cond);
+#endif
+  }
+#ifdef _WIN32
+  LeaveCriticalSection(&g_http_conn_tracker.mutex);
+#else
+  (void)pthread_mutex_unlock(&g_http_conn_tracker.mutex);
+#endif
+}
+
+static void http_conn_tracker_wait_idle(void) {
+#ifdef _WIN32
+  EnterCriticalSection(&g_http_conn_tracker.mutex);
+  while (g_http_conn_tracker.active_count > 0) {
+    SleepConditionVariableCS(&g_http_conn_tracker.cond, &g_http_conn_tracker.mutex,
+                             INFINITE);
+  }
+  LeaveCriticalSection(&g_http_conn_tracker.mutex);
+#else
+  (void)pthread_mutex_lock(&g_http_conn_tracker.mutex);
+  while (g_http_conn_tracker.active_count > 0) {
+    (void)pthread_cond_wait(&g_http_conn_tracker.cond, &g_http_conn_tracker.mutex);
+  }
+  (void)pthread_mutex_unlock(&g_http_conn_tracker.mutex);
+#endif
+}
+
+static void http_conn_tracker_cleanup(void) {
+  if (!g_http_conn_tracker.initialized) {
+    return;
+  }
+
+#ifdef _WIN32
+  DeleteCriticalSection(&g_http_conn_tracker.mutex);
+#else
+  (void)pthread_cond_destroy(&g_http_conn_tracker.cond);
+  (void)pthread_mutex_destroy(&g_http_conn_tracker.mutex);
+#endif
+
+  g_http_conn_tracker.initialized = 0;
+  g_http_conn_tracker.shutting_down = 0;
+  g_http_conn_tracker.active_count = 0;
+  g_http_conn_tracker.head = NULL;
+}
 
 static int http_buf_reserve(http_buf_t *buf, size_t need) {
   if (buf->cap >= need) {
@@ -1108,6 +1301,11 @@ static int http_handle_messages_stream(socket_t conn) {
       goto CLEANUP;
     }
 
+    if (shutdown_requested()) {
+      exit_code = 0;
+      goto CLEANUP;
+    }
+
     if (message == NULL && !has_message) {
       if (http_send_sse_keepalive(conn) != 0) {
         goto CLEANUP;
@@ -1230,7 +1428,7 @@ CLEANUP:
   return exit_code;
 }
 
-static int http_handle_connection(socket_t conn, const server_opt_t *ser_opt) {
+int http_handle_connection(socket_t conn, const server_opt_t *ser_opt) {
   char header_block[HF_HTTP_HEADER_MAX];
   char route_name[HF_PROTOCOL_MAX_FILE_NAME_LEN + 1u];
   http_request_t req = {0};
@@ -1316,10 +1514,12 @@ static void *http_connection_thread_main(void *arg) {
   http_conn_ctx_t *ctx = (http_conn_ctx_t *)arg;
   socket_t conn = ctx->conn;
   server_opt_t opt = ctx->opt;
+  http_conn_entry_t *entry = ctx->entry;
 
   free(ctx);
   (void)http_handle_connection(conn, &opt);
   socket_close(conn);
+  http_conn_tracker_end(entry);
 
 #ifdef _WIN32
   return 0;
@@ -1330,19 +1530,28 @@ static void *http_connection_thread_main(void *arg) {
 
 static int http_start_connection_thread(socket_t conn, const server_opt_t *ser_opt) {
   http_conn_ctx_t *ctx = (http_conn_ctx_t *)malloc(sizeof(*ctx));
+  http_conn_entry_t *entry = NULL;
   if (ctx == NULL) {
     perror("malloc(http_conn_ctx)");
     return 1;
   }
 
+  entry = http_conn_tracker_begin(conn);
+  if (entry == NULL) {
+    free(ctx);
+    return 1;
+  }
+
   ctx->conn = conn;
   ctx->opt = *ser_opt;
+  ctx->entry = entry;
 
 #ifdef _WIN32
   uintptr_t handle =
     _beginthreadex(NULL, 0, http_connection_thread_main, ctx, 0, NULL);
   if (handle == 0) {
     fprintf(stderr, "_beginthreadex(http_conn) failed\n");
+    http_conn_tracker_end(entry);
     free(ctx);
     return 1;
   }
@@ -1352,6 +1561,7 @@ static int http_start_connection_thread(socket_t conn, const server_opt_t *ser_o
   int err = pthread_create(&tid, NULL, http_connection_thread_main, ctx);
   if (err != 0) {
     fprintf(stderr, "pthread_create(http_conn): %s\n", strerror(err));
+    http_conn_tracker_end(entry);
     free(ctx);
     return 1;
   }
@@ -1363,6 +1573,11 @@ static int http_start_connection_thread(socket_t conn, const server_opt_t *ser_o
 
 int http_server(socket_t listener, const server_opt_t *ser_opt) {
   int exit_code = 0;
+
+  if (http_conn_tracker_init() != 0) {
+    fprintf(stderr, "failed to initialize http connection tracker\n");
+    return 1;
+  }
 
   for (;;) {
     int ready = 0;
@@ -1411,6 +1626,10 @@ int http_server(socket_t listener, const server_opt_t *ser_opt) {
       exit_code = 1;
     }
   }
+
+  http_conn_tracker_shutdown();
+  http_conn_tracker_wait_idle();
+  http_conn_tracker_cleanup();
 
   return exit_code;
 }

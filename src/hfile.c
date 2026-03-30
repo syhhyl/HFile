@@ -3,15 +3,15 @@
 #include "shutdown.h"
 #include "server.h"
 #include "client.h"
+#include "control.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
 static inline void init_server_opt(const Opt *opt, server_opt_t *server_opt) {
   server_opt->path = opt->path;
-  server_opt->http_bind = opt->http_bind;
   server_opt->port = opt->port;
-  server_opt->http_port = opt->http_port;
+  server_opt->daemonize = opt->daemonize;
 }
 
 static inline void init_client_opt(const Opt *opt, client_opt_t *client_opt) {
@@ -63,6 +63,12 @@ int main(int argc, char **argv) {
     client_opt_t client_opt = {0};
     init_client_opt(&opt, &client_opt);
     ret = client(&client_opt);
+  } else if (opt.mode == status_mode) {
+    ret = control_status();
+  } else if (opt.mode == stop_mode) {
+    ret = control_stop();
+  } else if (opt.mode == qr_mode) {
+    ret = control_print_qr();
   } else usage(argv[0]);
 
   if (shutdown_requested()) {

@@ -15,6 +15,7 @@ typedef struct {
   char *message;
   uint64_t version;
   int initialized;
+  int shutting_down;
 #ifdef _WIN32
   CRITICAL_SECTION mutex;
   CONDITION_VARIABLE cond;
@@ -62,8 +63,24 @@ int message_store_init(void) {
 
   g_message_store.message = NULL;
   g_message_store.version = 0;
+  g_message_store.shutting_down = 0;
   g_message_store.initialized = 1;
   return 0;
+}
+
+void message_store_shutdown(void) {
+  if (!g_message_store.initialized) {
+    return;
+  }
+
+  message_store_lock();
+  g_message_store.shutting_down = 1;
+#ifdef _WIN32
+  WakeAllConditionVariable(&g_message_store.cond);
+#else
+  (void)pthread_cond_broadcast(&g_message_store.cond);
+#endif
+  message_store_unlock();
 }
 
 void message_store_cleanup(void) {
@@ -71,6 +88,7 @@ void message_store_cleanup(void) {
     return;
   }
 
+  message_store_shutdown();
   message_store_lock();
   if (g_message_store.message != NULL) {
     free(g_message_store.message);
@@ -181,6 +199,9 @@ int message_store_wait_for_update(uint64_t known_version,
   message_store_lock();
 
   while (g_message_store.version <= known_version) {
+    if (g_message_store.shutting_down) {
+      break;
+    }
 #ifdef _WIN32
     if (!SleepConditionVariableCS(&g_message_store.cond, &g_message_store.mutex,
                                   timeout_ms)) {
