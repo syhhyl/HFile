@@ -61,20 +61,14 @@ static int client_recv_file_final_result(socket_t sock) {
 }
 
 static int client_connect(const char *ip, uint16_t port, socket_t *sock_out) {
-#ifdef _WIN32
-  socket_t sock = INVALID_SOCKET;
-#else
-  socket_t sock = -1;
-#endif
+  socket_t sock;
 
   struct sockaddr_in addr;
 
+  socket_init(&sock);
+
   sock = socket(AF_INET, SOCK_STREAM, 0);
-#ifdef _WIN32
-  if (sock == INVALID_SOCKET) {
-#else
-  if (sock == -1) {
-#endif
+  if (is_socket_invalid(sock)) {
     sock_perror("socket");
     return 1;
   }

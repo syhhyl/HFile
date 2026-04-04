@@ -291,13 +291,8 @@ static inline int create_listener_socket(
   socket_t sock;
   socket_init(&sock);
 
-#ifdef _WIN32
   sock = socket(AF_INET, SOCK_STREAM, 0);
-  if (sock == INVALID_SOCKET) {
-#else
-  sock = socket(AF_INET, SOCK_STREAM, 0);
-  if (sock < 0) {
-#endif
+  if (is_socket_invalid(sock)) {
     sock_perror("socket");
     return 1;
   }
@@ -688,7 +683,7 @@ static int server_run_listener(socket_t sock, const server_opt_t *ser_opt) {
 
 #ifdef _WIN32
     SOCKET conn = accept(sock, NULL, NULL);
-    if (conn == INVALID_SOCKET) {
+    if (is_socket_invalid(conn)) {
       if (WSAGetLastError() == WSAEINTR) continue;
       if (shutdown_requested()) {
         exit_code = shutdown_exit_code();
@@ -696,7 +691,7 @@ static int server_run_listener(socket_t sock, const server_opt_t *ser_opt) {
       }
 #else
     int conn = accept(sock, NULL, NULL);
-    if (conn < 0) {
+    if (is_socket_invalid(conn)) {
       if (errno == EINTR) continue;
       if (shutdown_requested()) {
         exit_code = shutdown_exit_code();

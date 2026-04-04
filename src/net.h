@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #ifdef _WIN32
   #include <winsock2.h>
@@ -34,6 +35,8 @@
 int net_init();
 void net_cleanup();
 
+bool is_socket_invalid(socket_t sock);
+
 typedef enum {
   NET_SEND_FILE_OK = 0,
   NET_SEND_FILE_UNSUPPORTED,
@@ -43,19 +46,11 @@ typedef enum {
 } net_send_file_result_t;
 
 ssize_t send_all(
-#ifdef _WIN32
-  SOCKET sock,
-#else
-  int sock,
-#endif
+  socket_t sock,
   const void *data, size_t len);
 
 ssize_t recv_all(
-#ifdef _WIN32
-  SOCKET sock,
-#else
-  int sock,
-#endif
+  socket_t sock,
   void *buf, size_t len);
 
 

@@ -34,12 +34,16 @@ void net_cleanup() {
 #endif
 }
 
-ssize_t send_all(
+bool is_socket_invalid(socket_t sock) {
 #ifdef _WIN32
-  SOCKET sock,
+  if (sock == INVALID_SOCKET) return true;
 #else
-  int sock,
+  if (sock < 0) return true;
 #endif
+  return false;
+}
+ssize_t send_all(
+  socket_t sock,
   const void *data, size_t len) {
   size_t total = 0;
   const char *p = data;
@@ -74,11 +78,7 @@ ssize_t send_all(
 }
 
 ssize_t recv_all(
-#ifdef _WIN32
-  SOCKET sock,
-#else
-  int sock,
-#endif
+  socket_t sock,
   void *buf, size_t len) {
   uint8_t *p = (uint8_t *)buf;
   size_t total = 0;
@@ -174,11 +174,11 @@ void socket_init(socket_t *s) {
 }
 
 int socket_close(socket_t s) {
+  if (is_socket_invalid(s)) return 0;
+
 #ifdef _WIN32
-  if (s == INVALID_SOCKET) return 0;
   return closesocket(s);
 #else
-  if (s < 0) return 0;
   return close(s);
 #endif
 }
@@ -190,15 +190,9 @@ int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out) {
 
   *ready_out = 0;
 
-#ifdef _WIN32
-  if (sock == INVALID_SOCKET) {
+  if (is_socket_invalid(sock)) {
     return 1;
   }
-#else
-  if (sock < 0) {
-    return 1;
-  }
-#endif
 
   fd_set readfds;
   FD_ZERO(&readfds);
@@ -247,11 +241,7 @@ int net_primary_ipv4(char *out, size_t out_cap) {
 
   socket_init(&sock);
   sock = socket(AF_INET, SOCK_DGRAM, 0);
-#ifdef _WIN32
-  if (sock == INVALID_SOCKET) {
-#else
-  if (sock < 0) {
-#endif
+  if (is_socket_invalid(sock)) {
     return 1;
   }
 
@@ -293,7 +283,7 @@ net_send_file_result_t net_send_file_all(socket_t sock,
   (void)content_size;
   return NET_SEND_FILE_UNSUPPORTED;
 #else
-  if (sock < 0 || in_fd < 0) {
+  if (is_socket_invalid(sock) || in_fd < 0) {
     return NET_SEND_FILE_INVALID_ARGUMENT;
   }
 
@@ -371,7 +361,7 @@ static net_send_file_result_t net_send_file_buffered(socket_t sock,
   char *buf = NULL;
   uint64_t remaining = content_size;
 
-  if (sock < 0 || in_fd < 0) {
+  if (is_socket_invalid(sock) || in_fd < 0) {
     return NET_SEND_FILE_INVALID_ARGUMENT;
   }
 
