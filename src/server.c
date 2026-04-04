@@ -681,8 +681,8 @@ static int server_run_listener(socket_t sock, const server_opt_t *ser_opt) {
       continue;
     }
 
+    socket_t conn = accept(sock, NULL, NULL);
 #ifdef _WIN32
-    SOCKET conn = accept(sock, NULL, NULL);
     if (is_socket_invalid(conn)) {
       if (WSAGetLastError() == WSAEINTR) continue;
       if (shutdown_requested()) {
@@ -690,7 +690,6 @@ static int server_run_listener(socket_t sock, const server_opt_t *ser_opt) {
         break;
       }
 #else
-    int conn = accept(sock, NULL, NULL);
     if (is_socket_invalid(conn)) {
       if (errno == EINTR) continue;
       if (shutdown_requested()) {

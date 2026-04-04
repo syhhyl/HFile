@@ -1599,8 +1599,8 @@ int http_server(socket_t listener, const server_opt_t *ser_opt) {
       continue;
     }
 
+    socket_t conn = accept(listener, NULL, NULL);
 #ifdef _WIN32
-    SOCKET conn = accept(listener, NULL, NULL);
     if (is_socket_invalid(conn)) {
       if (WSAGetLastError() == WSAEINTR) continue;
       if (shutdown_requested()) {
@@ -1608,7 +1608,6 @@ int http_server(socket_t listener, const server_opt_t *ser_opt) {
         break;
       }
 #else
-    int conn = accept(listener, NULL, NULL);
     if (is_socket_invalid(conn)) {
       if (errno == EINTR) continue;
       if (shutdown_requested()) {
