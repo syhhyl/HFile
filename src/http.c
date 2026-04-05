@@ -2,6 +2,7 @@
 
 #include "fs.h"
 #include "message_store.h"
+#include "net.h"
 #include "protocol.h"
 #include "shutdown.h"
 #include "transfer_io.h"
@@ -11,6 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1188,24 +1190,14 @@ static int http_handle_messages_post(socket_t conn, const server_opt_t *ser_opt,
                                 "content-type must be application/json");
   }
 
-  body = (char *)malloc((size_t)req->content_length + 1u);
+  size_t body_len = (size_t)req->content_length;
+  body = (char *)malloc(body_len + 1u);
   if (body == NULL) {
     return http_send_json_error(conn, 500, "Internal Server Error", "allocation failed");
   }
-
-  size_t total = 0;
-  while (total < (size_t)req->content_length) {
-    ssize_t n = recv(conn, body + total, (size_t)req->content_length - total, 0);
-    if (n < 0) {
-      sock_perror("recv(http_message)");
-      goto CLEANUP;
-    }
-    if (n == 0) {
-      goto CLEANUP;
-    }
-    total += (size_t)n;
-  }
-  body[req->content_length] = '\0';
+  
+  recv_all(conn, body, body_len);
+  body[body_len] = '\0';
 
   if (http_parse_message_json(body, (size_t)req->content_length, &message) != 0) {
     (void)http_send_json_error(conn, 400, "Bad Request", "invalid message payload");
