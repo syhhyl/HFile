@@ -1178,6 +1178,8 @@ static int http_handle_messages_post(socket_t conn, const server_opt_t *ser_opt,
   char *message = NULL;
   http_buf_t response = {0};
   int exit_code = 1;
+  size_t body_len = 0;
+  ssize_t n = 0;
 
   if (!req->has_content_length) {
     return http_send_json_error(conn, 411, "Length Required", "content-length required");
@@ -1190,16 +1192,24 @@ static int http_handle_messages_post(socket_t conn, const server_opt_t *ser_opt,
                                 "content-type must be application/json");
   }
 
-  size_t body_len = (size_t)req->content_length;
+  body_len = (size_t)req->content_length;
   body = (char *)malloc(body_len + 1u);
   if (body == NULL) {
     return http_send_json_error(conn, 500, "Internal Server Error", "allocation failed");
   }
-  
-  recv_all(conn, body, body_len);
+
+  n = recv_all(conn, body, body_len);
+  if (n < 0) {
+    sock_perror("recv_all(http_message)");
+    goto CLEANUP;
+  }
+  if ((size_t)n != body_len) {
+    fprintf(stderr, "http error: unexpected EOF while receiving message body\n");
+    goto CLEANUP;
+  }
   body[body_len] = '\0';
 
-  if (http_parse_message_json(body, (size_t)req->content_length, &message) != 0) {
+  if (http_parse_message_json(body, body_len, &message) != 0) {
     (void)http_send_json_error(conn, 400, "Bad Request", "invalid message payload");
     goto CLEANUP;
   }
