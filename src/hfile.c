@@ -83,9 +83,9 @@ int main(int argc, char **argv) {
 
 CLEAN_UP:
   shutdown_cleanup();
-  net_cleanup();
 
 #ifdef _WIN32
+  WSACleanup();
   free_windows_argv(win_argv, win_argc);
 #endif
 

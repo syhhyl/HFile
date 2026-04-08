@@ -17,13 +17,6 @@
 #endif
 
 
-
-void net_cleanup() {
-#ifdef _WIN32
-  WSACleanup();
-#endif
-}
-
 bool is_socket_invalid(socket_t sock) {
 #ifdef _WIN32
   if (sock == INVALID_SOCKET) return true;
