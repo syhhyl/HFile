@@ -34,9 +34,15 @@ int main(int argc, char **argv) {
   }
   argc = win_argc;
   argv = win_argv;
+  
+  WSADATA wsa;
+  if (WSAStartup(MAKELANGID(2, 2), &wsa) != 0) { 
+    fprintf(stderr, "WSAStartup failed\n");
+    goto CLEAN_UP;
+  }
+  
 #endif
 
-  if (net_init() != 0) goto CLEAN_UP;
   if (shutdown_init() != 0) {
     fprintf(stderr, "failed to initialize shutdown handler\n");
     goto CLEAN_UP;

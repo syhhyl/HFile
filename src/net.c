@@ -17,16 +17,6 @@
 #endif
 
 
-int net_init() {
-#ifdef _WIN32
-  WSADATA wsa;
-  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-    fprintf(stderr, "WSAStartup failed\n");
-    return 1;
-  }
-#endif
-  return 0;
-}
 
 void net_cleanup() {
 #ifdef _WIN32
