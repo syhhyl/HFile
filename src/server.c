@@ -727,7 +727,7 @@ static void server_print_access_details(const server_opt_t *ser_opt,
 
   printf(daemon_mode ? "HFile daemon ready\n" : "HFile server ready\n");
   printf("  receive dir: %s\n", ser_opt->path);
-  printf("  listen     : 0.0.0.0:%u (tcp + web ui)\n", (unsigned)ser_opt->port);
+  printf("  listen     : 0.0.0.0:%u (tcp + web)\n", (unsigned)ser_opt->port);
   if (daemon_mode) {
     printf("  pid        : %ld\n", pid);
     if (log_path != NULL) {
@@ -740,14 +740,15 @@ static void server_print_access_details(const server_opt_t *ser_opt,
     if (!phone_reachable) {
       printf("  mobile     : could not detect a LAN IPv4, using localhost\n");
     }
+
+    if (!daemon_mode) {
+      printf("  status     : waiting for files and messages\n");
+    }
     if (mobile_ui_is_tty_stdout()) {
       (void)mobile_ui_print_qr(stdout, url);
     }
   }
 
-  if (!daemon_mode) {
-    printf("  status     : waiting for files and messages\n");
-  }
 
   fflush(stdout);
 }

@@ -64,7 +64,6 @@ int mobile_ui_print_qr(FILE *out, const char *url) {
   }
 
   int size = qrcodegen_getSize(qr);
-  fprintf(out, "Open on your phone: %s\n", url);
   for (int y = -border; y < size + border; y += 2) {
     for (int x = -border; x < size + border; x++) {
       int top = (x >= 0 && x < size && y >= 0 && y < size)
