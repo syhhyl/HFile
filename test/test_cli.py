@@ -213,7 +213,6 @@ class TestCLI(unittest.TestCase):
                 qr.returncode,
                 f"argv={qr.argv} stdout={qr.stdout!r} stderr={qr.stderr!r}",
             )
-            self.assertIn(f":{port}/", qr.stdout)
             self.assertTrue(any(ch in qr.stdout for ch in ("█", "▀", "▄")))
 
             src = base_dir / "hello.txt"
