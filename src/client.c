@@ -159,13 +159,13 @@ static int client_send_file_raw(const client_opt_t *opt) {
   if (fs_basename_from_path(&path, &file_name) != 0) {
     fprintf(stderr, "invalid client path\n");
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   if (proto_get_file_name_len(file_name, &file_name_len) != 0) {
     fprintf(stderr, "invalid file name length\n");
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
 #ifdef _WIN32
@@ -176,23 +176,29 @@ static int client_send_file_raw(const client_opt_t *opt) {
   if (in == -1) {
     perror("open");
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   if (proto_file_transfer_prefix_size(file_name_len) > CHUNK_SIZE) {
     fprintf(stderr, "protocol payload prefix exceeds buffer size\n");
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   if (client_get_file_size(in, &content_size) != 0) {
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
+  }
+  
+  if (content_size > HF_MAX_FILE_SIZE) {
+    fprintf(stderr, "MAX_FILE_SIZE is 100GB\n");
+    exit_code = 1;
+    goto CLEAN_UP;
   }
 
   if (client_connect(opt->ip, opt->port, &sock) != 0) {
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   uint64_t payload_size =
@@ -209,14 +215,14 @@ static int client_send_file_raw(const client_opt_t *opt) {
   if (proto_res != PROTOCOL_OK) {
     fprintf(stderr, "failed to encode protocol header\n");
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   proto_res = send_header(sock, header_buf);
   if (proto_res != PROTOCOL_OK) {
     sock_perror("send_header");
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   proto_res = proto_send_file_transfer_prefix(sock, file_name, content_size);
@@ -227,18 +233,18 @@ static int client_send_file_raw(const client_opt_t *opt) {
       sock_perror("protocol_send_file_transfer_prefix");
     }
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   if (client_recv_ack(sock, "recv_all(file_transfer_ready_ack)",
                       "server reported transfer failure") != 0) {
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   if (client_send_file_body(in, sock, content_size) != 0) {
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
 #ifdef _WIN32
@@ -253,10 +259,10 @@ static int client_send_file_raw(const client_opt_t *opt) {
 
   if (client_recv_file_final_result(sock) != 0) {
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
-CLEANUP:
+CLEAN_UP:
   socket_close(sock);
   if (in != -1) {
     fs_close(in);
@@ -276,12 +282,12 @@ static int client_send_message(const client_opt_t *opt) {
   if (message_len > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
     fprintf(stderr, "message too large\n");
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   if (client_connect(opt->ip, opt->port, &sock) != 0) {
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   protocol_header_t header = {0};
@@ -295,14 +301,14 @@ static int client_send_message(const client_opt_t *opt) {
   if (proto_res != PROTOCOL_OK) {
     fprintf(stderr, "failed to encode protocol header\n");
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   proto_res = send_header(sock, header_buf);
   if (proto_res != PROTOCOL_OK) {
     sock_perror("send_header");
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   if (message_len > 0) {
@@ -310,7 +316,7 @@ static int client_send_message(const client_opt_t *opt) {
     if (sent != (ssize_t)message_len) {
       sock_perror("send(message)");
       exit_code = 1;
-      goto CLEANUP;
+      goto CLEAN_UP;
     }
   }
 
@@ -327,10 +333,10 @@ static int client_send_message(const client_opt_t *opt) {
   if (client_recv_ack(sock, "recv_all(message_ack)",
                       "server reported transfer failure") != 0) {
     exit_code = 1;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
-CLEANUP:
+CLEAN_UP:
   socket_close(sock);
   return exit_code;
 }
