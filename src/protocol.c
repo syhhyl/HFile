@@ -159,7 +159,7 @@ protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in) {
   
   header->flags = *base++;
   if (header->flags != HF_MSG_FLAG_NONE) {
-    return PROTOCOL_ERR_HEADER_MAG_FLAG;
+    return PROTOCOL_ERR_HEADER_MSG_FLAG;
   }
 
   header->payload_size = decode_u64_be(base);
@@ -168,17 +168,21 @@ protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in) {
 }
 
 protocol_result_t send_header(socket_t sock, const uint8_t *in) {
-  if (in == NULL) {
+  if (is_socket_invalid(sock) || in == NULL) {
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
-  if (send_all(sock, in, HF_PROTOCOL_HEADER_SIZE) != (ssize_t)HF_PROTOCOL_HEADER_SIZE) {
+  
+  ssize_t n = send_all(sock, in, HF_PROTOCOL_HEADER_SIZE);
+  if (n < HF_PROTOCOL_HEADER_SIZE) {
+    if (n >= 0) return PROTOCOL_ERR_SHORT_WRITE;
     return PROTOCOL_ERR_IO;
   }
+  
   return PROTOCOL_OK; 
 }
 
 protocol_result_t recv_header(socket_t sock, uint8_t *out) {
-  if (out == NULL) {
+  if (is_socket_invalid(sock) || out == NULL) {
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
   ssize_t n = recv_all(sock, out, HF_PROTOCOL_HEADER_SIZE);
