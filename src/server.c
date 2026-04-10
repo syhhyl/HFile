@@ -405,9 +405,9 @@ static int server_handle_protocol_connection(socket_t conn,
   uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
   protocol_header_t proto_header = {0};
 
-  protocol_result_t header_res = recv_header(conn, header_buf);
-  if (header_res != PROTOCOL_OK) {
-    if (header_res == PROTOCOL_ERR_EOF) {
+  protocol_result_t prefix_res = recv_header(conn, header_buf);
+  if (prefix_res != PROTOCOL_OK) {
+    if (prefix_res == PROTOCOL_ERR_EOF) {
       fprintf(stderr, "protocol error: unexpected EOF while receiving header\n");
     } else {
       sock_perror("recv_header");
@@ -415,8 +415,8 @@ static int server_handle_protocol_connection(socket_t conn,
     return 1;
   }
 
-  header_res = decode_header(&proto_header, header_buf);
-  if (header_res != PROTOCOL_OK) {
+  prefix_res = decode_header(&proto_header, header_buf);
+  if (prefix_res != PROTOCOL_OK) {
     fprintf(stderr, "protocol error: failed to decode header\n");
     goto SEND_REPLY;
   }
@@ -602,36 +602,36 @@ static int server_handle_file_transfer(socket_t conn,
   *reply = SERVER_REPLY_ACK_FAILURE;
 
   if (proto_header->payload_size <
-      (uint64_t)proto_file_transfer_prefix_size(0)) {
+      (uint64_t)proto_file_transfer_prefix_size(1)) {
     fprintf(stderr, "protocol error: payload size too small\n");
     return 1;
   }
 
-  protocol_result_t header_res = proto_recv_file_transfer_prefix(conn,
+  protocol_result_t prefix_res = proto_recv_file_transfer_prefix(conn,
     &file_name, &content_size);
-  if (header_res != PROTOCOL_OK) {
-    if (header_res == PROTOCOL_ERR_FILE_NAME_LEN) {
+  if (prefix_res != PROTOCOL_OK) {
+    if (prefix_res == PROTOCOL_ERR_FILE_NAME_LEN) {
       fprintf(stderr, "protocol error: invalid file name length\n");
-    } else if (header_res == PROTOCOL_ERR_ALLOC) {
+    } else if (prefix_res == PROTOCOL_ERR_ALLOC) {
       perror("malloc(file_name)");
-    } else if (header_res == PROTOCOL_ERR_EOF) {
+    } else if (prefix_res == PROTOCOL_ERR_EOF) {
       fprintf(stderr,
               "protocol error: unexpected EOF while receiving payload\n");
     } else {
       sock_perror("protocol_recv_file_transfer_prefix");
     }
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   if (fs_validate_file_name(file_name) != 0) {
     fprintf(stderr, "invalid file name: %s\n", file_name);
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   prefix_size = (uint64_t)proto_file_transfer_prefix_size((uint16_t)strlen(file_name));
   if (proto_header->payload_size != prefix_size + content_size) {
     fprintf(stderr, "protocol error: payload size mismatch\n");
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   uint8_t ready_ack = 0;
@@ -639,7 +639,7 @@ static int server_handle_file_transfer(socket_t conn,
   if (ready_ack_sent != (ssize_t)sizeof(ready_ack)) {
     sock_perror("send_all(file_transfer_ready_ack)");
     *reply = SERVER_REPLY_CLOSE;
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
   *reply = SERVER_REPLY_ACK_FAILURE;
 
@@ -647,13 +647,13 @@ static int server_handle_file_transfer(socket_t conn,
                                 "recv(file_body)",
                                 "protocol error: unexpected EOF while receiving file",
                                 full_path, sizeof(full_path)) != 0) {
-    goto CLEANUP;
+    goto CLEAN_UP;
   }
 
   *reply = SERVER_REPLY_ACK_SUCCESS;
   exit_code = 0;
 
-CLEANUP:
+CLEAN_UP:
   if (file_name != NULL) free(file_name);
   return exit_code;
 }
