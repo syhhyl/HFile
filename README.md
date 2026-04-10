@@ -1,63 +1,55 @@
 # HFile
 
-HFile is a lightweight native C file-transfer tool for local networks. It combines a custom TCP client/server protocol, a built-in HTTP API, and a small Web UI in a single server process.
-
-## Features
-
-- Send files from the CLI to a receiving server over a custom binary protocol.
-- Send short text messages from the CLI to the same server.
-- Browse, upload, download, and delete files from the browser.
-- View the latest message from the Web UI or HTTP API.
-- Run in foreground server mode or daemon mode on non-Windows platforms.
-- Print server status, stop the daemon, and show a QR code for mobile access.
-- Keep the implementation small and explicit, with minimal dependencies.
+HFile is a lightweight LAN file transfer tool written in C. One server process exposes three things on the same port: a native CLI protocol, a small HTTP API, and a browser Web UI.
 
 ## Why HFile
 
-- One binary, one server process, one port.
-- Native C implementation with direct control over protocol and I/O.
-- Built for practical LAN file sharing without a heavy stack.
-- Includes both CLI and browser workflows.
+- One binary, one port, minimal setup.
+- Native C implementation with explicit protocol and I/O control.
+- CLI file send, CLI message send, browser upload/download, and HTTP API in one server.
+- Streaming upload path with temp-file write and atomic finalize.
 
-## Requirements
+## Install
+
+Requirements:
 
 - CMake 3.16+
 - Ninja
-- A C compiler
-- Python 3 for the test suite
+- a C compiler
+- Python 3 for tests
 
-Platform notes:
-
-- On non-Windows platforms, the build links against pthreads via CMake.
-- Windows cross-builds use `x86_64-w64-mingw32-gcc`.
-- Daemon mode is not supported on Windows.
-
-## Building
-
-Preferred build commands:
+Build locally:
 
 ```bash
 ./build.sh
+```
+
+Release build:
+
+```bash
 BUILD_TYPE=Release ./build.sh
-./build.sh -t Release
-./build.sh -w
+```
+
+Install on non-Windows platforms:
+
+```bash
 ./build.sh -i
 ```
 
-Direct CMake commands:
+Cross-build for Windows with MinGW:
 
 ```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-cmake --build build --target hf
+./build.sh -w
 ```
 
-Build output:
+Output binary:
 
-- Native build: `build/hf`
+- native: `build/hf`
 - Windows cross-build: `build/hf.exe`
 
-## CLI Usage
+## Usage
+
+CLI forms:
 
 ```text
 hf -s <server_path> [-p <port>]
@@ -71,76 +63,44 @@ hf -q
 
 Defaults:
 
-- Server/client port: `8888`
-- Client IP: `127.0.0.1`
+- server/client port: `8888`
+- client IP: `127.0.0.1`
 
-## Quick Start
-
-Start a server in the foreground:
+Start a foreground server:
 
 ```bash
 mkdir -p received
 ./build/hf -s ./received
 ```
 
-Send a file from another terminal:
+Send a file:
 
 ```bash
 ./build/hf -c ./hello.txt -i 127.0.0.1 -p 8888
 ```
 
-Send a message:
+Send a short message:
 
 ```bash
 ./build/hf -m "hello from CLI" -i 127.0.0.1 -p 8888
 ```
 
-Open the Web UI:
-
-```text
-http://127.0.0.1:8888/
-```
-
-## Running HFile
-
-Foreground server:
-
-```bash
-./build/hf -s ./received -p 8888
-```
-
 Daemon mode on non-Windows platforms:
 
 ```bash
-./build/hf -d ./received -p 9000
+./build/hf -d ./received -p 8888
 ./build/hf status
 ./build/hf -q
 ./build/hf stop
 ```
 
-`status` reports the current daemon state, receive directory, port, Web UI URL, and related runtime metadata.
-
-## Web UI
-
-After the server starts, open the root URL in a browser:
+Web UI:
 
 ```text
 http://127.0.0.1:8888/
 ```
 
-The built-in UI supports:
-
-- Uploading files
-- Listing files
-- Downloading files
-- Deleting files
-- Posting a message
-- Viewing the latest message
-- Receiving live updates via server-sent events
-
 ## HTTP API
-
-The same server port also serves a small HTTP API.
 
 List files:
 
@@ -169,117 +129,57 @@ Delete a file:
 curl -X DELETE http://127.0.0.1:8888/api/files/hello.txt
 ```
 
-Post a message:
-
-```bash
-curl -X POST \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"hello from browser"}' \
-  http://127.0.0.1:8888/api/messages
-```
-
-Fetch the latest message:
+Read the latest message:
 
 ```bash
 curl http://127.0.0.1:8888/api/messages/latest
 ```
 
-Notes:
-
-- HFile implements a conservative HTTP/1.1 subset.
-- Message submission expects `application/json`.
-- File upload expects `application/octet-stream`.
-
 ## Protocol Notes
 
 - The same TCP listener accepts both raw HFile protocol traffic and HTTP traffic.
-- Connection type is detected from the first bytes received.
-- The custom protocol uses an explicit header with a fixed magic value and protocol version.
-- File transfer uses a ready ACK before the body is sent and a final ACK after completion.
-- Received files are written through temporary files and finalized atomically.
-- Filename validation is intentionally strict and rejects path traversal-style input.
+- File transfer is two-phase: client sends header + prefix, server replies with a `READY` `res_frame`, client sends the body, then server replies with a `FINAL` `res_frame`.
+- Received files are streamed to a temp file and finalized atomically.
+- Filename validation is intentionally strict.
 
-## Testing
+## Test
 
-Build before running tests.
-
-Run the full suite:
+Build first, then run tests:
 
 ```bash
+cmake --build build
 ./test.sh
-./test.sh full
-python3 -m unittest -v test.test_hf
 ```
 
-Run focused suites:
+Focused suites:
 
 ```bash
-./test.sh support
 ./test.sh cli
 ./test.sh http
 ./test.sh transfer
+./test.sh support
 ```
 
-Run targeted tests directly:
+Direct unittest examples:
 
 ```bash
-python3 -m unittest -v test.test_http
+python3 -m unittest -v test.test_hf
 python3 -m unittest -v test.test_transfer
-python3 -m unittest -v test.test_transfer.TestTransferCLI
 python3 -m unittest -v test.test_http.TestHTTP.test_upload_list_and_download
 ```
 
-Pass raw `unittest` arguments through the helper script:
+## Repo Notes
 
-```bash
-./test.sh -v test.test_transfer
-./test.sh -v test.test_transfer.TestTransferCLI.test_common_file
-```
-
-## Repository Layout
-
-```text
-src/
-  hfile.c               Program entry point
-  cli.c/.h              CLI parsing and help text
-  client.c/.h           CLI client send logic
-  server.c/.h           Listener and protocol dispatch
-  http.c/.h             HTTP parsing and Web UI/API handling
-  webui.c/.h            Embedded HTML/CSS/JS assets
-  protocol.c/.h         Binary protocol encode/decode
-  transfer_io.c/.h      Receive-to-disk helpers
-  fs.c/.h               File system helpers and validation
-  net.c/.h              Socket helpers and endian helpers
-  message_store.c/.h    In-memory latest-message store
-  control.c/.h          Status and stop control paths
-  daemon_state.c/.h     Daemon runtime state files
-  mobile_ui.c/.h        URL and QR display helpers
-  shutdown.c/.h         Shutdown handling
-
-third_party/
-  qrcodegen.c/.h        Vendored QR code generator
-
-test/
-  test_cli.py           CLI validation and smoke tests
-  test_http.py          HTTP behavior
-  test_transfer.py      Protocol and transfer behavior
-  test_support.py       Test helper behavior
-  test_hf.py            Full/default suite wrapper
-  support/hf.py         Shared test helpers
-```
-
-## Platform Support
-
-- Native builds support POSIX platforms.
-- Cross-build support exists for Windows.
-- Network and filesystem code use explicit platform branches.
-- Windows supports the client/server code paths, but daemon mode is rejected.
+- `src/server.c` owns the unified listener and protocol dispatch.
+- `src/net.c` is low-level socket/endian/sendfile support.
+- `src/transfer_io.c` is the shared receive-to-disk path for protocol upload and HTTP upload.
+- `src/webui.c` embeds the browser assets.
 
 ## Limitations
 
-- No authentication or TLS is built in.
-- The latest message is kept in memory rather than stored persistently.
-- The README documents behavior confirmed by source and tests; it intentionally avoids unstated guarantees.
+- No TLS or authentication.
+- The latest message is stored in memory only.
+- Daemon mode is not supported on Windows.
 
 ## License
 
