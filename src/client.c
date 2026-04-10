@@ -230,6 +230,7 @@ static int client_send_file_raw(const client_opt_t *opt) {
     if (proto_res == PROTOCOL_ERR_FILE_NAME_LEN) {
       fprintf(stderr, "invalid file name length\n");
     } else {
+      fprintf(stderr, "failed to send file transfer prefix\n");
       sock_perror("protocol_send_file_transfer_prefix");
     }
     exit_code = 1;
