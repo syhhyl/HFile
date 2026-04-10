@@ -4,6 +4,103 @@
 #include <stdlib.h>
 #include <string.h>
 
+static int proto_res_frame_phase_valid(uint8_t phase) {
+  return phase == PROTO_PHASE_READY || phase == PROTO_PHASE_FINAL;
+}
+
+static int proto_res_frame_status_valid(uint8_t status) {
+  return status == PROTO_STATUS_OK || status == PROTO_STATUS_REJECTED ||
+         status == PROTO_STATUS_FAILED;
+}
+
+static int proto_res_frame_error_code_valid(uint16_t error_code) {
+  return error_code <= PROTOCOL_ERR_EOF;
+}
+
+protocol_result_t encode_res_frame(const res_frame_t *frame, uint8_t *out) {
+  uint16_t net_error_code = 0;
+
+  if (frame == NULL || out == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+  if (!proto_res_frame_phase_valid(frame->phase) ||
+      !proto_res_frame_status_valid(frame->status) ||
+      !proto_res_frame_error_code_valid(frame->error_code)) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  net_error_code = htons(frame->error_code);
+  out[0] = frame->phase;
+  out[1] = frame->status;
+  memcpy(out + 2, &net_error_code, sizeof(net_error_code));
+  return PROTOCOL_OK;
+}
+
+protocol_result_t decode_res_frame(res_frame_t *frame, const uint8_t *in) {
+  uint16_t net_error_code = 0;
+
+  if (frame == NULL || in == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  frame->phase = in[0];
+  frame->status = in[1];
+  memcpy(&net_error_code, in + 2, sizeof(net_error_code));
+  frame->error_code = ntohs(net_error_code);
+
+  if (!proto_res_frame_phase_valid(frame->phase) ||
+      !proto_res_frame_status_valid(frame->status) ||
+      !proto_res_frame_error_code_valid(frame->error_code)) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  return PROTOCOL_OK;
+}
+
+protocol_result_t send_res_frame(socket_t sock, const res_frame_t *frame) {
+  uint8_t buf[HF_PROTOCOL_RES_FRAME_SIZE];
+  ssize_t n = 0;
+  protocol_result_t res = PROTOCOL_OK;
+
+  if (is_socket_invalid(sock) || frame == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  res = encode_res_frame(frame, buf);
+  if (res != PROTOCOL_OK) {
+    return res;
+  }
+
+  n = send_all(sock, buf, sizeof(buf));
+  if (n < (ssize_t)sizeof(buf)) {
+    if (n >= 0) {
+      return PROTOCOL_ERR_SHORT_WRITE;
+    }
+    return PROTOCOL_ERR_IO;
+  }
+
+  return PROTOCOL_OK;
+}
+
+protocol_result_t recv_res_frame(socket_t sock, res_frame_t *frame) {
+  uint8_t buf[HF_PROTOCOL_RES_FRAME_SIZE];
+  ssize_t n = 0;
+
+  if (is_socket_invalid(sock) || frame == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  n = recv_all(sock, buf, sizeof(buf));
+  if (n < (ssize_t)sizeof(buf)) {
+    if (n < 0) {
+      return PROTOCOL_ERR_IO;
+    }
+    return PROTOCOL_ERR_EOF;
+  }
+
+  return decode_res_frame(frame, buf);
+}
+
 int proto_get_file_name_len(const char *file_name, uint16_t *out_len) {
   size_t len = 0;
 

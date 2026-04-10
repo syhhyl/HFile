@@ -27,36 +27,116 @@ static int client_recv_ack(socket_t sock, const char *recv_ctx,
   return 0;
 }
 
-static int client_recv_file_final_result(socket_t sock) {
-  uint8_t ack = 1;
-  ssize_t n = recv_all(sock, &ack, sizeof(ack));
-  if (n == (ssize_t)sizeof(ack)) {
-    if (ack == 0) {
-      return 0;
+static const char *client_protocol_result_name(protocol_result_t res) {
+  switch (res) {
+    case PROTOCOL_OK:
+      return "ok";
+    case PROTOCOL_ERR_HEADER_MAGIC:
+      return "header magic";
+    case PROTOCOL_ERR_HEADER_VERSION:
+      return "header version";
+    case PROTOCOL_ERR_HEADER_MSG_TYPE:
+      return "header msg type";
+    case PROTOCOL_ERR_HEADER_MSG_FLAG:
+      return "header msg flag";
+    case PROTOCOL_ERR_INVALID_ARGUMENT:
+      return "invalid argument";
+    case PROTOCOL_ERR_FILE_NAME_LEN:
+      return "file name length";
+    case PROTOCOL_ERR_IO:
+      return "io";
+    case PROTOCOL_ERR_SHORT_WRITE:
+      return "short write";
+    case PROTOCOL_ERR_ALLOC:
+      return "alloc";
+    case PROTOCOL_ERR_EOF:
+      return "unexpected eof";
+    default:
+      return "unknown";
+  }
+}
+
+static int client_recv_file_transfer_response(socket_t sock,
+                                              uint8_t expected_phase,
+                                              res_frame_t *frame_out) {
+  res_frame_t frame = {0};
+  protocol_result_t res = recv_res_frame(sock, &frame);
+
+  if (res != PROTOCOL_OK) {
+    if (res == PROTOCOL_ERR_EOF) {
+      fprintf(stderr, "server closed connection while waiting for transfer response\n");
+    } else if (res == PROTOCOL_ERR_IO) {
+      sock_perror("recv_res_frame");
+    } else {
+      fprintf(stderr, "invalid transfer response frame: %s\n",
+              client_protocol_result_name(res));
     }
-    fprintf(stderr, "server reported transfer failure (ack=%u)\n",
-            (unsigned)ack);
     return 1;
   }
 
-  if (n == 0) {
-    fprintf(stderr, "server aborted transfer after ready ack\n");
+  if (frame.phase != expected_phase) {
+    fprintf(stderr, "unexpected transfer response phase: got=%u expected=%u\n",
+            (unsigned)frame.phase, (unsigned)expected_phase);
     return 1;
   }
 
-#ifdef _WIN32
-  if (WSAGetLastError() == WSAECONNRESET) {
-    fprintf(stderr, "server aborted transfer after ready ack\n");
+  if (frame.status == PROTO_STATUS_OK) {
+    if (frame.error_code != PROTOCOL_OK) {
+      fprintf(stderr, "invalid success response error_code=%u\n",
+              (unsigned)frame.error_code);
+      return 1;
+    }
+  } else if (frame.error_code == PROTOCOL_OK) {
+    fprintf(stderr, "missing transfer failure reason for phase=%u status=%u\n",
+            (unsigned)frame.phase, (unsigned)frame.status);
     return 1;
   }
-#else
-  if (errno == ECONNRESET) {
-    fprintf(stderr, "server aborted transfer after ready ack\n");
-    return 1;
-  }
-#endif
 
-  sock_perror("recv_all(file_transfer_final_ack)");
+  if (frame_out != NULL) {
+    *frame_out = frame;
+  }
+  return 0;
+}
+
+static int client_check_file_transfer_response(const res_frame_t *frame,
+                                               uint8_t expected_phase) {
+  if (frame == NULL) {
+    fprintf(stderr, "invalid transfer response\n");
+    return 1;
+  }
+
+  if (frame->status == PROTO_STATUS_OK) {
+    return 0;
+  }
+
+  if (expected_phase == PROTO_PHASE_READY) {
+    if (frame->status == PROTO_STATUS_REJECTED) {
+      fprintf(stderr, "server rejected transfer before body: %s\n",
+              client_protocol_result_name((protocol_result_t)frame->error_code));
+      return 1;
+    }
+
+    fprintf(stderr, "invalid ready response status=%u error=%s\n",
+            (unsigned)frame->status,
+            client_protocol_result_name((protocol_result_t)frame->error_code));
+    return 1;
+  }
+
+  if (expected_phase == PROTO_PHASE_FINAL) {
+    if (frame->status == PROTO_STATUS_FAILED) {
+      fprintf(stderr, "server reported transfer failure: %s\n",
+              client_protocol_result_name((protocol_result_t)frame->error_code));
+      return 1;
+    }
+
+    fprintf(stderr, "invalid final response status=%u error=%s\n",
+            (unsigned)frame->status,
+            client_protocol_result_name((protocol_result_t)frame->error_code));
+    return 1;
+  }
+
+  fprintf(stderr, "invalid expected transfer phase=%u\n",
+          (unsigned)expected_phase);
   return 1;
 }
 
@@ -237,8 +317,13 @@ static int client_send_file_raw(const client_opt_t *opt) {
     goto CLEAN_UP;
   }
 
-  if (client_recv_ack(sock, "recv_all(file_transfer_ready_ack)",
-                      "server reported transfer failure") != 0) {
+  res_frame_t r_f = {0};
+  if (client_recv_file_transfer_response(sock, PROTO_PHASE_READY, &r_f) != 0) {
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+
+  if (client_check_file_transfer_response(&r_f, PROTO_PHASE_READY) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
@@ -258,7 +343,12 @@ static int client_send_file_raw(const client_opt_t *opt) {
   }
 #endif
 
-  if (client_recv_file_final_result(sock) != 0) {
+  if (client_recv_file_transfer_response(sock, PROTO_PHASE_FINAL, &r_f) != 0) {
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+
+  if (client_check_file_transfer_response(&r_f, PROTO_PHASE_FINAL) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
