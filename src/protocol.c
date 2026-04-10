@@ -14,7 +14,7 @@ static int proto_res_frame_status_valid(uint8_t status) {
 }
 
 static int proto_res_frame_error_code_valid(uint16_t error_code) {
-  return error_code <= PROTOCOL_ERR_EOF;
+  return error_code <= PROTOCOL_ERR_MSG_TOO_LARGE;
 }
 
 protocol_result_t encode_res_frame(const res_frame_t *frame, uint8_t *out) {

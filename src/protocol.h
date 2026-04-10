@@ -43,7 +43,8 @@ typedef enum {
   PROTOCOL_ERR_IO,
   PROTOCOL_ERR_SHORT_WRITE,
   PROTOCOL_ERR_ALLOC,
-  PROTOCOL_ERR_EOF
+  PROTOCOL_ERR_EOF,
+  PROTOCOL_ERR_MSG_TOO_LARGE
 } protocol_result_t;
 
 typedef enum {
