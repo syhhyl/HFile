@@ -1160,7 +1160,7 @@ static int http_handle_file_put(socket_t conn, const server_opt_t *ser_opt,
   if (transfer_recv_socket_file(conn, ser_opt->path, file_name,
                                 req->content_length, "recv(http_body)",
                                 "http upload ended early", saved_path,
-                                sizeof(saved_path)) != 0) {
+                                sizeof(saved_path)) != PROTOCOL_OK) {
     return http_send_json_error(conn, 500, "Internal Server Error", "failed to save file");
   }
 
