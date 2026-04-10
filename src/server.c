@@ -394,10 +394,12 @@ static server_conn_kind_t server_detect_connection_kind(socket_t conn) {
 static int server_handle_protocol_connection(socket_t conn,
                                              const server_opt_t *ser_opt) {
   int exit_code = 1;
-  ssize_t ack_sent = 0;
+  int send_byte_ack = 0;
   uint8_t ack = 1;
   uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
   protocol_header_t proto_header = {0};
+  res_frame_t response_frame = {0};
+  int send_response_frame = 0;
 
   protocol_result_t prefix_res = recv_header(conn, header_buf);
   if (prefix_res != PROTOCOL_OK) {
@@ -412,12 +414,20 @@ static int server_handle_protocol_connection(socket_t conn,
   prefix_res = decode_header(&proto_header, header_buf);
   if (prefix_res != PROTOCOL_OK) {
     fprintf(stderr, "protocol error: failed to decode header\n");
-    goto SEND_REPLY;
+    return 1;
   }
 
   switch (proto_header.msg_type) {
     case HF_MSG_TYPE_TEXT_MESSAGE: {
       exit_code = server_handle_text_message(conn, &proto_header, &ack);
+      if (exit_code == 0) {
+        send_byte_ack = 1;
+      } else {
+        response_frame.phase = PROTO_PHASE_FINAL;
+        response_frame.status = PROTO_STATUS_FAILED;
+        response_frame.error_code = ack;
+        send_response_frame = 1;
+      }
       break;
     }
 
@@ -431,10 +441,18 @@ static int server_handle_protocol_connection(socket_t conn,
       break;
   }
 
-SEND_REPLY:
-  ack_sent = send_all(conn, &ack, sizeof(ack));
-  if (ack_sent != (ssize_t)sizeof(ack)) {
-    sock_perror("send_all(ack)");
+  if (send_response_frame) {
+    if (send_res_frame(conn, &response_frame) != PROTOCOL_OK) {
+      sock_perror("send_res_frame(protocol)");
+    }
+    return exit_code;
+  }
+
+  if (send_byte_ack) {
+    ssize_t ack_sent = send_all(conn, &ack, sizeof(ack));
+    if (ack_sent != (ssize_t)sizeof(ack)) {
+      sock_perror("send_all(ack)");
+    }
   }
 
   return exit_code;
@@ -532,11 +550,13 @@ static int server_handle_text_message(socket_t conn,
 
   if (proto_header->flags != HF_MSG_FLAG_NONE) {
     fprintf(stderr, "protocol error: text message has unsupported flags\n");
+    *ack = (uint8_t)PROTOCOL_ERR_HEADER_MSG_FLAG;
     return 1;
   }
 
   if (proto_header->payload_size > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
     fprintf(stderr, "protocol error: text message too large\n");
+    *ack = (uint8_t)PROTOCOL_ERR_MSG_TOO_LARGE;
     return 1;
   }
 
@@ -553,9 +573,11 @@ static int server_handle_text_message(socket_t conn,
       free(message);
       if (n < 0) {
         sock_perror("recv_all(message)");
+        *ack = (uint8_t)PROTOCOL_ERR_IO;
       } else {
         fprintf(stderr,
                 "protocol error: unexpected EOF while receiving message\n");
+        *ack = (uint8_t)PROTOCOL_ERR_EOF;
       }
       return 1;
     }
@@ -565,6 +587,7 @@ static int server_handle_text_message(socket_t conn,
   if (message_store_set(message) != 0) {
     fprintf(stderr, "failed to store latest message\n");
     free(message);
+    *ack = (uint8_t)PROTOCOL_ERR_IO;
     return 1;
   }
   free(message);

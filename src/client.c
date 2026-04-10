@@ -111,7 +111,7 @@ static int client_check_file_transfer_response(const res_frame_t *frame,
 
   if (expected_phase == PROTO_PHASE_READY) {
     if (frame->status == PROTO_STATUS_REJECTED) {
-      fprintf(stderr, "server rejected transfer before body: %s\n",
+      fprintf(stderr, "server reported transfer failure: %s\n",
               client_protocol_result_name((protocol_result_t)frame->error_code));
       return 1;
     }

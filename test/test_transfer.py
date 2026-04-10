@@ -189,21 +189,36 @@ class TransferTestCase(unittest.TestCase):
                 f"failed to shutdown write during {phase}: {e}; server_log_tail={self._server_log_tail()!r}"
             )
 
-    def _recv_ack_or_fail(self, sock: socket.socket, *, phase: str) -> bytes:
+    def _make_res_frame(self, phase: int, status: int, error_code: int) -> bytes:
+        return struct.pack("!BBH", phase, status, error_code)
+
+    def _recv_res_frame_or_fail(
+        self,
+        sock: socket.socket,
+        *,
+        phase: str,
+        allow_empty: bool = False,
+    ) -> bytes:
         try:
-            ack = sock.recv(1)
+            ack = sock.recv(4)
         except OSError as e:
             self.fail(
                 f"failed to receive {phase}: {e}; server_log_tail={self._server_log_tail()!r}"
             )
 
-        if len(ack) != 1:
+        if len(ack) == 0 and not allow_empty:
             self.fail(
-                f"missing {phase}: ack={ack!r}; server_log_tail={self._server_log_tail()!r}"
+                f"connection closed before {phase}: ack={ack!r}; server_log_tail={self._server_log_tail()!r}"
             )
         return ack
 
-    def _send_raw_parts(self, parts: list[bytes], *, timeout: float = 8.0) -> bytes:
+    def _send_raw_parts(
+        self,
+        parts: list[bytes],
+        *,
+        timeout: float = 8.0,
+        allow_empty_ack: bool = False,
+    ) -> bytes:
         with socket.create_connection(
             (self.server.host, self.server.port), timeout=timeout
         ) as s:
@@ -211,7 +226,11 @@ class TransferTestCase(unittest.TestCase):
             for idx, part in enumerate(parts):
                 self._sendall_or_fail(s, part, phase=f"raw part {idx}")
             self._shutdown_write_or_fail(s, phase="raw parts")
-            return self._recv_ack_or_fail(s, phase="raw parts final ack")
+            return self._recv_res_frame_or_fail(
+                s,
+                phase="raw parts final ack",
+                allow_empty=allow_empty_ack,
+            )
 
     def _send_raw_file_preamble_and_recv_ack(
         self,
@@ -226,7 +245,7 @@ class TransferTestCase(unittest.TestCase):
             s.settimeout(timeout)
             self._sendall_or_fail(s, header, phase="file header")
             self._sendall_or_fail(s, prefix, phase="file prefix")
-            return self._recv_ack_or_fail(s, phase="file preamble ack")
+            return self._recv_res_frame_or_fail(s, phase="file preamble ack")
 
     def _send_raw_file_transfer(
         self,
@@ -242,13 +261,13 @@ class TransferTestCase(unittest.TestCase):
             s.settimeout(timeout)
             self._sendall_or_fail(s, header, phase="file header")
             self._sendall_or_fail(s, prefix, phase="file prefix")
-            ready_ack = self._recv_ack_or_fail(s, phase="file ready ack")
-            if ready_ack != b"\x00":
+            ready_ack = self._recv_res_frame_or_fail(s, phase="file ready ack")
+            if ready_ack[1] != 0:
                 return ready_ack, b""
             if body:
                 self._sendall_or_fail(s, body, phase="file body")
             self._shutdown_write_or_fail(s, phase="file body")
-            final_ack = self._recv_ack_or_fail(s, phase="file final ack")
+            final_ack = self._recv_res_frame_or_fail(s, phase="file final ack")
             return ready_ack, final_ack
 
 
@@ -460,10 +479,10 @@ class TestTransferProtocol(TransferTestCase):
         )
 
         log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header])
+        ack = self._send_raw_parts([header], allow_empty_ack=True)
         self.assertEqual(
             ack,
-            b"\x01",
+            b"",
             f"unexpected invalid-magic ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
@@ -478,10 +497,10 @@ class TestTransferProtocol(TransferTestCase):
         )
 
         log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header])
+        ack = self._send_raw_parts([header], allow_empty_ack=True)
         self.assertEqual(
             ack,
-            b"\x01",
+            b"",
             f"unexpected invalid-version ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
@@ -495,10 +514,10 @@ class TestTransferProtocol(TransferTestCase):
         )
 
         log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header])
+        ack = self._send_raw_parts([header], allow_empty_ack=True)
         self.assertEqual(
             ack,
-            b"\x01",
+            self._make_res_frame(0, 1, 5),
             f"unexpected payload-too-small ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
@@ -512,10 +531,10 @@ class TestTransferProtocol(TransferTestCase):
         )
 
         log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header])
+        ack = self._send_raw_parts([header], allow_empty_ack=True)
         self.assertEqual(
             ack,
-            b"\x01",
+            b"",
             f"unexpected unsupported-message ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
@@ -534,7 +553,7 @@ class TestTransferProtocol(TransferTestCase):
         ack = self._send_raw_parts([header])
         self.assertEqual(
             ack,
-            b"\x01",
+            self._make_res_frame(1, 2, 13),
             f"unexpected text-too-large ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
 
@@ -551,7 +570,7 @@ class TestTransferProtocol(TransferTestCase):
         ack = self._send_raw_file_preamble_and_recv_ack(header, prefix)
         self.assertEqual(
             ack,
-            b"\x01",
+            self._make_res_frame(0, 1, 7),
             f"unexpected invalid-name pre-body ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
@@ -573,7 +592,7 @@ class TestTransferProtocol(TransferTestCase):
         ack = self._send_raw_file_preamble_and_recv_ack(header, prefix)
         self.assertEqual(
             ack,
-            b"\x01",
+            self._make_res_frame(0, 1, 8),
             f"unexpected payload-mismatch pre-body ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
@@ -599,10 +618,10 @@ class TestTransferProtocol(TransferTestCase):
             s.settimeout(8.0)
             self._sendall_or_fail(s, header, phase="file header")
             self._sendall_or_fail(s, prefix, phase="file prefix")
-            ready_ack = self._recv_ack_or_fail(s, phase="file ready ack")
+            ready_ack = self._recv_res_frame_or_fail(s, phase="file ready ack")
             self.assertEqual(
-                ready_ack,
-                b"\x00",
+                ready_ack[1],
+                0,
                 f"unexpected ready ack: {ready_ack!r}; server_log_tail={self._server_log_tail()!r}",
             )
             self.assertFalse(
@@ -610,11 +629,11 @@ class TestTransferProtocol(TransferTestCase):
             )
             self._sendall_or_fail(s, body, phase="file body")
             self._shutdown_write_or_fail(s, phase="file body")
-            final_ack = self._recv_ack_or_fail(s, phase="file final ack")
+            final_ack = self._recv_res_frame_or_fail(s, phase="file final ack")
 
         self.assertEqual(
-            final_ack,
-            b"\x00",
+            final_ack[1],
+            0,
             f"unexpected final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self.assertTrue(
@@ -640,13 +659,13 @@ class TestTransferProtocol(TransferTestCase):
 
         ready_ack, final_ack = self._send_raw_file_transfer(header, prefix, body)
         self.assertEqual(
-            ready_ack,
-            b"\x00",
+            ready_ack[1],
+            0,
             f"unexpected ready ack: {ready_ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self.assertEqual(
-            final_ack,
-            b"\x00",
+            final_ack[1],
+            0,
             f"unexpected final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self.assertTrue(
@@ -668,13 +687,13 @@ class TestTransferProtocol(TransferTestCase):
         log_offset = self._server_log_offset()
         ready_ack, final_ack = self._send_raw_file_transfer(header, prefix, b"x" * 100)
         self.assertEqual(
-            ready_ack,
-            b"\x00",
+            ready_ack[1],
+            0,
             f"unexpected ready ack: {ready_ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self.assertEqual(
             final_ack,
-            b"\x01",
+            self._make_res_frame(1, 2, 12),
             f"unexpected final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
