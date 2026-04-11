@@ -216,6 +216,8 @@ def run_hf(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
         cwd=str(cwd) if cwd is not None else None,
         env=(os.environ | env) if env is not None else None,
@@ -346,6 +348,8 @@ class HFileServer:
             stdout=self._log_fh,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
         self.wait_ready(timeout=startup_timeout)
