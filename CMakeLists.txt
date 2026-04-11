@@ -9,7 +9,6 @@ add_executable(hf
   src/message_store.c
   src/daemon_state.c
   src/control.c
-  src/control_ui.c
   src/transfer_io.c
   src/webui.c
   src/client.c

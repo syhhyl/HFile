@@ -1,8 +1,8 @@
 #include "cli.h"
+#include "control.h"
 #include "daemon_state.h"
 #include "http.h"
 #include "message_store.h"
-#include "control_ui.h"
 #include "net.h"
 #include "protocol.h"
 #include "shutdown.h"
@@ -741,8 +741,8 @@ static void server_print_access_details(const server_opt_t *ser_opt,
                                         const char *log_path,
                                         long pid,
                                         int daemon_mode) {
-  control_ui_print_server_access_details(stdout, ser_opt->path, ser_opt->port,
-                                         log_path, pid, daemon_mode);
+  control_print_server_access_details(stdout, ser_opt->path, ser_opt->port,
+                                      log_path, pid, daemon_mode);
 }
 
 static void server_print_shutdown_notice(void) {
@@ -947,9 +947,9 @@ static int server_run_process(const server_opt_t *ser_opt,
     state.daemon_mode = 1;
     {
       int phone_reachable = 0;
-      if (control_ui_build_url(ser_opt->port, state.web_url,
-                               sizeof(state.web_url),
-                               &phone_reachable) != 0) {
+      if (control_build_url(ser_opt->port, state.web_url,
+                            sizeof(state.web_url),
+                            &phone_reachable) != 0) {
         state.web_url[0] = '\0';
       }
     }
