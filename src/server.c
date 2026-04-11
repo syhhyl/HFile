@@ -2,7 +2,7 @@
 #include "daemon_state.h"
 #include "http.h"
 #include "message_store.h"
-#include "mobile_ui.h"
+#include "control_ui.h"
 #include "net.h"
 #include "protocol.h"
 #include "shutdown.h"
@@ -741,35 +741,8 @@ static void server_print_access_details(const server_opt_t *ser_opt,
                                         const char *log_path,
                                         long pid,
                                         int daemon_mode) {
-  char url[256];
-  int phone_reachable = 0;
-
-  printf(daemon_mode ? "HFile daemon ready\n" : "HFile server ready\n");
-  printf("  receive dir: %s\n", ser_opt->path);
-  printf("  listen     : 0.0.0.0:%u (tcp + web)\n", (unsigned)ser_opt->port);
-  if (daemon_mode) {
-    printf("  pid        : %ld\n", pid);
-    if (log_path != NULL) {
-      printf("  error log  : %s\n", log_path);
-    }
-  }
-
-  if (mobile_ui_build_url(ser_opt->port, url, sizeof(url), &phone_reachable) == 0) {
-    printf("  web ui     : %s\n", url);
-    if (!phone_reachable) {
-      printf("  mobile     : could not detect a LAN IPv4, using localhost\n");
-    }
-
-    if (!daemon_mode) {
-      printf("  status     : waiting for files and messages\n");
-    }
-    if (mobile_ui_is_tty_stdout()) {
-      (void)mobile_ui_print_qr(stdout, url);
-    }
-  }
-
-
-  fflush(stdout);
+  control_ui_print_server_access_details(stdout, ser_opt->path, ser_opt->port,
+                                         log_path, pid, daemon_mode);
 }
 
 static void server_print_shutdown_notice(void) {
@@ -974,8 +947,9 @@ static int server_run_process(const server_opt_t *ser_opt,
     state.daemon_mode = 1;
     {
       int phone_reachable = 0;
-      if (mobile_ui_build_url(ser_opt->port, state.web_url, sizeof(state.web_url),
-                              &phone_reachable) != 0) {
+      if (control_ui_build_url(ser_opt->port, state.web_url,
+                               sizeof(state.web_url),
+                               &phone_reachable) != 0) {
         state.web_url[0] = '\0';
       }
     }

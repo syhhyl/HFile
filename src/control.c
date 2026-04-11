@@ -1,7 +1,7 @@
 #include "control.h"
 
+#include "control_ui.h"
 #include "daemon_state.h"
-#include "mobile_ui.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -50,12 +50,7 @@ int control_status(void) {
     return 1;
   }
 
-  printf("status: running\n");
-  printf("pid: %ld\n", state.pid);
-  printf("receive dir: %s\n", state.receive_dir);
-  printf("port: %u\n", (unsigned)state.port);
-  printf("web ui: %s\n", state.web_url);
-  printf("error log: %s\n", state.log_path);
+  control_ui_print_status(stdout, &state);
   return 0;
 }
 
@@ -114,5 +109,5 @@ int control_print_qr(void) {
     fprintf(stderr, "no running daemon found\n");
     return 1;
   }
-  return mobile_ui_print_qr(stdout, state.web_url);
+  return control_ui_print_qr(stdout, state.web_url);
 }
