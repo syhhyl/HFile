@@ -135,12 +135,6 @@ Read the latest message:
 curl http://127.0.0.1:8888/api/messages/latest
 ```
 
-## Protocol Notes
-
-- The same TCP listener accepts both raw HFile protocol traffic and HTTP traffic.
-- File transfer is two-phase: client sends header + prefix, server replies with a `READY` `res_frame`, client sends the body, then server replies with a `FINAL` `res_frame`.
-- Received files are streamed to a temp file and finalized atomically.
-- Filename validation is intentionally strict.
 
 ## Test
 
@@ -151,35 +145,6 @@ cmake --build build
 ./test.sh
 ```
 
-Focused suites:
-
-```bash
-./test.sh cli
-./test.sh http
-./test.sh transfer
-./test.sh support
-```
-
-Direct unittest examples:
-
-```bash
-python3 -m unittest -v test.test_hf
-python3 -m unittest -v test.test_transfer
-python3 -m unittest -v test.test_http.TestHTTP.test_upload_list_and_download
-```
-
-## Repo Notes
-
-- `src/server.c` owns the unified listener and protocol dispatch.
-- `src/net.c` is low-level socket/endian/sendfile support.
-- `src/transfer_io.c` is the shared receive-to-disk path for protocol upload and HTTP upload.
-- `src/webui.c` embeds the browser assets.
-
-## Limitations
-
-- No TLS or authentication.
-- The latest message is stored in memory only.
-- Daemon mode is not supported on Windows.
 
 ## License
 
