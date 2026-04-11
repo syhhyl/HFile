@@ -111,7 +111,7 @@ void control_ui_print_server_access_details(FILE *out,
 
   fprintf(out, daemon_mode ? "HFile daemon ready\n" : "HFile server ready\n");
   fprintf(out, "  receive dir: %s\n", receive_dir);
-  fprintf(out, "  listen     : 0.0.0.0:%u (tcp + web)\n", (unsigned)port);
+  fprintf(out, "  listen     : 0.0.0.0:%u (tcp + http)\n", (unsigned)port);
   if (daemon_mode) {
     fprintf(out, "  pid        : %ld\n", pid);
     if (log_path != NULL) {
