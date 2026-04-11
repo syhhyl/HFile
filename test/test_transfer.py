@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import errno
 import os
-import select
 import signal
 import shutil
 import socket
@@ -11,14 +9,10 @@ import time
 import unittest
 from pathlib import Path
 
-if os.name != "nt":
-    import pty
-
 from test.support.hf import (
     HFileServer,
     assert_files_equal,
     make_temp_dir,
-    reserve_free_port,
     protocol_define,
     resolve_hf_path,
     run_hf,
@@ -375,102 +369,6 @@ class TestTransferCLI(TransferTestCase):
 
 
 class TestTransferProtocol(TransferTestCase):
-    @unittest.skipIf(os.name == "nt", "requires POSIX pty")
-    def test_interactive_sigint_shutdown_notice_starts_on_new_line(self) -> None:
-        with make_temp_dir(prefix="hf_sigint_tty_") as tmp_dir:
-            out_dir = Path(tmp_dir) / "outputs"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            port = reserve_free_port()
-
-            pid, master_fd = pty.fork()
-            if pid == 0:
-                os.execv(
-                    str(self.hf_path),
-                    [
-                        str(self.hf_path),
-                        "-s",
-                        str(out_dir),
-                        "-p",
-                        str(port),
-                    ],
-                )
-
-            output = bytearray()
-            exit_code = None
-            try:
-                deadline = time.monotonic() + 5.0
-                while time.monotonic() < deadline:
-                    ready, _, _ = select.select([master_fd], [], [], 0.1)
-                    if ready:
-                        chunk = os.read(master_fd, 4096)
-                        if chunk:
-                            output.extend(chunk)
-                    if b"HFile server ready" in output:
-                        break
-                else:
-                    self.fail(
-                        "server did not become ready on pty: "
-                        f"{output.decode('utf-8', errors='replace')!r}"
-                    )
-
-                os.write(master_fd, b"\x03")
-
-                deadline = time.monotonic() + 5.0
-                status = None
-                while time.monotonic() < deadline:
-                    ready, _, _ = select.select([master_fd], [], [], 0.1)
-                    if ready:
-                        try:
-                            chunk = os.read(master_fd, 4096)
-                        except OSError as e:
-                            if e.errno == errno.EIO:
-                                chunk = b""
-                            else:
-                                raise
-                        if chunk:
-                            output.extend(chunk)
-
-                    waited_pid, waited_status = os.waitpid(pid, os.WNOHANG)
-                    if waited_pid == pid:
-                        status = waited_status
-                        break
-
-                if status is None:
-                    self.fail("server did not exit after interactive SIGINT")
-
-                exit_code = os.waitstatus_to_exitcode(status)
-
-                drain_deadline = time.monotonic() + 0.2
-                while time.monotonic() < drain_deadline:
-                    ready, _, _ = select.select([master_fd], [], [], 0.05)
-                    if not ready:
-                        break
-                    try:
-                        chunk = os.read(master_fd, 4096)
-                    except OSError as e:
-                        if e.errno == errno.EIO:
-                            break
-                        raise
-                    if not chunk:
-                        break
-                    output.extend(chunk)
-            finally:
-                os.close(master_fd)
-                if exit_code is None:
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        os.waitpid(pid, 0)
-                    except ChildProcessError:
-                        pass
-
-            text = output.decode("utf-8", errors="replace")
-            self.assertEqual(130, exit_code)
-            self.assertIn("shutdown requested, stopping server", text)
-            self.assertNotIn("^Cshutdown requested, stopping server", text)
-
     def test_protocol_rejects_invalid_magic(self) -> None:
         header = self._make_header(
             msg_type=MSG_TYPE_TEXT_MESSAGE,
@@ -721,6 +619,9 @@ class TestTransferProtocol(TransferTestCase):
         self._assert_no_temp_files(final_name)
 
     def test_server_graceful_shutdown_on_signal(self) -> None:
+        shared_server = self.__class__.server
+        shared_server.stop()
+
         with make_temp_dir(prefix="hf_transfer_shutdown_") as tmp_dir:
             base_dir = Path(tmp_dir)
             out_dir = base_dir / "outputs"
@@ -734,18 +635,24 @@ class TestTransferProtocol(TransferTestCase):
             )
             server.start(startup_timeout=5.0)
             try:
-                proc = server.proc
-
                 if os.name == "nt":
+                    proc = server.proc
                     proc.terminate()
+                    proc.wait(timeout=5.0)
                 else:
-                    proc.send_signal(signal.SIGINT)
+                    os.kill(server.pid, signal.SIGINT)
+                    deadline = time.monotonic() + 5.0
+                    while time.monotonic() < deadline:
+                        try:
+                            os.kill(server.pid, 0)
+                        except ProcessLookupError:
+                            break
+                        time.sleep(0.05)
+                    else:
+                        self.fail("daemon did not exit after SIGINT")
 
-                rc = proc.wait(timeout=5.0)
-
-                log_text = tail_text_file(log_path)
+                log_text = tail_text_file(server.log_path or Path(""))
                 if os.name != "nt":
-                    self.assertEqual(130, rc)
                     self.assertIn("shutdown requested, stopping server", log_text)
                 self.assertNotIn("http server stopped unexpectedly", log_text)
 
@@ -755,6 +662,7 @@ class TestTransferProtocol(TransferTestCase):
                 )
             finally:
                 server.stop()
+                shared_server.start(startup_timeout=5.0)
 
 
 if __name__ == "__main__":

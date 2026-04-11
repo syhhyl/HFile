@@ -65,14 +65,13 @@ int load_windows_utf8_argv(int *argc_out, char ***argv_out) {
 void usage(const char *argv0) {
   fprintf(stderr,
           "usage:\n"
-          "  %s -s <server_path> [-p <port>]\n"
           "  %s -d <server_path> [-p <port>]\n"
           "  %s -c <file_path> [-i <ip>] [-p <port>]\n"
           "  %s -m <message> [-i <ip>] [-p <port>]\n"
           "  %s status\n"
           "  %s stop\n"
           "  %s -q\n",
-          argv0, argv0, argv0, argv0, argv0, argv0, argv0);
+          argv0, argv0, argv0, argv0, argv0, argv0);
 }
 
 int parse_port(const char *s, uint16_t *out) {
@@ -104,7 +103,6 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->msg_type = 0;
   opt->daemonize = 0;
 
-  int seen_s = 0;
   int seen_d = 0;
   int seen_c = 0;
   int seen_m = 0;
@@ -149,28 +147,6 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     switch (a[1]) {
       case 'h':
         return PARSE_HELP;
-
-      case 's': {
-        const char *v = NULL;
-        if (control_mode_selected) {
-          fprintf(stderr, "control mode does not accept -s\n");
-          return PARSE_ERR;
-        }
-        if (seen_s) {
-          fprintf(stderr, "duplicate -s\n");
-          return PARSE_ERR;
-        }
-        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
-          fprintf(stderr, "invalid server path\n");
-          return PARSE_ERR;
-        }
-
-        opt->path = v;
-        opt->mode = server_mode;
-        opt->daemonize = 0;
-        seen_s = 1;
-        break;
-      }
 
       case 'd': {
         const char *v = NULL;
@@ -275,24 +251,19 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
   }
 
-  mode_count = seen_s + seen_d + seen_c + seen_m + (control_mode_selected ? 1 : 0);
+  mode_count = seen_d + seen_c + seen_m + (control_mode_selected ? 1 : 0);
 
   if (mode_count == 0) {
-    fprintf(stderr, "must specify one of -s, -d, -c, -m, status, stop, or -q\n");
+    fprintf(stderr, "must specify one of -d, -c, -m, status, stop, or -q\n");
     return PARSE_ERR;
   }
 
-  if (seen_s && seen_d) {
-    fprintf(stderr, "cannot use -s -d together\n");
-    return PARSE_ERR;
-  }
-
-  if ((seen_s || seen_d) && seen_c) {
+  if (seen_d && seen_c) {
     fprintf(stderr, "cannot use server and client modes together\n");
     return PARSE_ERR;
   }
 
-  if ((seen_s || seen_d) && seen_m) {
+  if (seen_d && seen_m) {
     fprintf(stderr, "cannot use server and client modes together\n");
     return PARSE_ERR;
   }
@@ -303,7 +274,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   }
 
   if (!control_mode_selected) {
-    opt->mode = (seen_s || seen_d) ? server_mode : client_mode;
+    opt->mode = seen_d ? server_mode : client_mode;
   }
   if (opt->mode == server_mode && opt->path == NULL) return PARSE_ERR;
   if (opt->mode == client_mode && seen_c && opt->path == NULL) return PARSE_ERR;

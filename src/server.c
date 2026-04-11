@@ -782,16 +782,41 @@ static int server_notify_parent(int *ready_fd, uint8_t status) {
 #endif
 }
 
-#ifndef _WIN32
-static int server_pid_is_running(pid_t pid) {
+static int server_pid_is_running_long(long pid) {
   if (pid <= 0) {
     return 0;
   }
-  if (kill(pid, 0) == 0) {
+
+#ifdef _WIN32
+  HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
+  DWORD wait_res = WAIT_FAILED;
+  if (process == NULL) {
+    return 0;
+  }
+  wait_res = WaitForSingleObject(process, 0);
+  CloseHandle(process);
+  return wait_res == WAIT_TIMEOUT ? 1 : 0;
+#else
+  if (kill((pid_t)pid, 0) == 0) {
     return 1;
   }
   return errno == EPERM ? 1 : 0;
+#endif
 }
+
+static int server_prepare_state_files(void) {
+  daemon_state_t state = {0};
+
+  if (daemon_state_read(&state) == 0 && server_pid_is_running_long(state.pid)) {
+    fprintf(stderr, "HFile is already running\nrun 'hf status' or 'hf stop'\n");
+    return 1;
+  }
+
+  daemon_state_cleanup_files();
+  return 0;
+}
+
+#ifndef _WIN32
 
 static int server_load_pid_file(const char *pid_path, pid_t *pid_out) {
   FILE *fp = NULL;
@@ -828,12 +853,11 @@ static int server_prepare_pid_file(const char *pid_path) {
   if (server_load_pid_file(pid_path, &existing_pid) != 0) {
     return 1;
   }
-  if (server_pid_is_running(existing_pid)) {
+  if (server_pid_is_running_long((long)existing_pid)) {
     fprintf(stderr, "HFile is already running\nrun 'hf status' or 'hf stop'\n");
     return 1;
   }
-  daemon_state_cleanup_files();
-  return 0;
+  return server_prepare_state_files();
 }
 
 static int server_write_pid_file(const char *pid_path, pid_t pid) {
@@ -909,7 +933,8 @@ static int server_wait_for_daemon_ready(int ready_fd, pid_t child_pid) {
 static int server_run_process(const server_opt_t *ser_opt,
                               int ready_fd,
                               const char *log_path,
-                              int daemon_mode) {
+                              int daemon_mode,
+                              int persist_state) {
   int exit_code = 0;
   int ready_notified = 0;
 
@@ -937,14 +962,14 @@ static int server_run_process(const server_opt_t *ser_opt,
     goto CLOSE_SOCK;
   }
 
-  if (daemon_mode) {
+  if (persist_state) {
     daemon_state_t state = {0};
     state.pid = server_current_pid_long();
     (void)snprintf(state.receive_dir, sizeof(state.receive_dir), "%s", ser_opt->path);
     (void)snprintf(state.log_path, sizeof(state.log_path), "%s",
                    log_path != NULL ? log_path : "");
     state.port = ser_opt->port;
-    state.daemon_mode = 1;
+    state.daemon_mode = daemon_mode ? 1 : 0;
     {
       int phone_reachable = 0;
       if (control_build_url(ser_opt->port, state.web_url,
@@ -988,6 +1013,9 @@ CLEAN_UP:
   if (ready_fd >= 0 && !ready_notified) {
     (void)server_notify_parent(&ready_fd, 0u);
   }
+  if (persist_state) {
+    daemon_state_cleanup_files();
+  }
   message_store_cleanup();
   server_conn_tracker_cleanup();
   return exit_code;
@@ -999,11 +1027,12 @@ int server(const server_opt_t *ser_opt) {
     fprintf(stderr, "invalid server options\n");
     return 1;
   }
-  if (ser_opt->daemonize) {
-    fprintf(stderr, "daemon mode is not supported on Windows\n");
+  if (server_prepare_state_files() != 0) {
     return 1;
   }
-  return server_run_process(ser_opt, -1, NULL, 0);
+  fprintf(stderr,
+          "daemon mode is not supported on Windows; running attached server instead\n");
+  return server_run_process(ser_opt, -1, NULL, 0, 1);
 #else
   char log_path[4096];
   char pid_path[4096];
@@ -1014,7 +1043,10 @@ int server(const server_opt_t *ser_opt) {
   }
 
   if (!ser_opt->daemonize) {
-    return server_run_process(ser_opt, -1, NULL, 0);
+    if (server_prepare_state_files() != 0) {
+      return 1;
+    }
+    return server_run_process(ser_opt, -1, NULL, 0, 1);
   }
 
   if (daemon_state_default_log_path(log_path, sizeof(log_path)) != 0) {
@@ -1071,8 +1103,7 @@ int server(const server_opt_t *ser_opt) {
 
   server_opt_t child_opt = *ser_opt;
   child_opt.daemonize = 0;
-  int exit_code = server_run_process(&child_opt, ready_pipe[1], log_path, 1);
-  daemon_state_cleanup_files();
+  int exit_code = server_run_process(&child_opt, ready_pipe[1], log_path, 1, 1);
   return exit_code;
 #endif
 }

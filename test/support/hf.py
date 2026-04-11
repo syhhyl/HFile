@@ -295,7 +295,6 @@ class HFileServer:
         host: str = "127.0.0.1",
         port: int | None = None,
         log_path: Path | None = None,
-        foreground: bool = True,
         extra_args: Sequence[os.PathLike[str] | str] = (),
     ) -> None:
         self.hf_path = Path(hf_path)
@@ -303,16 +302,23 @@ class HFileServer:
         self.host = host
         self.port = int(port) if port is not None else reserve_free_port(host=host)
         self.log_path = Path(log_path) if log_path is not None else None
-        self.foreground = bool(foreground)
+        self._startup_log_path: Path | None = None
         self.extra_args = tuple(str(arg) for arg in extra_args)
         self._proc: subprocess.Popen[str] | None = None
         self._log_fh = None
+        self._pid: int | None = None
 
     @property
     def proc(self) -> subprocess.Popen[str]:
         if self._proc is None:
             raise RuntimeError("server not started")
         return self._proc
+
+    @property
+    def pid(self) -> int:
+        if self._pid is not None:
+            return self._pid
+        raise RuntimeError("server pid is not available")
 
     def start(self, *, startup_timeout: float = 5.0) -> None:
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -321,10 +327,14 @@ class HFileServer:
             # Keep logs inside the output dir to simplify debugging artifacts.
             self.log_path = self.out_dir / "hf_server.log"
 
-        self._log_fh = self.log_path.open("w", encoding="utf-8", errors="replace")
+        self._startup_log_path = self.log_path
+
+        self._log_fh = self._startup_log_path.open(
+            "w", encoding="utf-8", errors="replace"
+        )
         argv = [
             str(self.hf_path),
-            "-s" if self.foreground else "-d",
+            "-d",
             str(self.out_dir),
             "-p",
             str(self.port),
@@ -343,25 +353,26 @@ class HFileServer:
     def wait_ready(self, *, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout
         readiness_marker = (
-            "HFile server ready" if self.foreground else "HFile daemon ready"
+            "HFile server ready" if os.name == "nt" else "HFile daemon ready"
         )
 
         while time.monotonic() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
-                if self.foreground or self._proc.returncode != 0:
-                    tail = tail_text_file(self.log_path or Path(""))
+                if os.name == "nt" or self._proc.returncode != 0:
+                    tail = tail_text_file(self._startup_log_path or Path(""))
                     raise RuntimeError(
                         f"hf server exited early (rc={self._proc.returncode}). log tail:\n{tail}"
                     )
 
-            if self.log_path is not None:
-                log_text = tail_text_file(self.log_path)
+            if self._startup_log_path is not None:
+                log_text = tail_text_file(self._startup_log_path)
                 if readiness_marker in log_text:
+                    self._capture_runtime_details(log_text)
                     return
 
             time.sleep(0.05)
 
-        tail = tail_text_file(self.log_path or Path(""))
+        tail = tail_text_file(self._startup_log_path or Path(""))
         raise TimeoutError(
             f"hf server not ready after {timeout:.1f}s on {self.host}:{self.port}. "
             f"expected log line containing {readiness_marker!r}. "
@@ -372,7 +383,7 @@ class HFileServer:
         if self._proc is None:
             return
 
-        if not self.foreground:
+        if os.name != "nt":
             subprocess.run(
                 [str(self.hf_path), "stop"],
                 stdout=subprocess.DEVNULL,
@@ -381,7 +392,8 @@ class HFileServer:
                 timeout=timeout,
                 check=False,
             )
-            self._proc.wait(timeout=timeout)
+            if self._proc.poll() is None:
+                self._proc.wait(timeout=timeout)
         elif self._proc.poll() is None:
             self._proc.terminate()
             try:
@@ -400,6 +412,23 @@ class HFileServer:
             except Exception:
                 pass
             self._log_fh = None
+
+    def _capture_runtime_details(self, log_text: str) -> None:
+        if os.name == "nt":
+            if self._proc is not None:
+                self._pid = self._proc.pid
+            return
+
+        for line in log_text.splitlines():
+            if line.startswith("  pid        : "):
+                try:
+                    self._pid = int(line.split(":", 1)[1].strip())
+                except ValueError:
+                    self._pid = None
+            elif line.startswith("  error log  : "):
+                path = line.split(":", 1)[1].strip()
+                if path:
+                    self.log_path = Path(path)
 
     def __enter__(self) -> "HFileServer":
         self.start()

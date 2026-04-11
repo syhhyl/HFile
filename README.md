@@ -52,7 +52,6 @@ Output binary:
 CLI forms:
 
 ```text
-hf -s <server_path> [-p <port>]
 hf -d <server_path> [-p <port>]
 hf -c <file_path> [-i <ip>] [-p <port>]
 hf -m <message> [-i <ip>] [-p <port>]
@@ -66,12 +65,14 @@ Defaults:
 - server/client port: `8888`
 - client IP: `127.0.0.1`
 
-Start a foreground server:
+Start a server:
 
 ```bash
 mkdir -p received
-./build/hf -s ./received
+./build/hf -d ./received
 ```
+
+On POSIX, `-d` starts a daemon in the background. On Windows, `-d` prints a notice that daemon mode is unavailable, then runs the server attached in the current process. Only one HFile server can run at a time.
 
 Send a file:
 

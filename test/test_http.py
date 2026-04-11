@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import shutil
+import time
 import unittest
 import urllib.error
 import urllib.parse
@@ -121,7 +122,7 @@ class TestHTTP(unittest.TestCase):
         self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
         self.assertTrue(
             wait_for_file_stable(dst, timeout=5.0),
-            f"file not saved: {dst}; server_log_tail={tail_text_file(self.log_path)!r}",
+            f"file not saved: {dst}; server_log_tail={tail_text_file(self.server.log_path or Path(''))!r}",
         )
 
         status, body, _ = self._request("GET", "/api/files")
@@ -165,7 +166,9 @@ class TestHTTP(unittest.TestCase):
         payload = json.loads(body.decode("utf-8"))
         self.assertEqual(payload["has_message"], True)
         self.assertEqual(payload["message"], "hello from browser")
-        self.assertNotIn("msg: hello from browser", tail_text_file(self.log_path))
+        self.assertNotIn(
+            "msg: hello from browser", tail_text_file(self.server.log_path or Path(""))
+        )
 
     def test_tcp_message_updates_latest_message(self) -> None:
         r = run_hf(
@@ -191,7 +194,9 @@ class TestHTTP(unittest.TestCase):
         payload = json.loads(body.decode("utf-8"))
         self.assertEqual(payload["has_message"], True)
         self.assertEqual(payload["message"], "hello from tcp")
-        self.assertNotIn("msg: hello from tcp", tail_text_file(self.log_path))
+        self.assertNotIn(
+            "msg: hello from tcp", tail_text_file(self.server.log_path or Path(""))
+        )
 
     def test_message_stream_receives_updates(self) -> None:
         conn = http.client.HTTPConnection(
@@ -233,6 +238,9 @@ class TestHTTP(unittest.TestCase):
             conn.close()
 
     def test_http_server_graceful_shutdown_on_signal(self) -> None:
+        shared_server = self.__class__.server
+        shared_server.stop()
+
         with make_temp_dir(prefix="hf_http_shutdown_") as tmp_dir:
             base_dir = Path(tmp_dir)
             out_dir = base_dir / "outputs"
@@ -248,23 +256,30 @@ class TestHTTP(unittest.TestCase):
             )
             server.start(startup_timeout=5.0)
             try:
-                proc = server.proc
-
                 if os.name == "nt":
+                    proc = server.proc
                     proc.terminate()
+                    proc.wait(timeout=5.0)
                 else:
-                    proc.send_signal(signal.SIGINT)
+                    os.kill(server.pid, signal.SIGINT)
+                    deadline = time.monotonic() + 5.0
+                    while time.monotonic() < deadline:
+                        try:
+                            os.kill(server.pid, 0)
+                        except ProcessLookupError:
+                            break
+                        time.sleep(0.05)
+                    else:
+                        self.fail("daemon did not exit after SIGINT")
 
-                rc = proc.wait(timeout=5.0)
-
-                log_text = tail_text_file(log_path)
+                log_text = tail_text_file(server.log_path or Path(""))
                 if os.name != "nt":
-                    self.assertEqual(130, rc)
                     self.assertIn("shutdown requested, stopping server", log_text)
                 self.assertNotIn("http server stopped unexpectedly", log_text)
                 self.assertNotIn("accept(http)", log_text)
             finally:
                 server.stop()
+                shared_server.start(startup_timeout=5.0)
 
 
 if __name__ == "__main__":
