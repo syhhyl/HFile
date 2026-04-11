@@ -1,50 +1,49 @@
 # Repository Guidelines
 
-## What Matters
+## Build And Test
 
-- `./build.sh` is the default build entrypoint. It configures CMake with Ninja, exports `compile_commands.json`, and deletes `build/` automatically when switching native vs `-w` Windows cross-builds.
+- Use `./build.sh` as the normal build entrypoint. It configures CMake with Ninja, exports `compile_commands.json`, and deletes `build/` automatically when switching native vs `-w` Windows cross-builds.
 - `./test.sh` does not build first. Build before running tests.
-- CI runs `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`, `cmake --build build`, then `python -m unittest -v test.test_hf` on Ubuntu, macOS, and Windows.
+- CI uses native CMake commands, not `build.sh`: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`, `cmake --build build`, then `python -m unittest -v test.test_hf` on Ubuntu, macOS, and Windows.
+- Useful commands:
+  - `./build.sh`
+  - `BUILD_TYPE=Release ./build.sh` or `./build.sh -t Release`
+  - `./build.sh -w` for MinGW cross-builds on Linux
+  - `./build.sh -i` installs only for non-Windows builds
+  - `./test.sh`, `./test.sh cli`, `./test.sh http`, `./test.sh transfer`, `./test.sh support`
+  - `python3 -m unittest -v test.test_transfer.TestTransferCLI.test_common_file`
 
-## Fast Commands
+## Architecture
 
-- Build debug: `./build.sh`
-- Build release: `BUILD_TYPE=Release ./build.sh` or `./build.sh -t Release`
-- Cross-build Windows: `./build.sh -w`
-- Install non-Windows build: `./build.sh -i`
-- Full tests: `./test.sh` or `python3 -m unittest -v test.test_hf`
-- Focused tests: `./test.sh cli`, `./test.sh http`, `./test.sh transfer`, `./test.sh support`
-- Single test: `python3 -m unittest -v test.test_transfer.TestTransferCLI.test_common_file`
+- `src/hfile.c` is the executable entrypoint. CLI parsing is in `src/cli.c`; dispatch goes to server, client, or control commands.
+- The server listens on one port for both the native protocol and HTTP/Web UI. Connection sniffing and dispatch live in `src/server.c`.
+- `src/protocol.c` owns the native wire format. Preserve field widths and the current header/prefix/`res_frame` contract.
+- `src/transfer_io.c` is the shared receive-to-temp-file path for both native uploads and HTTP uploads.
+- `src/net.c` is socket/endian/sendfile support only; do not move higher-level receive-to-disk logic there.
+- Web UI assets are embedded in `src/webui.c`; editing them requires rebuilding the binary.
 
-## Code Boundaries
+## Behavior To Preserve
 
-- `src/hfile.c` is the entrypoint. CLI parsing is in `src/cli.c`; it dispatches to server, client, or control commands.
-- One listener handles both the custom protocol and HTTP. Connection type detection and protocol dispatch live in `src/server.c`.
-- `src/net.c` is low-level socket/endian/sendfile support. Do not move upload-to-disk logic there.
-- `src/transfer_io.c` is the shared receive-to-temp-file then finalize path used by both raw protocol upload and HTTP upload.
-- `src/protocol.c` owns wire framing. Keep field widths exact and compatible with the current header/prefix/`res_frame` contract.
-- Web assets are embedded in `src/webui.c`; rebuild after editing them.
+- File transfer is two-phase: validate header/prefix, send `READY`, stream the body, then send `FINAL`.
+- The same port serves CLI transfer, HTTP API, and browser UI.
+- Large file receives are streaming. Do not replace them with whole-body `recv_all` logic.
+- Received files must go through temp-file write then atomic finalize.
+- Filename validation is intentionally strict; update tests if behavior changes.
+- `hf -d <path>` is the only server start command. `-s` is gone.
+- Only one HFile server may run at a time.
+- Platform difference for `-d`: POSIX daemonizes; Windows prints a notice and runs attached in the current process, but still writes control state so `status`, `stop`, and `-q` work.
 
-## Verified Behavior To Preserve
+## Test And Helper Quirks
 
-- File transfer is two-phase: server validates header/prefix, sends a `READY` `res_frame`, receives the body, then sends a `FINAL` `res_frame`.
-- The same server port also serves the HTTP API and Web UI.
-- Large file receives are streaming; do not replace them with `recv_all` over the whole body.
-- Received files are written to a temp file and finalized atomically.
-- Filename validation is intentionally strict; avoid weakening it without updating tests.
-- Daemon mode exists only on non-Windows platforms.
+- The full suite wrapper is `test.test_hf`; focused suites are `test.test_cli`, `test.test_http`, `test.test_transfer`, and `test.test_support`.
+- `test/support/hf.py` starts servers with `-d` on every platform and is sensitive to startup log text. Keep ready messages stable unless you also update the helper.
+- The helper now forces UTF-8 when capturing subprocess output; keep that if you touch QR-code or other non-ASCII output paths.
+- Tests assume global single-server state. Do not make helper-managed server tests run in parallel without isolating daemon-state files first.
 
-## Edit Guidelines
+## Editing Guidance
 
-- Follow the local C style already in use: 2-space indent, same-line braces, explicit `#ifdef _WIN32` branches.
-- Prefer small changes. This codebase values explicit control flow over abstractions.
-- Keep `send_all`/`recv_all` for fixed-size frames only. Streaming bodies should continue to use incremental `recv`/write loops.
-- When changing protocol, HTTP, CLI, or filesystem behavior, update the relevant unittest file in `test/`.
-
-## Validation Expectations
-
-- For meaningful C changes, at minimum run `cmake --build build` and the smallest relevant unittest target.
-- Typical mappings:
-  - CLI/help: `python3 -m unittest -v test.test_cli`
-  - Protocol/file transfer: `python3 -m unittest -v test.test_transfer`
-  - HTTP/Web UI/API: `python3 -m unittest -v test.test_http`
+- Follow the existing C style: 2-space indent, same-line braces, explicit `#ifdef _WIN32` branches.
+- Prefer small, explicit control flow over abstraction.
+- Keep `send_all`/`recv_all` for fixed-size frames only. Streaming bodies should stay in incremental `recv`/write loops.
+- When changing CLI, protocol, HTTP, control-state, or filesystem behavior, update the corresponding unittest file in `test/`.
+- Minimum validation for meaningful C changes: `cmake --build build` plus the smallest relevant unittest target.
