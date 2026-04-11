@@ -71,12 +71,15 @@ typedef struct {
 static server_conn_tracker_t g_server_conn_tracker = {0};
 
 static int server_handle_text_message(socket_t conn,
-                                      const protocol_header_t *proto_header,
-                                      uint8_t *ack);
+                                      const protocol_header_t *proto_header);
 static protocol_result_t server_handle_file_transfer(
   socket_t conn,
   const server_opt_t *ser_opt,
   const protocol_header_t *proto_header);
+static protocol_result_t server_send_response(socket_t conn,
+                                              uint8_t phase,
+                                              uint8_t status,
+                                              protocol_result_t error_code);
 
 static int server_conn_tracker_init(void) {
   if (g_server_conn_tracker.initialized) {
@@ -393,13 +396,8 @@ static server_conn_kind_t server_detect_connection_kind(socket_t conn) {
 
 static int server_handle_protocol_connection(socket_t conn,
                                              const server_opt_t *ser_opt) {
-  int exit_code = 1;
-  int send_byte_ack = 0;
-  uint8_t ack = 1;
   uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
   protocol_header_t proto_header = {0};
-  res_frame_t response_frame = {0};
-  int send_response_frame = 0;
 
   protocol_result_t prefix_res = recv_header(conn, header_buf);
   if (prefix_res != PROTOCOL_OK) {
@@ -418,18 +416,8 @@ static int server_handle_protocol_connection(socket_t conn,
   }
 
   switch (proto_header.msg_type) {
-    case HF_MSG_TYPE_TEXT_MESSAGE: {
-      exit_code = server_handle_text_message(conn, &proto_header, &ack);
-      if (exit_code == 0) {
-        send_byte_ack = 1;
-      } else {
-        response_frame.phase = PROTO_PHASE_FINAL;
-        response_frame.status = PROTO_STATUS_FAILED;
-        response_frame.error_code = ack;
-        send_response_frame = 1;
-      }
-      break;
-    }
+    case HF_MSG_TYPE_TEXT_MESSAGE:
+      return server_handle_text_message(conn, &proto_header);
 
     case HF_MSG_TYPE_FILE_TRANSFER:
       return server_handle_file_transfer(conn, ser_opt, &proto_header) == PROTOCOL_OK ? 0 : 1;
@@ -437,25 +425,8 @@ static int server_handle_protocol_connection(socket_t conn,
     default:
       fprintf(stderr, "protocol error: unsupported message type: %u\n",
               (unsigned)proto_header.msg_type);
-      exit_code = 1;
-      break;
+      return 1;
   }
-
-  if (send_response_frame) {
-    if (send_res_frame(conn, &response_frame) != PROTOCOL_OK) {
-      sock_perror("send_res_frame(protocol)");
-    }
-    return exit_code;
-  }
-
-  if (send_byte_ack) {
-    ssize_t ack_sent = send_all(conn, &ack, sizeof(ack));
-    if (ack_sent != (ssize_t)sizeof(ack)) {
-      sock_perror("send_all(ack)");
-    }
-  }
-
-  return exit_code;
 }
 
 #ifdef _WIN32
@@ -539,63 +510,70 @@ static int server_start_connection_thread(socket_t conn,
 }
 
 static int server_handle_text_message(socket_t conn,
-                                      const protocol_header_t *proto_header,
-                                      uint8_t *ack) {
+                                      const protocol_header_t *proto_header) {
   char *message = NULL;
+  protocol_result_t result = PROTOCOL_ERR_INVALID_ARGUMENT;
+  uint8_t status = PROTO_STATUS_FAILED;
 
-  if (ack == NULL) {
+  if (proto_header == NULL) {
     fprintf(stderr, "invalid text message handler arguments\n");
     return 1;
   }
 
   if (proto_header->flags != HF_MSG_FLAG_NONE) {
     fprintf(stderr, "protocol error: text message has unsupported flags\n");
-    *ack = (uint8_t)PROTOCOL_ERR_HEADER_MSG_FLAG;
-    return 1;
+    result = PROTOCOL_ERR_HEADER_MSG_FLAG;
+    goto SEND_RESPONSE;
   }
 
   if (proto_header->payload_size > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
     fprintf(stderr, "protocol error: text message too large\n");
-    *ack = (uint8_t)PROTOCOL_ERR_MSG_TOO_LARGE;
-    return 1;
+    result = PROTOCOL_ERR_MSG_TOO_LARGE;
+    goto SEND_RESPONSE;
   }
 
   size_t message_len = (size_t)proto_header->payload_size;
   message = (char *)malloc(message_len + 1u);
   if (message == NULL) {
     perror("malloc(message)");
-    return 1;
+    result = PROTOCOL_ERR_ALLOC;
+    goto SEND_RESPONSE;
   }
 
   if (message_len > 0) {
     ssize_t n = recv_all(conn, message, message_len);
     if (n != (ssize_t)message_len) {
-      free(message);
       if (n < 0) {
         sock_perror("recv_all(message)");
-        *ack = (uint8_t)PROTOCOL_ERR_IO;
+        result = PROTOCOL_ERR_IO;
       } else {
         fprintf(stderr,
                 "protocol error: unexpected EOF while receiving message\n");
-        *ack = (uint8_t)PROTOCOL_ERR_EOF;
+        result = PROTOCOL_ERR_EOF;
       }
-      return 1;
+      goto SEND_RESPONSE;
     }
   }
 
   message[message_len] = '\0';
   if (message_store_set(message) != 0) {
     fprintf(stderr, "failed to store latest message\n");
-    free(message);
-    *ack = (uint8_t)PROTOCOL_ERR_IO;
-    return 1;
+    result = PROTOCOL_ERR_IO;
+    goto SEND_RESPONSE;
   }
-  free(message);
-  *ack = 0;
-  return 0;
+
+  status = PROTO_STATUS_OK;
+  result = PROTOCOL_OK;
+
+SEND_RESPONSE:
+  if (server_send_response(conn, PROTO_PHASE_FINAL, status, result) != PROTOCOL_OK) {
+    sock_perror("send_res_frame(text_message_final)");
+  }
+  if (message != NULL) free(message);
+  return result == PROTOCOL_OK ? 0 : 1;
 }
 
-static protocol_result_t server_send_file_transfer_response(
+static protocol_result_t server_send_response(
   socket_t conn,
   uint8_t phase,
   uint8_t status,
@@ -626,7 +604,7 @@ static protocol_result_t server_handle_file_transfer(
   if (proto_header->payload_size <
       (uint64_t)proto_file_transfer_prefix_size(1)) {
     fprintf(stderr, "protocol error: payload size too small\n");
-    (void)server_send_file_transfer_response(
+    (void)server_send_response(
       conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED, PROTOCOL_ERR_INVALID_ARGUMENT);
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
@@ -659,7 +637,7 @@ static protocol_result_t server_handle_file_transfer(
     goto SEND_READY_REJECT;
   }
 
-  result = server_send_file_transfer_response(
+  result = server_send_response(
     conn, PROTO_PHASE_READY, PROTO_STATUS_OK, PROTOCOL_OK);
   if (result != PROTOCOL_OK) {
     sock_perror("send_res_frame(file_transfer_ready)");
@@ -671,14 +649,14 @@ static protocol_result_t server_handle_file_transfer(
                                      "protocol error: unexpected EOF while receiving file",
                                      full_path, sizeof(full_path));
   if (result != PROTOCOL_OK) {
-    if (server_send_file_transfer_response(
+    if (server_send_response(
           conn, PROTO_PHASE_FINAL, PROTO_STATUS_FAILED, result) != PROTOCOL_OK) {
       sock_perror("send_res_frame(file_transfer_final_failed)");
     }
     goto CLEANUP;
   }
 
-  result = server_send_file_transfer_response(
+  result = server_send_response(
     conn, PROTO_PHASE_FINAL, PROTO_STATUS_OK, PROTOCOL_OK);
   if (result != PROTOCOL_OK) {
     sock_perror("send_res_frame(file_transfer_final_ok)");
@@ -689,7 +667,7 @@ static protocol_result_t server_handle_file_transfer(
   goto CLEANUP;
 
 SEND_READY_REJECT:
-  if (server_send_file_transfer_response(
+  if (server_send_response(
         conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED, result) != PROTOCOL_OK) {
     sock_perror("send_res_frame(file_transfer_ready_rejected)");
   }

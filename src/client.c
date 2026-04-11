@@ -12,21 +12,6 @@
 
 #include <sys/stat.h>
 
-static int client_recv_ack(socket_t sock, const char *recv_ctx,
-                           const char *failure_ctx) {
-  uint8_t ack = 1;
-  if (recv_all(sock, &ack, sizeof(ack)) != (ssize_t)sizeof(ack)) {
-    sock_perror(recv_ctx);
-    return 1;
-  }
-  if (ack != 0) {
-    fprintf(stderr, "%s (ack=%u)\n", failure_ctx, (unsigned)ack);
-    return 1;
-  }
-
-  return 0;
-}
-
 static const char *client_protocol_result_name(protocol_result_t res) {
   switch (res) {
     case PROTOCOL_OK:
@@ -56,27 +41,30 @@ static const char *client_protocol_result_name(protocol_result_t res) {
   }
 }
 
-static int client_recv_file_transfer_response(socket_t sock,
-                                              uint8_t expected_phase,
-                                              res_frame_t *frame_out) {
+static int client_recv_response(socket_t sock,
+                                uint8_t expected_phase,
+                                const char *kind,
+                                res_frame_t *frame_out) {
   res_frame_t frame = {0};
   protocol_result_t res = recv_res_frame(sock, &frame);
 
   if (res != PROTOCOL_OK) {
     if (res == PROTOCOL_ERR_EOF) {
-      fprintf(stderr, "server closed connection while waiting for transfer response\n");
+      fprintf(stderr, "server closed connection while waiting for %s response\n",
+              kind);
     } else if (res == PROTOCOL_ERR_IO) {
       sock_perror("recv_res_frame");
     } else {
-      fprintf(stderr, "invalid transfer response frame: %s\n",
+      fprintf(stderr, "invalid %s response frame: %s\n",
+              kind,
               client_protocol_result_name(res));
     }
     return 1;
   }
 
   if (frame.phase != expected_phase) {
-    fprintf(stderr, "unexpected transfer response phase: got=%u expected=%u\n",
-            (unsigned)frame.phase, (unsigned)expected_phase);
+    fprintf(stderr, "unexpected %s response phase: got=%u expected=%u\n",
+            kind, (unsigned)frame.phase, (unsigned)expected_phase);
     return 1;
   }
 
@@ -87,8 +75,8 @@ static int client_recv_file_transfer_response(socket_t sock,
       return 1;
     }
   } else if (frame.error_code == PROTOCOL_OK) {
-    fprintf(stderr, "missing transfer failure reason for phase=%u status=%u\n",
-            (unsigned)frame.phase, (unsigned)frame.status);
+    fprintf(stderr, "missing %s failure reason for phase=%u status=%u\n",
+            kind, (unsigned)frame.phase, (unsigned)frame.status);
     return 1;
   }
 
@@ -98,10 +86,11 @@ static int client_recv_file_transfer_response(socket_t sock,
   return 0;
 }
 
-static int client_check_file_transfer_response(const res_frame_t *frame,
-                                               uint8_t expected_phase) {
+static int client_check_response(const res_frame_t *frame,
+                                 uint8_t expected_phase,
+                                 const char *kind) {
   if (frame == NULL) {
-    fprintf(stderr, "invalid transfer response\n");
+    fprintf(stderr, "invalid %s response\n", kind);
     return 1;
   }
 
@@ -111,12 +100,14 @@ static int client_check_file_transfer_response(const res_frame_t *frame,
 
   if (expected_phase == PROTO_PHASE_READY) {
     if (frame->status == PROTO_STATUS_REJECTED) {
-      fprintf(stderr, "server reported transfer failure: %s\n",
+      fprintf(stderr, "server reported %s failure: %s\n",
+              kind,
               client_protocol_result_name((protocol_result_t)frame->error_code));
       return 1;
     }
 
-    fprintf(stderr, "invalid ready response status=%u error=%s\n",
+    fprintf(stderr, "invalid %s ready response status=%u error=%s\n",
+            kind,
             (unsigned)frame->status,
             client_protocol_result_name((protocol_result_t)frame->error_code));
     return 1;
@@ -124,18 +115,20 @@ static int client_check_file_transfer_response(const res_frame_t *frame,
 
   if (expected_phase == PROTO_PHASE_FINAL) {
     if (frame->status == PROTO_STATUS_FAILED) {
-      fprintf(stderr, "server reported transfer failure: %s\n",
+      fprintf(stderr, "server reported %s failure: %s\n",
+              kind,
               client_protocol_result_name((protocol_result_t)frame->error_code));
       return 1;
     }
 
-    fprintf(stderr, "invalid final response status=%u error=%s\n",
+    fprintf(stderr, "invalid %s final response status=%u error=%s\n",
+            kind,
             (unsigned)frame->status,
             client_protocol_result_name((protocol_result_t)frame->error_code));
     return 1;
   }
 
-  fprintf(stderr, "invalid expected transfer phase=%u\n",
+  fprintf(stderr, "invalid expected %s phase=%u\n", kind,
           (unsigned)expected_phase);
   return 1;
 }
@@ -318,12 +311,12 @@ static int client_send_file_raw(const client_opt_t *opt) {
   }
 
   res_frame_t r_f = {0};
-  if (client_recv_file_transfer_response(sock, PROTO_PHASE_READY, &r_f) != 0) {
+  if (client_recv_response(sock, PROTO_PHASE_READY, "transfer", &r_f) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
 
-  if (client_check_file_transfer_response(&r_f, PROTO_PHASE_READY) != 0) {
+  if (client_check_response(&r_f, PROTO_PHASE_READY, "transfer") != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
@@ -343,12 +336,12 @@ static int client_send_file_raw(const client_opt_t *opt) {
   }
 #endif
 
-  if (client_recv_file_transfer_response(sock, PROTO_PHASE_FINAL, &r_f) != 0) {
+  if (client_recv_response(sock, PROTO_PHASE_FINAL, "transfer", &r_f) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
 
-  if (client_check_file_transfer_response(&r_f, PROTO_PHASE_FINAL) != 0) {
+  if (client_check_response(&r_f, PROTO_PHASE_FINAL, "transfer") != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
@@ -421,8 +414,13 @@ static int client_send_message(const client_opt_t *opt) {
   }
 #endif
 
-  if (client_recv_ack(sock, "recv_all(message_ack)",
-                      "server reported transfer failure") != 0) {
+  res_frame_t response = {0};
+  if (client_recv_response(sock, PROTO_PHASE_FINAL, "message", &response) != 0) {
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+
+  if (client_check_response(&response, PROTO_PHASE_FINAL, "message") != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }

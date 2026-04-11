@@ -550,12 +550,27 @@ class TestTransferProtocol(TransferTestCase):
         )
 
         log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header])
+        response = self._send_raw_parts([header])
         self.assertEqual(
-            ack,
+            response,
             self._make_res_frame(1, 2, 13),
-            f"unexpected text-too-large ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
+            f"unexpected text-too-large response: {response!r}; server_log_tail={self._server_log_tail()!r}",
         )
+
+    def test_text_message_success_returns_final_response(self) -> None:
+        for name, payload in [("ascii", b"hello raw message"), ("empty", b"")]:
+            with self.subTest(name=name):
+                header = self._make_header(
+                    msg_type=MSG_TYPE_TEXT_MESSAGE,
+                    payload_size=len(payload),
+                )
+
+                response = self._send_raw_parts([header, payload])
+                self.assertEqual(
+                    response,
+                    self._make_res_frame(1, 0, 0),
+                    f"unexpected text-message response: {response!r}; server_log_tail={self._server_log_tail()!r}",
+                )
 
     def test_protocol_rejects_invalid_file_name_before_body(self) -> None:
         file_name = b"bad..name.bin"
