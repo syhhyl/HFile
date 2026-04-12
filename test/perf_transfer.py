@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import os
+import atexit
+import random
 import shutil
+import signal
 import socket
 import statistics
 import sys
 import tempfile
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,13 +24,15 @@ from test.support.hf import HFileServer, resolve_hf_path, run_hf
 
 MIB = 1024 * 1024
 GIB = 1024 * MIB
-DEFAULT_SIZES = [512 * MIB, 1 * GIB, 2 * GIB, 4 * GIB, 5 * GIB]
+DEFAULT_SIZES = [1 * GIB, 2 * GIB, 3 * GIB, 4 * GIB]
 DEFAULT_RUNS = 5
 FILE_CHUNK_SIZE = 1 * MIB
-FILE_PATTERN = bytes(range(256)) * (FILE_CHUNK_SIZE // 256)
 SCAN_INTERVAL = 0.05
 TRANSFER_TIMEOUT_SCALE = 30.0
 TRANSFER_TIMEOUT_MIN = 30.0
+
+
+CURRENT_BATCH_DIR: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -74,44 +79,58 @@ def transfer_timeout_seconds(size: int) -> float:
     return max(TRANSFER_TIMEOUT_MIN, size / MIB / TRANSFER_TIMEOUT_SCALE)
 
 
-def ensure_input_file(path: Path, size: int) -> None:
-    if path.is_file() and path.stat().st_size == size:
-        return
+def file_seed(label: str, index: int, random_seed: int) -> int:
+    seed = random_seed & 0xFFFFFFFFFFFFFFFF
+    for ch in f"{label}:{index}":
+        seed ^= ord(ch)
+        seed = (seed * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return seed
 
-    if path.exists():
-        path.unlink()
 
+def write_generated_file(path: Path, size: int, seed: int) -> None:
     print(f"Preparing input file: {path.name} ({human_size(size)})")
+    rng = random.Random(seed)
     remaining = size
     with path.open("wb") as f:
         while remaining > 0:
-            chunk = FILE_PATTERN
-            if remaining < len(chunk):
-                chunk = chunk[:remaining]
+            want = min(FILE_CHUNK_SIZE, remaining)
+            chunk = rng.randbytes(want)
             f.write(chunk)
-            remaining -= len(chunk)
+            remaining -= want
 
 
-def ensure_batch_inputs(in_dir: Path, label: str, size: int, runs: int) -> list[Path]:
-    base = in_dir / f"payload_{label}.bin"
-    ensure_input_file(base, size)
+def run_wash_step(path: Path) -> None:
+    with path.open("rb") as f:
+        while f.read(FILE_CHUNK_SIZE):
+            pass
 
-    sources: list[Path] = []
-    for run_index in range(1, runs + 1):
-        path = in_dir / f"payload_{label}_run{run_index:02d}.bin"
-        if path.exists() or path.is_symlink():
-            path.unlink()
 
-        try:
-            os.link(base, path)
-        except OSError:
-            try:
-                os.symlink(base.name, path)
-            except OSError:
-                shutil.copyfile(base, path)
-        sources.append(path)
+def cleanup_current_batch_dir() -> None:
+    global CURRENT_BATCH_DIR
+    if CURRENT_BATCH_DIR is None:
+        return
+    shutil.rmtree(CURRENT_BATCH_DIR, ignore_errors=True)
+    CURRENT_BATCH_DIR = None
 
-    return sources
+
+def install_cleanup_handlers() -> tuple[object, object]:
+    previous_int = signal.getsignal(signal.SIGINT)
+    previous_term = signal.getsignal(signal.SIGTERM)
+
+    def handle_signal(signum: int, _frame: object) -> None:
+        cleanup_current_batch_dir()
+        signal.signal(signum, signal.SIG_DFL)
+        signal.raise_signal(signum)
+
+    atexit.register(cleanup_current_batch_dir)
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+    return previous_int, previous_term
+
+
+def restore_cleanup_handlers(previous_int: object, previous_term: object) -> None:
+    signal.signal(signal.SIGINT, previous_int)
+    signal.signal(signal.SIGTERM, previous_term)
 
 
 def recv_line(sock: socket.socket) -> str:
@@ -130,92 +149,107 @@ def send_line(sock: socket.socket, text: str) -> None:
 
 
 def print_summary(metrics_by_batch: list[BatchMetrics]) -> None:
-    print()
-    print("batch     runs  total(s)  avg(s)    median(s)  best(s)  avg(MiB/s)")
+    print(format_summary(metrics_by_batch), end="")
+
+
+def format_summary(metrics_by_batch: list[BatchMetrics]) -> str:
+    lines = ["", "batch     runs  total(s)  avg(s)    median(s)  best(s)  avg(MiB/s)"]
     for metrics in metrics_by_batch:
         intervals = metrics.intervals
         total = sum(intervals)
         throughput = ((metrics.size_bytes * metrics.runs) / MIB) / total
-        print(
+        lines.append(
             f"{metrics.label:<9} {metrics.runs:<5} {total:<9.3f} "
             f"{statistics.mean(intervals):<9.3f} "
             f"{statistics.median(intervals):<10.3f} "
             f"{min(intervals):<8.3f} {throughput:.2f}"
         )
+    lines.append("")
+    return "\n".join(lines)
 
 
-def collect_batch_metrics(
-    conn: socket.socket,
+def write_results_file(results_dir: Path, summary_text: str) -> Path:
+    results_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = results_dir / f"perf_transfer_{timestamp}.txt"
+    path.write_text(summary_text, encoding="utf-8")
+    return path
+
+
+def expect_line(actual: str, expected: str, ctx: str) -> None:
+    if actual.strip() != expected:
+        raise RuntimeError(f"expected {expected!r} for {ctx}, got {actual!r}")
+
+
+def parse_batch_start(line: str) -> tuple[str, int]:
+    parts = line.strip().split(" ", 2)
+    if len(parts) != 3 or parts[0] != "BATCH":
+        raise RuntimeError(f"invalid batch control line: {line!r}")
+    return parts[1], int(parts[2])
+
+
+def parse_file_start(line: str) -> tuple[str, int]:
+    parts = line.strip().split(" ", 2)
+    if len(parts) != 3 or parts[0] != "FILE":
+        raise RuntimeError(f"invalid file control line: {line!r}")
+    return parts[1], int(parts[2])
+
+
+def wait_for_completed_file(
     out_dir: Path,
+    file_name: str,
     expected_size: int,
-    runs: int,
     timeout: float,
-    label: str,
-) -> list[float]:
+) -> float:
+    target = out_dir / file_name
     start = time.monotonic()
-    conn.setblocking(False)
-    known_files = {path.name for path in out_dir.iterdir() if path.is_file()}
-    stable_sizes: dict[str, int] = {}
-    completed: list[float] = []
-    completed_names: set[str] = set()
-    end_seen = False
-    deadline = start + timeout * runs + 10.0
+    previous_size: int | None = None
+    deadline = start + timeout + 10.0
 
     while time.monotonic() < deadline:
-        for path in out_dir.iterdir():
-            if not path.is_file():
-                continue
-            if path.name in known_files or path.name in completed_names:
-                continue
-
-            try:
-                size = path.stat().st_size
-            except FileNotFoundError:
-                continue
-
-            previous = stable_sizes.get(path.name)
-            stable_sizes[path.name] = size
-            if size != expected_size:
-                continue
-            if previous != size:
-                continue
-
-            completed_names.add(path.name)
-            known_files.add(path.name)
-            completed.append(time.monotonic())
-            if len(completed) == runs and end_seen:
-                break
-
-        if len(completed) == runs and end_seen:
-            break
-
         try:
-            data = conn.recv(64)
-            if data == b"":
-                raise RuntimeError("control connection closed before batch end")
-            if b"\n" in data:
-                end_seen = True
-                if len(completed) == runs:
-                    break
-        except BlockingIOError:
-            pass
+            size = target.stat().st_size
+        except FileNotFoundError:
+            previous_size = None
+            time.sleep(SCAN_INTERVAL)
+            continue
 
+        if size == expected_size and previous_size == size:
+            return time.monotonic() - start
+
+        previous_size = size
         time.sleep(SCAN_INTERVAL)
 
-    conn.setblocking(True)
+    raise RuntimeError(
+        f"timed out waiting for completed file {file_name!r} ({human_size(expected_size)})"
+    )
 
-    if not end_seen:
-        raise RuntimeError(f"missing batch end marker for {label}")
-    if len(completed) != runs:
-        raise RuntimeError(
-            f"expected {runs} completed files for {label}, got {len(completed)}"
-        )
 
+def handle_server_batch(
+    conn: socket.socket,
+    out_dir: Path,
+    label: str,
+    expected_size: int,
+    runs: int,
+) -> list[float]:
     intervals: list[float] = []
-    previous = start
-    for finished_at in completed:
-        intervals.append(finished_at - previous)
-        previous = finished_at
+    timeout = transfer_timeout_seconds(expected_size)
+
+    for _ in range(runs):
+        file_name, file_size = parse_file_start(recv_line(conn))
+        if file_size != expected_size:
+            raise RuntimeError(
+                f"expected file size {expected_size} for {label}, got {file_size}"
+            )
+
+        send_line(conn, "READY")
+        elapsed = wait_for_completed_file(out_dir, file_name, expected_size, timeout)
+        intervals.append(elapsed)
+        (out_dir / file_name).unlink(missing_ok=True)
+        send_line(conn, f"DONE {file_name}")
+
+    expect_line(recv_line(conn), "END", f"batch end for {label}")
+    send_line(conn, "DONE")
     return intervals
 
 
@@ -251,23 +285,25 @@ def run_server(args: argparse.Namespace) -> int:
                 print(f"waiting for batch {label}...")
                 conn, addr = listener.accept()
                 with conn:
-                    batch_label = recv_line(conn).strip()
+                    batch_label, batch_runs = parse_batch_start(recv_line(conn))
                     if batch_label != label:
                         raise RuntimeError(
                             f"expected batch {label}, got {batch_label!r}"
                         )
+                    if batch_runs != args.runs:
+                        raise RuntimeError(
+                            f"expected {args.runs} runs for {label}, got {batch_runs}"
+                        )
 
                     print(f"client     : {addr[0]}:{addr[1]}")
-                    send_line(conn, "")
-                    intervals = collect_batch_metrics(
+                    send_line(conn, "READY")
+                    intervals = handle_server_batch(
                         conn,
                         out_dir,
+                        label,
                         size_by_label[label],
                         args.runs,
-                        transfer_timeout_seconds(size_by_label[label]),
-                        label,
                     )
-                    send_line(conn, "")
 
                 metrics = BatchMetrics(
                     label=label,
@@ -291,63 +327,111 @@ def run_server(args: argparse.Namespace) -> int:
             server.stop(timeout=10.0)
 
     print_summary(metrics_by_batch)
+    if args.results_dir is not None:
+        saved_path = write_results_file(
+            Path(args.results_dir), format_summary(metrics_by_batch)
+        )
+        print(f"results saved: {saved_path}")
     return 0
 
 
 def run_client(args: argparse.Namespace) -> int:
+    global CURRENT_BATCH_DIR
     hf_path = resolve_hf_path()
     sizes = parse_sizes(args.sizes)
     labels = [human_size(size) for size in sizes]
 
-    with tempfile.TemporaryDirectory(prefix="hf_perf_client_") as tmp_dir:
-        in_dir = Path(tmp_dir) / "inputs"
-        in_dir.mkdir(parents=True, exist_ok=True)
+    previous_int, previous_term = install_cleanup_handlers()
+    try:
+        with tempfile.TemporaryDirectory(prefix="hf_perf_client_") as tmp_dir:
+            in_dir = Path(tmp_dir) / "inputs"
+            in_dir.mkdir(parents=True, exist_ok=True)
 
-        print("mode       : perf-client")
-        print(f"server     : {args.server_host}:{args.hf_port}")
-        print(f"control    : {args.server_host}:{args.control_port}")
-        print(f"runs       : {args.runs}")
-        print(f"batches    : {', '.join(labels)}")
+            print("mode       : perf-client")
+            print(f"server     : {args.server_host}:{args.hf_port}")
+            print(f"control    : {args.server_host}:{args.control_port}")
+            print(f"runs       : {args.runs}")
+            print(f"rand_seed  : {args.random_seed}")
+            print("wash_step  : enabled (same-size sequential read)")
+            print(f"batches    : {', '.join(labels)}")
 
-        for size, label in zip(sizes, labels, strict=True):
-            sources = ensure_batch_inputs(in_dir, label, size, args.runs)
-            timeout = transfer_timeout_seconds(size)
+            for size, label in zip(sizes, labels, strict=True):
+                size_in_dir = in_dir / label
+                size_in_dir.mkdir(parents=True, exist_ok=True)
+                CURRENT_BATCH_DIR = size_in_dir
+                timeout = transfer_timeout_seconds(size)
+                wash_path = size_in_dir / f"wash_{label}.bin"
+                write_generated_file(
+                    wash_path,
+                    size,
+                    file_seed(label, 0, args.random_seed),
+                )
 
-            print()
-            print(
-                f"Sending batch {label} "
-                f"({args.runs} files, timeout={timeout:.1f}s per file)"
-            )
-
-            with socket.create_connection(
-                (args.server_host, args.control_port), timeout=30.0
-            ) as conn:
-                send_line(conn, label)
-                recv_line(conn)
-
-                for src in sources:
-                    result = run_hf(
-                        hf_path,
-                        [
-                            "-c",
-                            src,
-                            "-i",
-                            args.server_host,
-                            "-p",
-                            str(args.hf_port),
-                        ],
-                        timeout=timeout,
-                    )
-                    if result.returncode != 0:
-                        raise RuntimeError(
-                            "client failed: "
-                            f"argv={result.argv} stdout={result.stdout!r} stderr={result.stderr!r}"
+                print()
+                print(
+                    f"Sending batch {label} "
+                    f"({args.runs} files, timeout={timeout:.1f}s per file)"
+                )
+                try:
+                    with socket.create_connection(
+                        (args.server_host, args.control_port), timeout=30.0
+                    ) as conn:
+                        send_line(conn, f"BATCH {label} {args.runs}")
+                        expect_line(
+                            recv_line(conn), "READY", f"batch start for {label}"
                         )
 
-                send_line(conn, "")
-                recv_line(conn)
+                        for run_index in range(1, args.runs + 1):
+                            src = (
+                                size_in_dir / f"payload_{label}_run{run_index:02d}.bin"
+                            )
+                            write_generated_file(
+                                src,
+                                size,
+                                file_seed(label, run_index, args.random_seed),
+                            )
+                            run_wash_step(wash_path)
+                            send_line(conn, f"FILE {src.name} {size}")
+                            expect_line(
+                                recv_line(conn),
+                                "READY",
+                                f"file start for {src.name}",
+                            )
+                            try:
+                                result = run_hf(
+                                    hf_path,
+                                    [
+                                        "-c",
+                                        src,
+                                        "-i",
+                                        args.server_host,
+                                        "-p",
+                                        str(args.hf_port),
+                                    ],
+                                    timeout=timeout,
+                                )
+                            finally:
+                                src.unlink(missing_ok=True)
 
-            print(f"  completed batch {label}")
+                            if result.returncode != 0:
+                                raise RuntimeError(
+                                    "client failed: "
+                                    f"argv={result.argv} stdout={result.stdout!r} stderr={result.stderr!r}"
+                                )
+                            expect_line(
+                                recv_line(conn),
+                                f"DONE {src.name}",
+                                f"file completion for {src.name}",
+                            )
+
+                        send_line(conn, "END")
+                        expect_line(recv_line(conn), "DONE", f"batch end for {label}")
+
+                    print(f"  completed batch {label}")
+                finally:
+                    cleanup_current_batch_dir()
+    finally:
+        restore_cleanup_handlers(previous_int, previous_term)
 
     return 0
 
@@ -374,6 +458,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="comma-separated sizes, e.g. 64MiB,256MiB,1GiB,4GiB",
     )
+    server_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="directory for timestamped summary output",
+    )
     server_parser.set_defaults(func=run_server)
 
     client_parser = subparsers.add_parser("client", help="Run benchmark client")
@@ -393,6 +482,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--sizes",
         default=None,
         help="comma-separated sizes, e.g. 64MiB,256MiB,1GiB,4GiB",
+    )
+    client_parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=12345,
+        help="seed for deterministic file generation",
     )
     client_parser.set_defaults(func=run_client)
 
