@@ -118,28 +118,44 @@ size_t proto_file_transfer_prefix_size(uint16_t file_name_len) {
   return sizeof(uint16_t) + (size_t)file_name_len + sizeof(uint64_t);
 }
 
-protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
-                                                     const char *file_name,
-                                                     uint64_t content_size) {
+protocol_result_t encode_file_prefix(const char *file_name,
+                                     uint64_t content_size,
+                                     uint8_t *out) {
   uint16_t file_name_len = 0;
   uint16_t net_len = 0;
-  uint8_t szbuf[8];
 
+  if (out == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
   if (proto_get_file_name_len(file_name, &file_name_len) != 0) {
     return PROTOCOL_ERR_FILE_NAME_LEN;
   }
 
   net_len = htons(file_name_len);
-  if (send_all(sock, &net_len, sizeof(net_len)) != (ssize_t)sizeof(net_len)) {
-    return PROTOCOL_ERR_IO;
-  }
-  if (send_all(sock, file_name, (size_t)file_name_len) !=
-      (ssize_t)file_name_len) {
-    return PROTOCOL_ERR_IO;
+  memcpy(out, &net_len, sizeof(net_len));
+  out += sizeof(net_len);
+
+  memcpy(out, file_name, (size_t)file_name_len);
+  out += file_name_len;
+
+  encode_u64_be(content_size, out);
+  return PROTOCOL_OK;
+}
+
+protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
+                                                  const uint8_t *in,
+                                                  size_t len) {
+  ssize_t n = 0;
+
+  if (is_socket_invalid(sock) || in == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
 
-  encode_u64_be(content_size, szbuf);
-  if (send_all(sock, szbuf, sizeof(szbuf)) != (ssize_t)sizeof(szbuf)) {
+  n = send_all(sock, in, len);
+  if (n < (ssize_t)len) {
+    if (n >= 0) {
+      return PROTOCOL_ERR_SHORT_WRITE;
+    }
     return PROTOCOL_ERR_IO;
   }
 

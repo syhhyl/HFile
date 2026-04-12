@@ -21,7 +21,7 @@ from test.support.hf import HFileServer, resolve_hf_path, run_hf
 
 MIB = 1024 * 1024
 GIB = 1024 * MIB
-DEFAULT_SIZES = [64 * MIB, 256 * MIB, 1 * GIB, 4 * GIB]
+DEFAULT_SIZES = [512 * MIB, 1 * GIB, 2 * GIB, 4 * GIB, 5 * GIB]
 DEFAULT_RUNS = 5
 FILE_CHUNK_SIZE = 1 * MIB
 FILE_PATTERN = bytes(range(256)) * (FILE_CHUNK_SIZE // 256)

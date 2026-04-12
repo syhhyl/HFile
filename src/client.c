@@ -228,6 +228,7 @@ static int client_send_file_raw(const client_opt_t *opt) {
   const char *file_name = NULL;
   uint16_t file_name_len = 0;
   uint64_t content_size = 0;
+  protocol_result_t proto_res;
 
   if (fs_basename_from_path(&path, &file_name) != 0) {
     fprintf(stderr, "invalid client path\n");
@@ -284,12 +285,21 @@ static int client_send_file_raw(const client_opt_t *opt) {
   header.payload_size = payload_size;
 
   uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
-  protocol_result_t proto_res = encode_header(&header, header_buf);
+  proto_res = encode_header(&header, header_buf);
   if (proto_res != PROTOCOL_OK) {
     fprintf(stderr, "failed to encode protocol header\n");
     exit_code = 1;
     goto CLEAN_UP;
   }
+  
+  uint8_t file_prefix_buf[sizeof(uint16_t) + HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
+  proto_res = encode_file_prefix(file_name, content_size, file_prefix_buf);
+  if (proto_res != PROTOCOL_OK) {
+    fprintf(stderr, "failed to encode file_prefix\n");
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+
 
   proto_res = send_header(sock, header_buf);
   if (proto_res != PROTOCOL_OK) {
@@ -298,14 +308,11 @@ static int client_send_file_raw(const client_opt_t *opt) {
     goto CLEAN_UP;
   }
 
-  proto_res = proto_send_file_transfer_prefix(sock, file_name, content_size);
+  size_t file_prefix_size = proto_file_transfer_prefix_size(file_name_len);
+  proto_res = proto_send_file_transfer_prefix(sock, file_prefix_buf,
+                                              file_prefix_size);
   if (proto_res != PROTOCOL_OK) {
-    if (proto_res == PROTOCOL_ERR_FILE_NAME_LEN) {
-      fprintf(stderr, "invalid file name length\n");
-    } else {
-      fprintf(stderr, "failed to send file transfer prefix\n");
-      sock_perror("protocol_send_file_transfer_prefix");
-    }
+    sock_perror("protocol_send_file_transfer_prefix");
     exit_code = 1;
     goto CLEAN_UP;
   }

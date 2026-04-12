@@ -81,9 +81,12 @@ protocol_result_t recv_res_frame(socket_t sock, res_frame_t *frame);
 
 int proto_get_file_name_len(const char *file_name, uint16_t *out_len);
 size_t proto_file_transfer_prefix_size(uint16_t file_name_len);
+protocol_result_t encode_file_prefix(const char *file_name,
+                                     uint64_t content_size,
+                                     uint8_t *out);
 protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
-                                                      const char *file_name,
-                                                      uint64_t content_size);
+                                                  const uint8_t *in,
+                                                  size_t len);
 protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
                                                        char **file_name_out,
                                                        uint64_t *content_size_out);
