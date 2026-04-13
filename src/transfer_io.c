@@ -22,7 +22,7 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
                                             size_t full_path_cap) {
   char full_path[4096];
   char tmp_path[4096];
-  char buf[8192];
+  char buf[TRANSFER_IO_BUF_SIZE];
   int out = -1;
   int write_failed = 0;
   protocol_result_t result = PROTOCOL_ERR_IO;

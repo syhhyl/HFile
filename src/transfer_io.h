@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define TRANSFER_IO_BUF_SIZE 256 * 1024 
 protocol_result_t transfer_recv_socket_file(socket_t conn,
                                             const char *base_dir,
                                             const char *file_name,
