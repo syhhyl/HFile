@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #ifdef _WIN32
   #include <process.h>
@@ -22,7 +23,19 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
                                             size_t full_path_cap) {
   char full_path[4096];
   char tmp_path[4096];
-  char buf[TRANSFER_IO_BUF_SIZE];
+  char stack_buf[STACK_BUF_SIZE];
+  char *heap_buf = NULL;
+  char *buf = stack_buf;
+  size_t buf_cap = STACK_BUF_SIZE;
+  if (content_size > HEAP_THRESHOLD) {
+    heap_buf = (char *)malloc(HEAP_BUF_SIZE);
+    if (heap_buf == NULL) {
+      fprintf(stderr, "heap buf malloc failed\n");
+      return PROTOCOL_ERR_ALLOC;
+    }
+    buf = heap_buf;
+    buf_cap = HEAP_BUF_SIZE;
+  }
   int out = -1;
   int write_failed = 0;
   protocol_result_t result = PROTOCOL_ERR_IO;
@@ -70,7 +83,7 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
   }
 
   while (remaining > 0) {
-    size_t want = sizeof(buf);
+    size_t want = buf_cap;
     if ((uint64_t)want > remaining) {
       want = (size_t)remaining;
     }
@@ -145,6 +158,7 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
   result = PROTOCOL_OK;
 
 CLEANUP:
+  free(heap_buf);
   if (out != -1) {
     fs_close(out);
   }
