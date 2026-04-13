@@ -22,9 +22,10 @@ if str(REPO_ROOT) not in sys.path:
 from test.support.hf import HFileServer, resolve_hf_path, run_hf
 
 
+KIB = 1024
 MIB = 1024 * 1024
 GIB = 1024 * MIB
-DEFAULT_SIZES = [1 * GIB, 2 * GIB, 3 * GIB, 4 * GIB]
+DEFAULT_SIZES = [256 * KIB, 512 * MIB, 1 * GIB, 2 * GIB]
 DEFAULT_RUNS = 5
 FILE_CHUNK_SIZE = 1 * MIB
 SCAN_INTERVAL = 0.05
