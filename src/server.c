@@ -68,7 +68,17 @@ typedef struct {
 #endif
 } server_conn_tracker_t;
 
+typedef struct {
+  char receive_dir[4096];
+  char log_path[4096];
+  uint16_t port;
+  int daemon_mode;
+  char last_web_url[256];
+} server_state_watcher_ctx_t;
+
 static server_conn_tracker_t g_server_conn_tracker = {0};
+
+#define SERVER_STATE_REFRESH_INTERVAL_SECONDS 60u
 
 static int server_handle_text_message(socket_t conn,
                                       const protocol_header_t *proto_header);
@@ -80,6 +90,26 @@ static protocol_result_t server_send_response(socket_t conn,
                                               uint8_t phase,
                                               uint8_t status,
                                               protocol_result_t error_code);
+static int server_build_current_web_url(uint16_t port,
+                                        char *web_url_out,
+                                        size_t web_url_out_cap);
+static int server_persist_daemon_state(const char *receive_dir,
+                                       uint16_t port,
+                                       const char *log_path,
+                                       int daemon_mode,
+                                       char *web_url_out,
+                                       size_t web_url_out_cap);
+static void server_sleep_ms(uint32_t timeout_ms);
+static int server_wait_for_refresh_interval(uint32_t seconds);
+static int server_start_state_watcher(server_thread_t *thread_out,
+                                      server_state_watcher_ctx_t **ctx_out,
+                                      const char *receive_dir,
+                                      uint16_t port,
+                                      const char *log_path,
+                                      int daemon_mode,
+                                      const char *initial_web_url);
+static void server_join_state_watcher(server_thread_t *thread,
+                                      server_state_watcher_ctx_t *ctx);
 
 static int server_conn_tracker_init(void) {
   if (g_server_conn_tracker.initialized) {
@@ -737,6 +767,190 @@ static long server_current_pid_long(void) {
 #endif
 }
 
+static int server_build_current_web_url(uint16_t port,
+                                        char *web_url_out,
+                                        size_t web_url_out_cap) {
+  int phone_reachable = 0;
+
+  if (web_url_out == NULL || web_url_out_cap == 0 || port == 0) {
+    return 1;
+  }
+
+  if (control_build_url(port, web_url_out, web_url_out_cap, &phone_reachable) != 0) {
+    web_url_out[0] = '\0';
+    return 1;
+  }
+
+  return 0;
+}
+
+static int server_persist_daemon_state(const char *receive_dir,
+                                       uint16_t port,
+                                       const char *log_path,
+                                       int daemon_mode,
+                                       char *web_url_out,
+                                       size_t web_url_out_cap) {
+  daemon_state_t state = {0};
+
+  if (receive_dir == NULL || receive_dir[0] == '\0' || port == 0) {
+    return 1;
+  }
+
+  state.pid = server_current_pid_long();
+  (void)snprintf(state.receive_dir, sizeof(state.receive_dir), "%s", receive_dir);
+  (void)snprintf(state.log_path, sizeof(state.log_path), "%s",
+                 log_path != NULL ? log_path : "");
+  state.port = port;
+  state.daemon_mode = daemon_mode ? 1 : 0;
+
+  if (server_build_current_web_url(port, state.web_url, sizeof(state.web_url)) != 0) {
+    state.web_url[0] = '\0';
+  }
+
+  if (web_url_out != NULL && web_url_out_cap > 0) {
+    (void)snprintf(web_url_out, web_url_out_cap, "%s", state.web_url);
+  }
+
+  return daemon_state_write(&state);
+}
+
+static void server_sleep_ms(uint32_t timeout_ms) {
+#ifdef _WIN32
+  Sleep((DWORD)timeout_ms);
+#else
+  usleep((useconds_t)timeout_ms * 1000u);
+#endif
+}
+
+static int server_wait_for_refresh_interval(uint32_t seconds) {
+  uint32_t remaining_ms = seconds * 1000u;
+
+  while (remaining_ms > 0) {
+    uint32_t chunk_ms = remaining_ms > 1000u ? 1000u : remaining_ms;
+    if (shutdown_requested()) {
+      return 1;
+    }
+    server_sleep_ms(chunk_ms);
+    remaining_ms -= chunk_ms;
+  }
+
+  return shutdown_requested() ? 1 : 0;
+}
+
+#ifdef _WIN32
+static unsigned __stdcall server_state_watcher_main(void *arg) {
+#else
+static void *server_state_watcher_main(void *arg) {
+#endif
+  server_state_watcher_ctx_t *ctx = (server_state_watcher_ctx_t *)arg;
+
+  while (!shutdown_requested()) {
+    char web_url[sizeof(ctx->last_web_url)];
+
+    if (server_wait_for_refresh_interval(SERVER_STATE_REFRESH_INTERVAL_SECONDS) != 0) {
+      break;
+    }
+
+    if (server_build_current_web_url(ctx->port, web_url, sizeof(web_url)) != 0) {
+      web_url[0] = '\0';
+    }
+
+    if (strcmp(web_url, ctx->last_web_url) != 0) {
+      if (server_persist_daemon_state(ctx->receive_dir, ctx->port,
+                                      ctx->log_path[0] != '\0' ? ctx->log_path : NULL,
+                                      ctx->daemon_mode,
+                                      NULL, 0) != 0) {
+        fprintf(stderr, "failed to refresh daemon state\n");
+        continue;
+      }
+      fprintf(stderr, "network changed, updated web ui address to %s\n", web_url);
+      (void)snprintf(ctx->last_web_url, sizeof(ctx->last_web_url), "%s", web_url);
+    }
+  }
+
+#ifdef _WIN32
+  return 0;
+#else
+  return NULL;
+#endif
+}
+
+static int server_start_state_watcher(server_thread_t *thread_out,
+                                      server_state_watcher_ctx_t **ctx_out,
+                                      const char *receive_dir,
+                                      uint16_t port,
+                                      const char *log_path,
+                                      int daemon_mode,
+                                      const char *initial_web_url) {
+  server_state_watcher_ctx_t *ctx = NULL;
+
+  if (thread_out == NULL || ctx_out == NULL || receive_dir == NULL ||
+      receive_dir[0] == '\0' || initial_web_url == NULL) {
+    return 1;
+  }
+
+  memset(thread_out, 0, sizeof(*thread_out));
+  *ctx_out = NULL;
+
+  ctx = (server_state_watcher_ctx_t *)malloc(sizeof(*ctx));
+  if (ctx == NULL) {
+    perror("malloc(server_state_watcher)");
+    return 1;
+  }
+
+  memset(ctx, 0, sizeof(*ctx));
+  (void)snprintf(ctx->receive_dir, sizeof(ctx->receive_dir), "%s", receive_dir);
+  (void)snprintf(ctx->log_path, sizeof(ctx->log_path), "%s",
+                 log_path != NULL ? log_path : "");
+  ctx->port = port;
+  ctx->daemon_mode = daemon_mode ? 1 : 0;
+  (void)snprintf(ctx->last_web_url, sizeof(ctx->last_web_url), "%s", initial_web_url);
+
+#ifdef _WIN32
+  {
+    uintptr_t handle = _beginthreadex(NULL, 0, server_state_watcher_main, ctx, 0, NULL);
+    if (handle == 0) {
+      fprintf(stderr, "_beginthreadex(server_state_watcher) failed\n");
+      free(ctx);
+      return 1;
+    }
+    thread_out->handle = (HANDLE)handle;
+  }
+#else
+  {
+    int err = pthread_create(&thread_out->tid, NULL, server_state_watcher_main, ctx);
+    if (err != 0) {
+      fprintf(stderr, "pthread_create(server_state_watcher): %s\n", strerror(err));
+      free(ctx);
+      return 1;
+    }
+  }
+#endif
+
+  *ctx_out = ctx;
+  return 0;
+}
+
+static void server_join_state_watcher(server_thread_t *thread,
+                                      server_state_watcher_ctx_t *ctx) {
+  if (ctx == NULL || thread == NULL) {
+    free(ctx);
+    return;
+  }
+
+#ifdef _WIN32
+  if (thread->handle != NULL) {
+    (void)WaitForSingleObject(thread->handle, INFINITE);
+    CloseHandle(thread->handle);
+    thread->handle = NULL;
+  }
+#else
+  (void)pthread_join(thread->tid, NULL);
+  memset(thread, 0, sizeof(*thread));
+#endif
+  free(ctx);
+}
+
 static void server_print_access_details(const server_opt_t *ser_opt,
                                         const char *log_path,
                                         long pid,
@@ -937,6 +1151,8 @@ static int server_run_process(const server_opt_t *ser_opt,
                               int persist_state) {
   int exit_code = 0;
   int ready_notified = 0;
+  server_thread_t state_watcher_thread = {0};
+  server_state_watcher_ctx_t *state_watcher_ctx = NULL;
 
   if (ser_opt->path == NULL || strlen(ser_opt->path) == 0) {
     exit_code = 1;
@@ -963,26 +1179,20 @@ static int server_run_process(const server_opt_t *ser_opt,
   }
 
   if (persist_state) {
-    daemon_state_t state = {0};
-    state.pid = server_current_pid_long();
-    (void)snprintf(state.receive_dir, sizeof(state.receive_dir), "%s", ser_opt->path);
-    (void)snprintf(state.log_path, sizeof(state.log_path), "%s",
-                   log_path != NULL ? log_path : "");
-    state.port = ser_opt->port;
-    state.daemon_mode = daemon_mode ? 1 : 0;
-    {
-      int phone_reachable = 0;
-      if (control_build_url(ser_opt->port, state.web_url,
-                            sizeof(state.web_url),
-                            &phone_reachable) != 0) {
-        state.web_url[0] = '\0';
-      }
-    }
+    char initial_web_url[256];
 
-    if (daemon_state_write(&state) != 0) {
+    if (server_persist_daemon_state(ser_opt->path, ser_opt->port, log_path,
+                                    daemon_mode,
+                                    initial_web_url, sizeof(initial_web_url)) != 0) {
       fprintf(stderr, "failed to persist daemon state\n");
       exit_code = 1;
       goto CLOSE_SOCK;
+    }
+
+    if (server_start_state_watcher(&state_watcher_thread, &state_watcher_ctx,
+                                   ser_opt->path, ser_opt->port, log_path,
+                                   daemon_mode, initial_web_url) != 0) {
+      fprintf(stderr, "failed to start daemon state watcher\n");
     }
   }
 
@@ -1003,6 +1213,8 @@ static int server_run_process(const server_opt_t *ser_opt,
 
 CLOSE_SOCK:
   shutdown_request();
+  server_join_state_watcher(&state_watcher_thread, state_watcher_ctx);
+  state_watcher_ctx = NULL;
   message_store_shutdown();
 
   socket_close(sock);

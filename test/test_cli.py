@@ -190,6 +190,7 @@ class TestCLI(unittest.TestCase):
             self.assertIn("status: running", status.stdout)
             self.assertIn(f"port: {port}", status.stdout)
             self.assertIn(f"receive dir: {out_dir}", status.stdout)
+            self.assertIn("web ui: http://", status.stdout)
             error_log_line = next(
                 line
                 for line in status.stdout.splitlines()
