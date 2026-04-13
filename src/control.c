@@ -107,6 +107,7 @@ void control_print_server_access_details(FILE *out,
                                          long pid,
                                          int daemon_mode) {
   char url[256];
+  const char *listen_target = NULL;
   int phone_reachable = 0;
 
   if (out == NULL || receive_dir == NULL) {
@@ -115,7 +116,6 @@ void control_print_server_access_details(FILE *out,
 
   fprintf(out, daemon_mode ? "HFile daemon ready\n" : "HFile server ready\n");
   fprintf(out, "  receive dir: %s\n", receive_dir);
-  fprintf(out, "  listen     : 0.0.0.0:%u (tcp + http)\n", (unsigned)port);
   if (daemon_mode) {
     fprintf(out, "  pid        : %ld\n", pid);
     if (log_path != NULL) {
@@ -124,6 +124,10 @@ void control_print_server_access_details(FILE *out,
   }
 
   if (control_build_url(port, url, sizeof(url), &phone_reachable) == 0) {
+    listen_target = strstr(url, "://");
+    listen_target = listen_target != NULL ? listen_target + 3 : url;
+    fprintf(out, "  listen     : %.*s (tcp + http)\n",
+            (int)strcspn(listen_target, "/"), listen_target);
     fprintf(out, "  web ui     : %s\n", url);
     if (!phone_reachable) {
       fprintf(out, "  mobile     : could not detect a LAN IPv4, using localhost\n");
@@ -135,6 +139,8 @@ void control_print_server_access_details(FILE *out,
     if (out == stdout && control_is_tty_stdout()) {
       (void)control_print_qr_to(out, url);
     }
+  } else {
+    fprintf(out, "  listen     : 127.0.0.1:%u (tcp + http)\n", (unsigned)port);
   }
 
   fflush(out);
