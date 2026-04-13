@@ -46,7 +46,7 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
   int pid = (int)getpid();
 #endif
 
-  for (int attempt = 0; attempt < 16; attempt++) {
+  for (int attempt = 0; attempt < 3; attempt++) {
     if (fs_make_temp_path(tmp_path, sizeof(tmp_path), full_path, pid, attempt) != 0) {
       fprintf(stderr, "temporary file path is too long\n");
       return PROTOCOL_ERR_INVALID_ARGUMENT;
