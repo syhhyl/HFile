@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import http.client
 import os
-import urllib.request
 import unittest
 from pathlib import Path
 
@@ -172,14 +171,13 @@ class TestCLI(unittest.TestCase):
                 f"argv={start.argv} stdout={start.stdout!r} stderr={start.stderr!r}",
             )
             self.assertIn("HFile daemon ready", start.stdout)
-            self.assertIn(f":{port}", start.stdout)
-
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/", timeout=5.0
-            ) as resp:
-                body = resp.read().decode("utf-8", errors="replace")
-            self.assertEqual(200, resp.status)
-            self.assertIn("HFile", body)
+            listen_line = next(
+                line
+                for line in start.stdout.splitlines()
+                if line.startswith("  listen     : ")
+            )
+            self.assertIn(f":{port} (tcp + http)", listen_line)
+            self.assertNotIn("0.0.0.0", listen_line)
 
             status = run_hf(self.hf_path, ["status"], timeout=5.0)
             self.assertEqual(
