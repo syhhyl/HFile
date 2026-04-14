@@ -11,14 +11,34 @@ HFile is a lightweight LAN file transfer tool written in C. One server process e
 
 ## Install
 
+Install the latest release on macOS and Linux:
+
+```bash
+curl -fsSL https://syhhyl.github.io/HFile/install.sh | bash
+```
+
+Install the latest release on Windows with PowerShell:
+
+```powershell
+irm https://syhhyl.github.io/HFile/install.ps1 | iex
+```
+
+The install script downloads the latest prebuilt release archive from GitHub Releases and verifies it with `checksums.txt`.
+
+Published release targets:
+
+- macOS arm64
+- Linux amd64
+- Windows amd64
+
+Build locally:
+
 Requirements:
 
 - CMake 3.16+
 - Ninja
 - a C compiler
 - Python 3 for tests
-
-Build locally:
 
 ```bash
 ./build.sh
