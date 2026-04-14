@@ -27,29 +27,11 @@ irm https://syhhyl.github.io/HFile/install.ps1 | iex
 
 The install script downloads the latest prebuilt release archive from GitHub Releases and verifies it with `checksums.txt`.
 
-Published release targets:
 
-- macOS arm64
-- Linux amd64
-- Windows amd64
-
-Build locally:
-
-Requirements:
-
-- CMake 3.16+
-- Ninja
-- a C compiler
-- Python 3 for tests
+Build and install:
 
 ```bash
-./build.sh
-```
-
-Release build:
-
-```bash
-BUILD_TYPE=Release ./build.sh
+BUILD_TYPE=Release ./build.sh -i
 ```
 
 Install on non-Windows platforms:
@@ -64,28 +46,7 @@ Cross-build for Windows with MinGW:
 ./build.sh -w
 ```
 
-Output binary:
-
-- native: `build/hf`
-- Windows cross-build: `build/hf.exe`
-
 ## Usage
-
-CLI forms:
-
-```text
-hf -d <server_path> [-p <port>]
-hf -c <file_path> [-i <ip>] [-p <port>]
-hf -m <message> [-i <ip>] [-p <port>]
-hf status
-hf stop
-hf -q
-```
-
-Defaults:
-
-- server/client port: `8888`
-- client IP: `127.0.0.1`
 
 Start a server:
 
@@ -123,42 +84,6 @@ Web UI:
 http://127.0.0.1:8888/
 ```
 
-## HTTP API
-
-List files:
-
-```bash
-curl http://127.0.0.1:8888/api/files
-```
-
-Upload a file:
-
-```bash
-curl -X PUT \
-  -H 'Content-Type: application/octet-stream' \
-  --data-binary @hello.txt \
-  http://127.0.0.1:8888/api/files/hello.txt
-```
-
-Download a file:
-
-```bash
-curl http://127.0.0.1:8888/api/files/hello.txt -o hello.txt
-```
-
-Delete a file:
-
-```bash
-curl -X DELETE http://127.0.0.1:8888/api/files/hello.txt
-```
-
-Read the latest message:
-
-```bash
-curl http://127.0.0.1:8888/api/messages/latest
-```
-
-
 ## Test
 
 Build first, then run tests:
@@ -167,7 +92,6 @@ Build first, then run tests:
 cmake --build build
 ./test.sh
 ```
-
 
 ## License
 
