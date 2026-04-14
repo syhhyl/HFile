@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            os: ubuntu-24.04
+            archive: hf-linux-amd64.tar.gz
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+            archive: hf-linux-arm64.tar.gz
+          - target: darwin-amd64
+            os: macos-13
+            archive: hf-darwin-amd64.tar.gz
+            cmake_osx_architectures: x86_64
+          - target: darwin-arm64
+            os: macos-14
+            archive: hf-darwin-arm64.tar.gz
+            cmake_osx_architectures: arm64
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v6
+
+      - name: Configure CMake
+        shell: bash
+        env:
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_architectures }}
+        run: |
+          cmake_args=(
+            -S .
+            -B build
+            -G Ninja
+            -DCMAKE_BUILD_TYPE=Release
+          )
+
+          if [ -n "${CMAKE_OSX_ARCHITECTURES:-}" ]; then
+            cmake_args+=("-DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}")
+          fi
+
+          cmake "${cmake_args[@]}"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          tar -czf "dist/${{ matrix.archive }}" -C build hf
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Create release
+    runs-on: ubuntu-24.04
+    needs: build
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum hf-*.tar.gz > checksums.txt
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/hf-darwin-amd64.tar.gz
+            dist/hf-darwin-arm64.tar.gz
+            dist/hf-linux-amd64.tar.gz
+            dist/hf-linux-arm64.tar.gz
+            dist/checksums.txt
