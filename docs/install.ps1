@@ -25,6 +25,13 @@ function Resolve-Version {
   return $release.tag_name
 }
 
+function Assert-SupportedTarget {
+  $arch = $env:PROCESSOR_ARCHITECTURE
+  if ($arch -ne 'AMD64') {
+    Fail "unsupported platform: windows-$arch"
+  }
+}
+
 function Ensure-InstallDir {
   param([string]$Path)
 
@@ -56,12 +63,15 @@ function Ensure-UserPath {
   Write-Log 'Open a new terminal window before running hf'
 }
 
+Assert-SupportedTarget
+
 $tag = Resolve-Version
 $archiveName = 'hf-windows-amd64.zip'
 $checksumsName = 'checksums.txt'
 $archiveUrl = "$ReleaseBase/$tag/$archiveName"
 $checksumsUrl = "$ReleaseBase/$tag/$checksumsName"
-$installDir = Join-Path $HOME 'AppData\Local\Programs\HFile\bin'
+$baseDir = [Environment]::GetFolderPath('LocalApplicationData')
+$installDir = Join-Path $baseDir 'Programs\HFile\bin'
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("hfile-install-" + [System.Guid]::NewGuid().ToString('N'))
 $extractDir = Join-Path $tempRoot 'extract'
 $archivePath = Join-Path $tempRoot $archiveName

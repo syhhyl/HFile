@@ -11,6 +11,8 @@ HFile is a lightweight LAN file transfer tool written in C. One server process e
 
 ## Install
 
+Project site and installer entrypoints are published with GitHub Pages from the `docs/` directory.
+
 Install the latest release on macOS and Linux:
 
 ```bash
