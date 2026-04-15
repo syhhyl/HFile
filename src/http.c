@@ -45,6 +45,7 @@ typedef struct {
 typedef struct {
   char method[8];
   char path[HF_HTTP_PATH_MAX];
+  char query[HF_HTTP_PATH_MAX];
   char content_type[HF_HTTP_CONTENT_TYPE_MAX];
   uint64_t content_length;
   int has_content_length;
@@ -52,6 +53,8 @@ typedef struct {
 
 typedef struct {
   char *name;
+  char *path;
+  fs_path_kind_t kind;
   uint64_t size;
   uint64_t mtime;
 } http_file_entry_t;
@@ -416,6 +419,7 @@ static int http_parse_request(char *header_block, http_request_t *req) {
 
   memcpy(req->method, method, strlen(method) + 1u);
   memcpy(req->path, path, strlen(path) + 1u);
+  req->query[0] = '\0';
 
   for (;;) {
     char *name = NULL;
@@ -451,6 +455,10 @@ static int http_parse_request(char *header_block, http_request_t *req) {
 
   char *query = strchr(req->path, '?');
   if (query != NULL) {
+    if (strlen(query + 1) >= sizeof(req->query)) {
+      return 1;
+    }
+    memcpy(req->query, query + 1, strlen(query + 1) + 1u);
     *query = '\0';
   }
 
@@ -490,6 +498,84 @@ static int http_decode_name(const char *encoded, char *out, size_t out_cap) {
 
   out[oi] = '\0';
   return 0;
+}
+
+static int http_query_get_value(const char *query, const char *key,
+                                char *out, size_t out_cap) {
+  size_t key_len = 0;
+
+  if (key == NULL || out == NULL || out_cap == 0u) {
+    return 1;
+  }
+
+  out[0] = '\0';
+  if (query == NULL || query[0] == '\0') {
+    return 1;
+  }
+
+  key_len = strlen(key);
+  while (*query != '\0') {
+    const char *amp = strchr(query, '&');
+    const char *entry_end = amp != NULL ? amp : query + strlen(query);
+    const char *eq = memchr(query, '=', (size_t)(entry_end - query));
+    size_t name_len = eq != NULL ? (size_t)(eq - query) : (size_t)(entry_end - query);
+    const char *value = eq != NULL ? eq + 1 : entry_end;
+    size_t value_len = (size_t)(entry_end - value);
+
+    if (name_len == key_len && memcmp(query, key, key_len) == 0) {
+      if (value_len >= out_cap) {
+        return 2;
+      }
+      memcpy(out, value, value_len);
+      out[value_len] = '\0';
+      return 0;
+    }
+
+    if (amp == NULL) {
+      break;
+    }
+    query = amp + 1;
+  }
+
+  return 1;
+}
+
+static int http_build_relative_child_path(char *out, size_t out_cap,
+                                          const char *base, const char *name) {
+  int n = 0;
+
+  if (out == NULL || out_cap == 0u || name == NULL) {
+    return 1;
+  }
+  if (base == NULL || base[0] == '\0') {
+    n = snprintf(out, out_cap, "%s", name);
+  } else {
+    n = snprintf(out, out_cap, "%s/%s", base, name);
+  }
+  return n < 0 || (size_t)n >= out_cap ? 1 : 0;
+}
+
+static const char *http_path_kind_name(fs_path_kind_t kind) {
+  switch (kind) {
+    case FS_PATH_KIND_FILE:
+      return "file";
+    case FS_PATH_KIND_DIR:
+      return "dir";
+    case FS_PATH_KIND_SYMLINK:
+      return "symlink";
+    default:
+      return "other";
+  }
+}
+
+static const char *http_relative_basename(const char *path) {
+  const char *base = NULL;
+
+  if (path == NULL) {
+    return NULL;
+  }
+  base = strrchr(path, '/');
+  return base != NULL ? base + 1 : path;
 }
 
 static int http_json_escape(http_buf_t *buf, const char *text) {
@@ -639,28 +725,6 @@ CLEANUP:
   return exit_code;
 }
 
-static int http_get_file_info(const char *path, uint64_t *size_out, uint64_t *mtime_out) {
-#ifdef _WIN32
-  struct _stat64 st;
-  if (_stat64(path, &st) != 0) {
-    return 1;
-  }
-#else
-  struct stat st;
-  if (stat(path, &st) != 0) {
-    return 1;
-  }
-#endif
-
-  if (st.st_size < 0) {
-    return 1;
-  }
-
-  *size_out = (uint64_t)st.st_size;
-  *mtime_out = (uint64_t)st.st_mtime;
-  return 0;
-}
-
 static int http_file_entry_cmp(const void *lhs, const void *rhs) {
   const http_file_entry_t *a = (const http_file_entry_t *)lhs;
   const http_file_entry_t *b = (const http_file_entry_t *)rhs;
@@ -675,11 +739,13 @@ static void http_free_file_entries(http_file_entry_t *entries, size_t count) {
   }
   for (size_t i = 0; i < count; i++) {
     free(entries[i].name);
+    free(entries[i].path);
   }
   free(entries);
 }
 
-static int http_list_files(const char *dir, http_file_entry_t **entries_out,
+static int http_list_files(const char *dir, const char *relative_dir,
+                           http_file_entry_t **entries_out,
                            size_t *count_out) {
   http_file_entry_t *entries = NULL;
   size_t count = 0;
@@ -709,19 +775,20 @@ static int http_list_files(const char *dir, http_file_entry_t **entries_out,
   do {
     const char *name = find_data.cFileName;
     char full_path[4096];
-    uint64_t size = 0;
-    uint64_t mtime = 0;
+    char relative_path[HF_HTTP_PATH_MAX];
+    fs_path_info_t info = {0};
 
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-      continue;
-    }
-    if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
       continue;
     }
     if (fs_join_path(full_path, sizeof(full_path), dir, name) != 0) {
       goto CLEANUP;
     }
-    if (http_get_file_info(full_path, &size, &mtime) != 0) {
+    if (http_build_relative_child_path(relative_path, sizeof(relative_path),
+                                       relative_dir, name) != 0) {
+      goto CLEANUP;
+    }
+    if (fs_get_path_info(full_path, &info) != 0) {
       continue;
     }
 
@@ -740,8 +807,15 @@ static int http_list_files(const char *dir, http_file_entry_t **entries_out,
     if (entries[count].name == NULL) {
       goto CLEANUP;
     }
-    entries[count].size = size;
-    entries[count].mtime = mtime;
+    entries[count].path = _strdup(relative_path);
+    if (entries[count].path == NULL) {
+      free(entries[count].name);
+      entries[count].name = NULL;
+      goto CLEANUP;
+    }
+    entries[count].kind = info.kind;
+    entries[count].size = info.kind == FS_PATH_KIND_FILE ? info.size : 0;
+    entries[count].mtime = info.mtime;
     count++;
   } while (FindNextFileA(handle, &find_data) != 0);
 
@@ -761,8 +835,8 @@ static int http_list_files(const char *dir, http_file_entry_t **entries_out,
   while ((de = readdir(dp)) != NULL) {
     const char *name = de->d_name;
     char full_path[4096];
-    uint64_t size = 0;
-    uint64_t mtime = 0;
+    char relative_path[HF_HTTP_PATH_MAX];
+    fs_path_info_t info = {0};
 
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
       continue;
@@ -771,7 +845,11 @@ static int http_list_files(const char *dir, http_file_entry_t **entries_out,
     if (fs_join_path(full_path, sizeof(full_path), dir, name) != 0) {
       goto CLEANUP;
     }
-    if (http_get_file_info(full_path, &size, &mtime) != 0) {
+    if (http_build_relative_child_path(relative_path, sizeof(relative_path),
+                                       relative_dir, name) != 0) {
+      goto CLEANUP;
+    }
+    if (fs_get_path_info(full_path, &info) != 0) {
       continue;
     }
 
@@ -790,8 +868,15 @@ static int http_list_files(const char *dir, http_file_entry_t **entries_out,
     if (entries[count].name == NULL) {
       goto CLEANUP;
     }
-    entries[count].size = size;
-    entries[count].mtime = mtime;
+    entries[count].path = strdup(relative_path);
+    if (entries[count].path == NULL) {
+      free(entries[count].name);
+      entries[count].name = NULL;
+      goto CLEANUP;
+    }
+    entries[count].kind = info.kind;
+    entries[count].size = info.kind == FS_PATH_KIND_FILE ? info.size : 0;
+    entries[count].mtime = info.mtime;
     count++;
   }
 
@@ -820,12 +905,13 @@ CLEANUP:
   return exit_code;
 }
 
-static int http_build_files_json(const char *dir, http_buf_t *out) {
+static int http_build_files_json(const char *dir, const char *relative_dir,
+                                 http_buf_t *out) {
   http_file_entry_t *entries = NULL;
   size_t count = 0;
   int exit_code = 1;
 
-  if (http_list_files(dir, &entries, &count) != 0) {
+  if (http_list_files(dir, relative_dir, &entries, &count) != 0) {
     return 1;
   }
 
@@ -840,6 +926,10 @@ static int http_build_files_json(const char *dir, http_buf_t *out) {
     }
     if (http_buf_append_str(out, "{\"name\":\"") != 0 ||
         http_json_escape(out, entries[i].name) != 0 ||
+        http_buf_append_str(out, "\",\"path\":\"") != 0 ||
+        http_json_escape(out, entries[i].path) != 0 ||
+        http_buf_append_str(out, "\",\"kind\":\"") != 0 ||
+        http_json_escape(out, http_path_kind_name(entries[i].kind)) != 0 ||
         http_buf_append_str(out, "\",\"size\":") != 0) {
       goto CLEANUP;
     }
@@ -869,25 +959,22 @@ CLEANUP:
 }
 
 static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
-                          const char *file_name) {
+                          const char *relative_path) {
   char path[4096];
   char header[1024];
   int fd = -1;
-  uint64_t size = 0;
-  uint64_t mtime = 0;
+  fs_path_info_t info = {0};
   int exit_code = 1;
   char safe_name[512];
   size_t safe_len = 0;
 
-  (void)mtime;
-
-  if (fs_validate_file_name(file_name) != 0) {
-    return http_send_json_error(conn, 400, "Bad Request", "invalid file name");
+  if (fs_validate_relative_path(relative_path) != 0) {
+    return http_send_json_error(conn, 400, "Bad Request", "invalid file path");
   }
-  if (fs_join_path(path, sizeof(path), ser_opt->path, file_name) != 0) {
+  if (fs_join_relative_path(path, sizeof(path), ser_opt->path, relative_path) != 0) {
     return http_send_json_error(conn, 400, "Bad Request", "invalid path");
   }
-  if (http_get_file_info(path, &size, &mtime) != 0) {
+  if (fs_get_path_info(path, &info) != 0 || info.kind != FS_PATH_KIND_FILE) {
     return http_send_json_error(conn, 404, "Not Found", "file not found");
   }
 
@@ -901,7 +988,8 @@ static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
     return http_send_json_error(conn, 404, "Not Found", "file not found");
   }
 
-  for (const char *p = file_name; *p != '\0' && safe_len + 1u < sizeof(safe_name); p++) {
+  for (const char *p = http_relative_basename(relative_path);
+       *p != '\0' && safe_len + 1u < sizeof(safe_name); p++) {
     if (*p == '"' || *p == '\\' || *p == '\r' || *p == '\n') {
       safe_name[safe_len++] = '_';
     } else {
@@ -917,7 +1005,7 @@ static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
                    "Content-Disposition: attachment; filename=\"%s\"\r\n"
                    "Connection: close\r\n"
                    "\r\n",
-                   size, safe_name);
+                   info.size, safe_name);
   if (n < 0 || (size_t)n >= sizeof(header)) {
     goto CLEANUP;
   }
@@ -927,7 +1015,7 @@ static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
   }
 
   net_send_file_result_t send_file_res =
-    net_send_file_best_effort(conn, fd, size);
+    net_send_file_best_effort(conn, fd, info.size);
   if (send_file_res != NET_SEND_FILE_OK) {
     if (send_file_res == NET_SEND_FILE_SOURCE_CHANGED) {
       fprintf(stderr, "source file changed during http download\n");
@@ -953,11 +1041,37 @@ static int http_handle_webui_asset(socket_t conn, const webui_asset_t *asset) {
                             asset->body, asset->body_len, NULL);
 }
 
-static int http_handle_files_list(socket_t conn, const server_opt_t *ser_opt) {
+static int http_handle_files_list(socket_t conn, const server_opt_t *ser_opt,
+                                  const http_request_t *req) {
   http_buf_t body = {0};
+  char encoded_path[HF_HTTP_PATH_MAX];
+  char relative_dir[HF_HTTP_PATH_MAX];
+  char dir_path[4096];
+  fs_path_info_t info = {0};
   int exit_code = 1;
 
-  if (http_build_files_json(ser_opt->path, &body) != 0) {
+  relative_dir[0] = '\0';
+  if (http_query_get_value(req->query, "path", encoded_path,
+                           sizeof(encoded_path)) == 0) {
+    if (http_decode_name(encoded_path, relative_dir, sizeof(relative_dir)) != 0) {
+      return http_send_json_error(conn, 400, "Bad Request", "invalid path");
+    }
+    if (relative_dir[0] != '\0' && fs_validate_relative_path(relative_dir) != 0) {
+      return http_send_json_error(conn, 400, "Bad Request", "invalid path");
+    }
+  }
+
+  if (fs_join_relative_path(dir_path, sizeof(dir_path), ser_opt->path, relative_dir) != 0) {
+    return http_send_json_error(conn, 400, "Bad Request", "invalid path");
+  }
+  if (fs_get_path_info(dir_path, &info) != 0) {
+    return http_send_json_error(conn, 404, "Not Found", "path not found");
+  }
+  if (info.kind != FS_PATH_KIND_DIR) {
+    return http_send_json_error(conn, 400, "Bad Request", "path is not a directory");
+  }
+
+  if (http_build_files_json(dir_path, relative_dir, &body) != 0) {
     return http_send_json_error(conn, 500, "Internal Server Error",
                                 "failed to list files");
   }
@@ -1133,10 +1247,9 @@ CLEANUP:
 }
 
 static int http_handle_file_put(socket_t conn, const server_opt_t *ser_opt,
-                                const http_request_t *req, const char *file_name) {
+                                const http_request_t *req, const char *relative_path) {
   http_buf_t response = {0};
-  uint64_t size = 0;
-  uint64_t mtime = 0;
+  fs_path_info_t info = {0};
   int exit_code = 1;
   char numbuf[64];
 
@@ -1151,34 +1264,36 @@ static int http_handle_file_put(socket_t conn, const server_opt_t *ser_opt,
     return http_send_json_error(conn, 415, "Unsupported Media Type",
                                 "content-type must be application/octet-stream");
   }
-  if (fs_validate_file_name(file_name) != 0) {
+  if (fs_validate_relative_path(relative_path) != 0) {
     (void)http_discard_body(conn, req->content_length);
-    return http_send_json_error(conn, 400, "Bad Request", "invalid file name");
+    return http_send_json_error(conn, 400, "Bad Request", "invalid file path");
   }
 
   char saved_path[4096];
-  if (transfer_recv_socket_file(conn, ser_opt->path, file_name,
+  if (transfer_recv_socket_file(conn, ser_opt->path, relative_path,
                                 req->content_length, "recv(http_body)",
                                 "http upload ended early", saved_path,
                                 sizeof(saved_path)) != PROTOCOL_OK) {
     return http_send_json_error(conn, 500, "Internal Server Error", "failed to save file");
   }
 
-  if (http_get_file_info(saved_path, &size, &mtime) != 0) {
+  if (fs_get_path_info(saved_path, &info) != 0 || info.kind != FS_PATH_KIND_FILE) {
     return http_send_json_error(conn, 500, "Internal Server Error", "saved file missing");
   }
 
   if (http_buf_append_str(&response, "{\"name\":\"") != 0 ||
-      http_json_escape(&response, file_name) != 0 ||
-      http_buf_append_str(&response, "\",\"size\":") != 0) {
+      http_json_escape(&response, http_relative_basename(relative_path)) != 0 ||
+      http_buf_append_str(&response, "\",\"path\":\"") != 0 ||
+      http_json_escape(&response, relative_path) != 0 ||
+      http_buf_append_str(&response, "\",\"kind\":\"file\",\"size\":") != 0) {
     goto CLEANUP;
   }
-  int n = snprintf(numbuf, sizeof(numbuf), "%" PRIu64, size);
+  int n = snprintf(numbuf, sizeof(numbuf), "%" PRIu64, info.size);
   if (n < 0 || http_buf_append(&response, numbuf, (size_t)n) != 0 ||
       http_buf_append_str(&response, ",\"mtime\":") != 0) {
     goto CLEANUP;
   }
-  n = snprintf(numbuf, sizeof(numbuf), "%" PRIu64, mtime);
+  n = snprintf(numbuf, sizeof(numbuf), "%" PRIu64, info.mtime);
   if (n < 0 || http_buf_append(&response, numbuf, (size_t)n) != 0 ||
       http_buf_append_ch(&response, '}') != 0) {
     goto CLEANUP;
@@ -1197,23 +1312,37 @@ CLEANUP:
 }
 
 static int http_handle_file_delete(socket_t conn, const server_opt_t *ser_opt,
-                                   const char *file_name) {
+                                   const char *relative_path) {
   http_buf_t response = {0};
   char path[4096];
+  fs_path_info_t info = {0};
   int exit_code = 1;
 
-  if (fs_validate_file_name(file_name) != 0) {
-    return http_send_json_error(conn, 400, "Bad Request", "invalid file name");
+  if (fs_validate_relative_path(relative_path) != 0) {
+    return http_send_json_error(conn, 400, "Bad Request", "invalid file path");
   }
-  if (fs_join_path(path, sizeof(path), ser_opt->path, file_name) != 0) {
+  if (fs_join_relative_path(path, sizeof(path), ser_opt->path, relative_path) != 0) {
     return http_send_json_error(conn, 400, "Bad Request", "invalid path");
   }
-  if (remove(path) != 0) {
-    if (errno == ENOENT) {
-      return http_send_json_error(conn, 404, "Not Found", "file not found");
+  if (fs_get_path_info(path, &info) != 0) {
+    return http_send_json_error(conn, 404, "Not Found", "path not found");
+  }
+  if (info.kind == FS_PATH_KIND_FILE) {
+    if (remove(path) != 0) {
+      if (errno == ENOENT) {
+        return http_send_json_error(conn, 404, "Not Found", "path not found");
+      }
+      perror("remove(http_delete)");
+      return http_send_json_error(conn, 500, "Internal Server Error", "failed to delete path");
     }
-    perror("remove(http_delete)");
-    return http_send_json_error(conn, 500, "Internal Server Error", "failed to delete file");
+  } else {
+    if (fs_remove_tree(path) != 0) {
+      if (errno == ENOENT) {
+        return http_send_json_error(conn, 404, "Not Found", "path not found");
+      }
+      perror("remove_tree(http_delete)");
+      return http_send_json_error(conn, 500, "Internal Server Error", "failed to delete path");
+    }
   }
 
   if (http_buf_append_str(&response, "{\"ok\":true}") != 0) {
@@ -1233,7 +1362,7 @@ CLEANUP:
 
 int http_handle_connection(socket_t conn, const server_opt_t *ser_opt) {
   char header_block[HF_HTTP_HEADER_MAX];
-  char route_name[HF_PROTOCOL_MAX_FILE_NAME_LEN + 1u];
+  char route_name[HF_HTTP_PATH_MAX];
   http_request_t req = {0};
   const webui_asset_t *asset = NULL;
   int read_res = http_read_header_block(conn, header_block, sizeof(header_block));
@@ -1270,7 +1399,7 @@ int http_handle_connection(socket_t conn, const server_opt_t *ser_opt) {
     if (strcmp(req.method, "GET") != 0) {
       return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
     }
-    return http_handle_files_list(conn, ser_opt);
+    return http_handle_files_list(conn, ser_opt, &req);
   }
   if (strcmp(req.path, "/api/messages") == 0) {
     if (strcmp(req.method, "POST") == 0) {

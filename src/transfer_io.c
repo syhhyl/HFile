@@ -48,7 +48,7 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
 
   tmp_path[0] = '\0';
 
-  if (fs_join_path(full_path, sizeof(full_path), base_dir, file_name) != 0) {
+  if (fs_join_relative_path(full_path, sizeof(full_path), base_dir, file_name) != 0) {
     fprintf(stderr, "output path is too long\n");
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }

@@ -30,6 +30,19 @@
 
 #define CHUNK_SIZE 1024 * 1024
 
+typedef enum {
+  FS_PATH_KIND_FILE = 1,
+  FS_PATH_KIND_DIR,
+  FS_PATH_KIND_SYMLINK,
+  FS_PATH_KIND_OTHER,
+} fs_path_kind_t;
+
+typedef struct {
+  fs_path_kind_t kind;
+  uint64_t size;
+  uint64_t mtime;
+} fs_path_info_t;
+
 int fs_basename_from_path(const char **file_path, const char **file_name);
 
 int fs_open(const char *path, int flags, int mode);
@@ -41,7 +54,11 @@ int fs_seek_start(int fd);
 ssize_t fs_write_all(int fd, const void *buf, size_t len);
 
 int fs_validate_file_name(const char *file_name);
+int fs_validate_relative_path(const char *path);
 int fs_join_path(char *out, size_t out_cap, const char *dir, const char *file);
+int fs_join_relative_path(char *out, size_t out_cap, const char *base_dir,
+                          const char *relative_path);
+int fs_get_path_info(const char *path, fs_path_info_t *out);
 int fs_make_temp_path(
   char *out,
   size_t out_cap,
@@ -53,6 +70,7 @@ int fs_finalize_temp_file(
   const char *tmp_path,
   const char *final_path,
   unsigned long *win_err);
+int fs_remove_tree(const char *path);
 void fs_remove_quiet(const char *path);
 
 #endif  // HF_FS_H

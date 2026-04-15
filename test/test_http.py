@@ -78,7 +78,10 @@ class TestHTTP(unittest.TestCase):
             with urllib.request.urlopen(req, timeout=5.0) as resp:
                 return resp.status, resp.read(), resp.headers
         except urllib.error.HTTPError as e:
-            return e.code, e.read(), e.headers
+            try:
+                return e.code, e.read(), e.headers
+            finally:
+                e.close()
 
     def _reset_output_path(self, path: Path) -> None:
         if path.exists():
@@ -130,6 +133,9 @@ class TestHTTP(unittest.TestCase):
         payload = json.loads(body.decode("utf-8"))
         names = [item["name"] for item in payload]
         self.assertIn(src.name, names)
+        item = next(item for item in payload if item["name"] == src.name)
+        self.assertEqual(item["path"], src.name)
+        self.assertEqual(item["kind"], "file")
 
         status, body, _ = self._request(
             "GET", f"/api/files/{urllib.parse.quote(src.name)}"
@@ -151,6 +157,54 @@ class TestHTTP(unittest.TestCase):
             f"/api/files/{invalid_name}",
         )
         self.assertEqual(status, 400, body.decode("utf-8", errors="replace"))
+
+    def test_nested_http_paths_and_directory_listing(self) -> None:
+        nested_dir = self.out_dir / "docs"
+        nested_dir.mkdir(parents=True, exist_ok=True)
+        nested_name = "docs/readme.txt"
+        nested_url = urllib.parse.quote(nested_name, safe="")
+        src = self.in_dir / "readme.txt"
+        src.write_bytes(b"nested http path\n")
+        dst = self.out_dir / nested_name
+        self._reset_output_path(dst)
+
+        status, body, _ = self._request(
+            "PUT",
+            f"/api/files/{nested_url}",
+            data=src.read_bytes(),
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(payload["name"], "readme.txt")
+        self.assertEqual(payload["path"], nested_name)
+        self.assertEqual(payload["kind"], "file")
+        self.assertTrue(wait_for_file_stable(dst, timeout=5.0))
+
+        status, body, _ = self._request("GET", "/api/files")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        item = next(item for item in payload if item["name"] == "docs")
+        self.assertEqual(item["path"], "docs")
+        self.assertEqual(item["kind"], "dir")
+
+        status, body, _ = self._request(
+            "GET", f"/api/files?path={urllib.parse.quote('docs', safe='')}"
+        )
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["name"], "readme.txt")
+        self.assertEqual(payload[0]["path"], nested_name)
+        self.assertEqual(payload[0]["kind"], "file")
+
+        status, body, _ = self._request("GET", f"/api/files/{nested_url}")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        self.assertEqual(body, src.read_bytes())
+
+        status, body, _ = self._request("DELETE", "/api/files/docs")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        self.assertFalse((self.out_dir / "docs").exists())
 
     def test_message_post_updates_latest_message(self) -> None:
         status, body, _ = self._request(
