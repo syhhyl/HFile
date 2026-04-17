@@ -1,97 +1,70 @@
 # HFile
 
-HFile is a lightweight LAN file transfer tool written in C. One server process exposes three things on the same port: a native CLI protocol, a small HTTP API, and a browser Web UI.
+Fast LAN file transfer with one server, one port, and three interfaces: CLI, HTTP, and Web UI.
+
+HFile is a native C file transfer tool built for simple deployment, predictable behavior, and low overhead.
 
 ## Why HFile
 
-- One binary, one port, minimal setup.
-- Native C implementation with explicit protocol and I/O control.
-- CLI file send, CLI message send, browser upload/download, and HTTP API in one server.
-- Streaming upload path with temp-file write and atomic finalize.
+- One binary, one port, almost no setup.
+- CLI, HTTP API, and Web UI in a single server process.
+- Send from terminal, browser, or script without changing servers.
+- Stream large files instead of buffering entire payloads in memory.
+- Write to a temp file first, then atomically finalize on success.
+- Native C implementation with a small, explicit protocol surface.
 
-## Install
+## Quick Start
 
-Project site and installer entrypoints are published with GitHub Pages from the `docs/` directory.
-
-Install the latest release on macOS and Linux:
+Install the latest release on macOS or Linux:
 
 ```bash
 curl -fsSL https://syhhyl.github.io/HFile/install.sh | bash
 ```
 
-Install the latest release on Windows with PowerShell:
+Install on Windows:
 
 ```powershell
 irm https://syhhyl.github.io/HFile/install.ps1 | iex
 ```
 
-The install script downloads the latest prebuilt release archive from GitHub Releases and verifies it with `checksums.txt`.
-
-
-Build and install:
-
-```bash
-BUILD_TYPE=Release ./build.sh -i
-```
-
-Install on non-Windows platforms:
-
-```bash
-./build.sh -i
-```
-
-Cross-build for Windows with MinGW:
-
-```bash
-./build.sh -w
-```
-
-## Usage
+The installer downloads the latest GitHub Release and verifies it with `checksums.txt`.
 
 Start a server:
 
 ```bash
-mkdir -p received
-./build/hf -d ./received
+hf -d ./received -p 8888
 ```
-
-On POSIX, `-d` starts a daemon in the background. On Windows, `-d` prints a notice that daemon mode is unavailable, then runs the server attached in the current process. Only one HFile server can run at a time.
 
 Send a file:
 
 ```bash
-./build/hf -c ./hello.txt -i 127.0.0.1 -p 8888
+hf -c ./hello.txt -i 127.0.0.1 -p 8888
 ```
 
-Send a short message:
+Send a message:
 
 ```bash
-./build/hf -m "hello from CLI" -i 127.0.0.1 -p 8888
+hf -m "hello from CLI" -i 127.0.0.1 -p 8888
 ```
 
-Daemon mode on non-Windows platforms:
-
-```bash
-./build/hf -d ./received -p 8888
-./build/hf status
-./build/hf -q
-./build/hf stop
-```
-
-Web UI:
+Open the Web UI:
 
 ```text
 http://127.0.0.1:8888/
 ```
 
-## Test
+On POSIX, `-d` starts the server in the background. On Windows, `-d` keeps the server attached to the current process. Only one HFile server can run at a time.
 
-Build first, then run tests:
+## What It Does
 
-```bash
-cmake --build build
-./test.sh
-```
+- Receive files from the HFile CLI.
+- Receive uploads from a browser on the same port.
+- Expose a small HTTP surface for automation.
+- Keep transfer behavior simple and predictable.
+
+## For Developers
+
+Build, test, and development details live in [AGENTS.md](./AGENTS.md).
 
 ## License
 
