@@ -1,7 +1,14 @@
+#ifdef __linux__
+  #ifndef _GNU_SOURCE
+    #define _GNU_SOURCE
+  #endif
+#endif
+
 #include "net.h"
 #include "fs.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -394,4 +401,169 @@ net_send_file_result_t net_send_file_best_effort(socket_t sock,
   }
 
   return net_send_file_buffered(sock, in_fd, content_size);
+}
+
+net_recv_file_result_t net_recv_file_all(socket_t sock,
+                                         int out_fd,
+                                         uint64_t content_size) {
+  if (content_size == 0) {
+    return NET_RECV_FILE_OK;
+  }
+
+#if defined(__linux__) && !defined(_WIN32)
+  if (is_socket_invalid(sock) || out_fd < 0) {
+    return NET_RECV_FILE_INVALID_ARGUMENT;
+  }
+
+  int pipefd[2] = {-1, -1};
+  uint64_t remaining = content_size;
+  uint64_t moved = 0;
+
+  if (pipe(pipefd) != 0) {
+    if (errno == EMFILE || errno == ENFILE) {
+      return NET_RECV_FILE_IO;
+    }
+    return NET_RECV_FILE_UNSUPPORTED;
+  }
+
+  while (remaining > 0) {
+    size_t want = CHUNK_SIZE;
+    if ((uint64_t)want > remaining) {
+      want = (size_t)remaining;
+    }
+
+    ssize_t n = splice(sock, NULL, pipefd[1], NULL, want,
+                       SPLICE_F_MOVE | SPLICE_F_MORE);
+    if (n < 0) {
+      if ((errno == EINVAL || errno == ENOSYS || errno == ENOTSUP) && moved == 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return NET_RECV_FILE_UNSUPPORTED;
+      }
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+        continue;
+      }
+      close(pipefd[0]);
+      close(pipefd[1]);
+      return NET_RECV_FILE_IO;
+    }
+    if (n == 0) {
+      close(pipefd[0]);
+      close(pipefd[1]);
+      return NET_RECV_FILE_EOF;
+    }
+
+    ssize_t pipe_remaining = n;
+    while (pipe_remaining > 0) {
+      ssize_t written = splice(pipefd[0], NULL, out_fd, NULL, (size_t)pipe_remaining,
+                               SPLICE_F_MOVE | SPLICE_F_MORE);
+      if (written < 0) {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+          continue;
+        }
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return NET_RECV_FILE_IO;
+      }
+      if (written == 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return NET_RECV_FILE_IO;
+      }
+      pipe_remaining -= written;
+      remaining -= (uint64_t)written;
+      moved += (uint64_t)written;
+    }
+  }
+
+  close(pipefd[0]);
+  close(pipefd[1]);
+  return NET_RECV_FILE_OK;
+#else
+  (void)sock;
+  (void)out_fd;
+  (void)content_size;
+  return NET_RECV_FILE_UNSUPPORTED;
+#endif
+}
+
+static net_recv_file_result_t net_recv_file_buffered(socket_t sock,
+                                                     int out_fd,
+                                                     uint64_t content_size) {
+  char stack_buf[8192];
+  char *buf = stack_buf;
+  size_t buf_cap = sizeof(stack_buf);
+  char *heap_buf = NULL;
+  uint64_t remaining = content_size;
+
+  if (is_socket_invalid(sock) || out_fd < 0) {
+    return NET_RECV_FILE_INVALID_ARGUMENT;
+  }
+
+  if (content_size == 0) {
+    return NET_RECV_FILE_OK;
+  }
+
+  if (content_size > (uint64_t)(1024u * 1024u)) {
+    buf_cap = 256u * 1024u;
+    heap_buf = (char *)malloc(buf_cap);
+    if (heap_buf == NULL) {
+      return NET_RECV_FILE_IO;
+    }
+    buf = heap_buf;
+  }
+
+  while (remaining > 0) {
+    size_t want = buf_cap;
+    if ((uint64_t)want > remaining) {
+      want = (size_t)remaining;
+    }
+
+#ifdef _WIN32
+    int tmp = recv(sock, buf, (int)want, 0);
+    if (tmp == SOCKET_ERROR) {
+      int err = WSAGetLastError();
+      if (err == WSAEINTR) {
+        continue;
+      }
+      free(heap_buf);
+      return NET_RECV_FILE_IO;
+    }
+    ssize_t n = (ssize_t)tmp;
+#else
+    ssize_t n = recv(sock, buf, want, 0);
+    if (n < 0) {
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+        continue;
+      }
+      free(heap_buf);
+      return NET_RECV_FILE_IO;
+    }
+#endif
+    if (n == 0) {
+      free(heap_buf);
+      return NET_RECV_FILE_EOF;
+    }
+
+    if (fs_write_all(out_fd, buf, (size_t)n) != n) {
+      free(heap_buf);
+      return NET_RECV_FILE_IO;
+    }
+
+    remaining -= (uint64_t)n;
+  }
+
+  free(heap_buf);
+  return NET_RECV_FILE_OK;
+}
+
+net_recv_file_result_t net_recv_file_best_effort(socket_t sock,
+                                                 int out_fd,
+                                                 uint64_t content_size) {
+  net_recv_file_result_t res = net_recv_file_all(sock, out_fd, content_size);
+  if (res != NET_RECV_FILE_UNSUPPORTED) {
+    return res;
+  }
+
+  return net_recv_file_buffered(sock, out_fd, content_size);
 }

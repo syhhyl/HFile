@@ -13,6 +13,75 @@
   #include <unistd.h>
 #endif
 
+static protocol_result_t transfer_recv_socket_file_buffered(socket_t conn,
+                                                            int out,
+                                                            uint64_t content_size,
+                                                            const char *recv_ctx,
+                                                            const char *short_read_message) {
+  char stack_buf[STACK_BUF_SIZE];
+  char *heap_buf = NULL;
+  char *buf = stack_buf;
+  size_t buf_cap = STACK_BUF_SIZE;
+  uint64_t remaining = content_size;
+
+  if (content_size > HEAP_THRESHOLD) {
+    heap_buf = (char *)malloc(HEAP_BUF_SIZE);
+    if (heap_buf == NULL) {
+      fprintf(stderr, "heap buf malloc failed\n");
+      return PROTOCOL_ERR_ALLOC;
+    }
+    buf = heap_buf;
+    buf_cap = HEAP_BUF_SIZE;
+  }
+
+  while (remaining > 0) {
+    size_t want = buf_cap;
+    if ((uint64_t)want > remaining) {
+      want = (size_t)remaining;
+    }
+
+#ifdef _WIN32
+    int tmp = recv(conn, buf, (int)want, 0);
+    if (tmp == SOCKET_ERROR) {
+      int err = WSAGetLastError();
+      if (err == WSAEINTR) {
+        continue;
+      }
+      sock_perror(recv_ctx);
+      free(heap_buf);
+      return PROTOCOL_ERR_IO;
+    }
+    ssize_t n = (ssize_t)tmp;
+#else
+    ssize_t n = recv(conn, buf, want, 0);
+    if (n < 0) {
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+        continue;
+      }
+      sock_perror(recv_ctx);
+      free(heap_buf);
+      return PROTOCOL_ERR_IO;
+    }
+#endif
+    if (n == 0) {
+      fprintf(stderr, "%s\n", short_read_message);
+      free(heap_buf);
+      return PROTOCOL_ERR_EOF;
+    }
+
+    if (fs_write_all(out, buf, (size_t)n) != n) {
+      perror("write_all");
+      free(heap_buf);
+      return PROTOCOL_ERR_IO;
+    }
+
+    remaining -= (uint64_t)n;
+  }
+
+  free(heap_buf);
+  return PROTOCOL_OK;
+}
+
 protocol_result_t transfer_recv_socket_file(socket_t conn,
                                             const char *base_dir,
                                             const char *file_name,
@@ -23,23 +92,8 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
                                             size_t full_path_cap) {
   char full_path[4096];
   char tmp_path[4096];
-  char stack_buf[STACK_BUF_SIZE];
-  char *heap_buf = NULL;
-  char *buf = stack_buf;
-  size_t buf_cap = STACK_BUF_SIZE;
-  if (content_size > HEAP_THRESHOLD) {
-    heap_buf = (char *)malloc(HEAP_BUF_SIZE);
-    if (heap_buf == NULL) {
-      fprintf(stderr, "heap buf malloc failed\n");
-      return PROTOCOL_ERR_ALLOC;
-    }
-    buf = heap_buf;
-    buf_cap = HEAP_BUF_SIZE;
-  }
   int out = -1;
-  int write_failed = 0;
   protocol_result_t result = PROTOCOL_ERR_IO;
-  uint64_t remaining = content_size;
 
   if (base_dir == NULL || file_name == NULL || recv_ctx == NULL ||
       short_read_message == NULL || full_path_out == NULL || full_path_cap == 0) {
@@ -82,55 +136,22 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
     return PROTOCOL_ERR_IO;
   }
 
-  while (remaining > 0) {
-    size_t want = buf_cap;
-    if ((uint64_t)want > remaining) {
-      want = (size_t)remaining;
-    }
-
-#ifdef _WIN32
-    int tmp = recv(conn, buf, (int)want, 0);
-    if (tmp == SOCKET_ERROR) {
-      int err = WSAGetLastError();
-      if (err == WSAEINTR) {
-        continue;
-      }
-      sock_perror(recv_ctx);
-      result = PROTOCOL_ERR_IO;
-      goto CLEANUP;
-    }
-    ssize_t n = (ssize_t)tmp;
-#else
-    ssize_t n = recv(conn, buf, want, 0);
-    if (n < 0) {
-      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
-        continue;
-      }
-      sock_perror(recv_ctx);
-      result = PROTOCOL_ERR_IO;
-      goto CLEANUP;
-    }
-#endif
-    if (n == 0) {
-      fprintf(stderr, "%s\n", short_read_message);
-      result = PROTOCOL_ERR_EOF;
-      goto CLEANUP;
-    }
-
-    if (!write_failed && fs_write_all(out, buf, (size_t)n) != n) {
-      perror("write_all");
-      write_failed = 1;
-      result = PROTOCOL_ERR_IO;
-      if (fs_close(out) != 0) {
-        perror("close(temp)");
-      }
-      out = -1;
-    }
-
-    remaining -= (uint64_t)n;
+  net_recv_file_result_t recv_res = net_recv_file_all(conn, out, content_size);
+  if (recv_res == NET_RECV_FILE_OK) {
+    result = PROTOCOL_OK;
+  } else if (recv_res == NET_RECV_FILE_EOF) {
+    fprintf(stderr, "%s\n", short_read_message);
+    result = PROTOCOL_ERR_EOF;
+  } else if (recv_res == NET_RECV_FILE_IO) {
+    sock_perror(recv_ctx);
+    result = PROTOCOL_ERR_IO;
+  } else if (recv_res == NET_RECV_FILE_INVALID_ARGUMENT) {
+    result = PROTOCOL_ERR_INVALID_ARGUMENT;
+  } else {
+    result = transfer_recv_socket_file_buffered(
+      conn, out, content_size, recv_ctx, short_read_message);
   }
-
-  if (write_failed) {
+  if (result != PROTOCOL_OK) {
     goto CLEANUP;
   }
 
@@ -158,7 +179,6 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
   result = PROTOCOL_OK;
 
 CLEANUP:
-  free(heap_buf);
   if (out != -1) {
     fs_close(out);
   }

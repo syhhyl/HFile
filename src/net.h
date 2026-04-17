@@ -45,6 +45,14 @@ typedef enum {
   NET_SEND_FILE_INVALID_ARGUMENT
 } net_send_file_result_t;
 
+typedef enum {
+  NET_RECV_FILE_OK = 0,
+  NET_RECV_FILE_UNSUPPORTED,
+  NET_RECV_FILE_EOF,
+  NET_RECV_FILE_IO,
+  NET_RECV_FILE_INVALID_ARGUMENT
+} net_recv_file_result_t;
+
 ssize_t send_all(
   socket_t sock,
   const void *data, size_t len);
@@ -72,6 +80,12 @@ net_send_file_result_t net_send_file_all(socket_t sock,
                                          uint64_t content_size);
 net_send_file_result_t net_send_file_best_effort(socket_t sock,
                                                  int in_fd,
+                                                 uint64_t content_size);
+net_recv_file_result_t net_recv_file_all(socket_t sock,
+                                         int out_fd,
+                                         uint64_t content_size);
+net_recv_file_result_t net_recv_file_best_effort(socket_t sock,
+                                                 int out_fd,
                                                  uint64_t content_size);
 
 
