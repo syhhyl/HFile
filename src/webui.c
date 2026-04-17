@@ -16,7 +16,7 @@ static const char webui_index_html[] =
   "  <main class=\"shell\">\n"
   "    <section class=\"hero\">\n"
   "      <h1>HFile</h1>\n"
-  "      <p class=\"lede\">If you need to move bytes, you'll like HFile. ❤️</p>\n"
+  "      <p class=\"lede\">Bytes with intent.</p>\n"
   "    </section>\n"
   "    <section class=\"card stack upload-card\">\n"
   "      <h2>Upload</h2>\n"

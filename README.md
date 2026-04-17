@@ -1,6 +1,6 @@
 # HFile
 
-Fast LAN file transfer with one server, one port, and three interfaces: CLI, HTTP, and Web UI.
+Bytes with intent.
 
 HFile is a native C file transfer tool built for simple deployment, predictable behavior, and low overhead.
 
