@@ -67,11 +67,12 @@ void usage(const char *argv0) {
           "usage:\n"
           "  %s -d <server_path> [-p <port>]\n"
           "  %s -c <file_path> [-i <ip>] [-p <port>]\n"
+          "  %s -g <remote_file> [-o <local_path>] [-i <ip>] [-p <port>]\n"
           "  %s -m <message> [-i <ip>] [-p <port>]\n"
           "  %s status\n"
           "  %s stop\n"
           "  %s -q\n",
-          argv0, argv0, argv0, argv0, argv0, argv0);
+          argv0, argv0, argv0, argv0, argv0, argv0, argv0);
 }
 
 int parse_port(const char *s, uint16_t *out) {
@@ -97,6 +98,8 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
   opt->mode = init_mode;
   opt->path = NULL;
+  opt->remote_path = NULL;
+  opt->output_path = NULL;
   opt->message = NULL;
   opt->ip = "127.0.0.1";
   opt->port = 8888;
@@ -105,7 +108,9 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
   int seen_d = 0;
   int seen_c = 0;
+  int seen_g = 0;
   int seen_m = 0;
+  int seen_o = 0;
   int ip_set = 0;
   int control_mode_selected = 0;
   int mode_count = 0;
@@ -188,8 +193,30 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         opt->mode = client_mode;
         opt->path = v;
         opt->message = NULL;
-        opt->msg_type = HF_MSG_TYPE_FILE_TRANSFER;
+        opt->msg_type = HF_MSG_TYPE_SEND_FILE;
         seen_c = 1;
+        break;
+      }
+
+      case 'g': {
+        const char *v = NULL;
+        if (control_mode_selected) {
+          fprintf(stderr, "control mode does not accept -g\n");
+          return PARSE_ERR;
+        }
+        if (seen_g) {
+          fprintf(stderr, "duplicate -g\n");
+          return PARSE_ERR;
+        }
+        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
+          fprintf(stderr, "invalid remote file\n");
+          return PARSE_ERR;
+        }
+
+        opt->mode = client_mode;
+        opt->remote_path = v;
+        opt->msg_type = HF_MSG_TYPE_GET_FILE;
+        seen_g = 1;
         break;
       }
       
@@ -213,6 +240,26 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         opt->message = v;
         opt->msg_type = HF_MSG_TYPE_TEXT_MESSAGE;
         seen_m = 1;
+        break;
+      }
+
+      case 'o': {
+        const char *v = NULL;
+        if (control_mode_selected) {
+          fprintf(stderr, "control mode does not accept -o\n");
+          return PARSE_ERR;
+        }
+        if (seen_o) {
+          fprintf(stderr, "duplicate -o\n");
+          return PARSE_ERR;
+        }
+        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
+          fprintf(stderr, "invalid output path\n");
+          return PARSE_ERR;
+        }
+
+        opt->output_path = v;
+        seen_o = 1;
         break;
       }
 
@@ -251,25 +298,25 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
   }
 
-  mode_count = seen_d + seen_c + seen_m + (control_mode_selected ? 1 : 0);
+  mode_count = seen_d + seen_c + seen_g + seen_m + (control_mode_selected ? 1 : 0);
+
+  if (seen_o && !seen_g) {
+    fprintf(stderr, "-o requires -g\n");
+    return PARSE_ERR;
+  }
 
   if (mode_count == 0) {
-    fprintf(stderr, "must specify one of -d, -c, -m, status, stop, or -q\n");
+    fprintf(stderr, "must specify one of -d, -c, -g, -m, status, stop, or -q\n");
     return PARSE_ERR;
   }
 
-  if (seen_d && seen_c) {
+  if (seen_d && (seen_c || seen_g || seen_m)) {
     fprintf(stderr, "cannot use server and client modes together\n");
     return PARSE_ERR;
   }
 
-  if (seen_d && seen_m) {
-    fprintf(stderr, "cannot use server and client modes together\n");
-    return PARSE_ERR;
-  }
-
-  if (seen_c && seen_m) {
-    fprintf(stderr, "cannot use -c -m together\n");
+  if ((seen_c + seen_g + seen_m) > 1) {
+    fprintf(stderr, "must choose exactly one client action: -c, -g, or -m\n");
     return PARSE_ERR;
   }
 
@@ -278,6 +325,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   }
   if (opt->mode == server_mode && opt->path == NULL) return PARSE_ERR;
   if (opt->mode == client_mode && seen_c && opt->path == NULL) return PARSE_ERR;
+  if (opt->mode == client_mode && seen_g && opt->remote_path == NULL) return PARSE_ERR;
   if (opt->mode == client_mode && seen_m && opt->message == NULL) {
     return PARSE_ERR;
   }

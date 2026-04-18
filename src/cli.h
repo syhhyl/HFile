@@ -21,6 +21,8 @@ typedef enum {
 typedef struct {
   Mode mode;
   const char *path;
+  const char *remote_path;
+  const char *output_path;
   const char *message;
   const char *ip;
   uint16_t port;
@@ -29,7 +31,9 @@ typedef struct {
 } Opt;
 
 typedef struct {
-  const char *path; 
+  const char *path;
+  const char *remote_path;
+  const char *output_path;
   const char *message;
   const char *ip;
   uint16_t port;

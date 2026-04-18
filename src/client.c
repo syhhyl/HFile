@@ -8,9 +8,16 @@
 #include <fcntl.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <sys/stat.h>
+
+#ifdef _WIN32
+  #include <process.h>
+#else
+  #include <unistd.h>
+#endif
 
 static const char *client_protocol_result_name(protocol_result_t res) {
   switch (res) {
@@ -28,6 +35,10 @@ static const char *client_protocol_result_name(protocol_result_t res) {
       return "invalid argument";
     case PROTOCOL_ERR_FILE_NAME_LEN:
       return "file name length";
+    case PROTOCOL_ERR_INVALID_FILE_NAME:
+      return "invalid file name";
+    case PROTOCOL_ERR_PAYLOAD_SIZE_MISMATCH:
+      return "payload size mismatch";
     case PROTOCOL_ERR_IO:
       return "io";
     case PROTOCOL_ERR_SHORT_WRITE:
@@ -214,6 +225,57 @@ static int client_send_file_body(int in, socket_t sock, uint64_t content_size) {
     fprintf(stderr, "invalid raw transfer arguments\n");
   } else {
     sock_perror("sendfile");
+  }
+
+  return 1;
+}
+
+static int client_open_temp_download(const char *final_path,
+                                     char *tmp_path,
+                                     size_t tmp_path_cap,
+                                     int *fd_out) {
+  int out = -1;
+
+  if (final_path == NULL || tmp_path == NULL || fd_out == NULL) {
+    return 1;
+  }
+
+#ifdef _WIN32
+  int pid = _getpid();
+#else
+  int pid = (int)getpid();
+#endif
+
+  for (int attempt = 0; attempt < 3; attempt++) {
+    if (fs_make_temp_path(tmp_path, tmp_path_cap, final_path, pid, attempt) != 0) {
+      return 1;
+    }
+    out = fs_open_temp_file(tmp_path);
+    if (out != -1) {
+      *fd_out = out;
+      return 0;
+    }
+    if (errno != EEXIST) {
+      return 1;
+    }
+  }
+
+  return 1;
+}
+
+static int client_recv_file_body(socket_t sock, int out_fd, uint64_t content_size) {
+  net_recv_file_result_t recv_res =
+    net_recv_file_best_effort(sock, out_fd, content_size);
+  if (recv_res == NET_RECV_FILE_OK) {
+    return 0;
+  }
+
+  if (recv_res == NET_RECV_FILE_EOF) {
+    fprintf(stderr, "server closed connection while sending file body\n");
+  } else if (recv_res == NET_RECV_FILE_INVALID_ARGUMENT) {
+    fprintf(stderr, "invalid download arguments\n");
+  } else {
+    sock_perror("recv(file_body)");
   }
 
   return 1;
@@ -437,6 +499,155 @@ CLEAN_UP:
   return exit_code;
 }
 
+static int client_get_file(const client_opt_t *opt) {
+  int exit_code = 0;
+  int out = -1;
+  socket_t sock;
+  socket_init(&sock);
+  const char *remote_path = opt->remote_path;
+  const char *output_path = opt->output_path;
+  char *offered_name = NULL;
+  uint64_t content_size = 0;
+  uint16_t remote_name_len = 0;
+  char tmp_path[4096];
+  protocol_result_t proto_res = PROTOCOL_OK;
+
+  tmp_path[0] = '\0';
+
+  if (remote_path == NULL || fs_validate_file_name(remote_path) != 0) {
+    fprintf(stderr, "invalid remote file\n");
+    return 1;
+  }
+  if (proto_get_file_name_len(remote_path, &remote_name_len) != 0) {
+    fprintf(stderr, "invalid remote file length\n");
+    return 1;
+  }
+
+  if (client_connect(opt->ip, opt->port, &sock) != 0) {
+    return 1;
+  }
+
+  {
+    protocol_header_t header = {0};
+    uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
+    uint8_t request_buf[sizeof(uint16_t) + HF_PROTOCOL_MAX_FILE_NAME_LEN];
+
+    init_header(&header);
+    header.msg_type = HF_MSG_TYPE_GET_FILE;
+    header.flags = HF_MSG_FLAG_NONE;
+    header.payload_size = (uint64_t)proto_file_name_only_size(remote_name_len);
+
+    proto_res = encode_header(&header, header_buf);
+    if (proto_res != PROTOCOL_OK) {
+      fprintf(stderr, "failed to encode protocol header\n");
+      exit_code = 1;
+      goto CLEAN_UP;
+    }
+
+    proto_res = encode_file_name_only(remote_path, request_buf);
+    if (proto_res != PROTOCOL_OK) {
+      fprintf(stderr, "failed to encode get request\n");
+      exit_code = 1;
+      goto CLEAN_UP;
+    }
+
+    proto_res = send_header(sock, header_buf);
+    if (proto_res != PROTOCOL_OK) {
+      sock_perror("send_header");
+      exit_code = 1;
+      goto CLEAN_UP;
+    }
+
+    proto_res = proto_send_payload(
+      sock, request_buf, proto_file_name_only_size(remote_name_len));
+    if (proto_res != PROTOCOL_OK) {
+      sock_perror("send(get_request)");
+      exit_code = 1;
+      goto CLEAN_UP;
+    }
+  }
+
+  {
+    res_frame_t response = {0};
+    if (client_recv_response(sock, PROTO_PHASE_READY, "get", &response) != 0) {
+      exit_code = 1;
+      goto CLEAN_UP;
+    }
+    if (client_check_response(&response, PROTO_PHASE_READY, "get") != 0) {
+      exit_code = 1;
+      goto CLEAN_UP;
+    }
+  }
+
+  proto_res = proto_recv_file_transfer_prefix(sock, &offered_name, &content_size);
+  if (proto_res != PROTOCOL_OK) {
+    fprintf(stderr, "failed to receive file header: %s\n",
+            client_protocol_result_name(proto_res));
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+
+  if (output_path == NULL) {
+    if (fs_validate_file_name(offered_name) != 0) {
+      fprintf(stderr, "invalid offered file name\n");
+      exit_code = 1;
+      goto CLEAN_UP;
+    }
+    output_path = offered_name;
+  }
+
+  if (client_open_temp_download(output_path, tmp_path, sizeof(tmp_path), &out) != 0) {
+    perror("open(temp_download)");
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+
+  if (client_recv_file_body(sock, out, content_size) != 0) {
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+
+  if (fs_close(out) != 0) {
+    perror("close(temp_download)");
+    out = -1;
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+  out = -1;
+
+  {
+    res_frame_t response = {0};
+    if (client_recv_response(sock, PROTO_PHASE_FINAL, "get", &response) != 0) {
+      exit_code = 1;
+      goto CLEAN_UP;
+    }
+    if (client_check_response(&response, PROTO_PHASE_FINAL, "get") != 0) {
+      exit_code = 1;
+      goto CLEAN_UP;
+    }
+  }
+
+  if (fs_finalize_temp_file(tmp_path, output_path, NULL) != 0) {
+    perror("rename(download)");
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+  tmp_path[0] = '\0';
+
+CLEAN_UP:
+  if (out != -1) {
+    fs_close(out);
+  }
+  if (tmp_path[0] != '\0') {
+    fs_remove_quiet(tmp_path);
+  }
+  if (offered_name != NULL) {
+    free(offered_name);
+  }
+  socket_close(sock);
+  return exit_code;
+}
+
 int client(const client_opt_t *cli_opt) {
   if (cli_opt == NULL) {
     fprintf(stderr, "invalid client options\n");
@@ -444,10 +655,12 @@ int client(const client_opt_t *cli_opt) {
   }
 
   switch (cli_opt->msg_type) {
-    case HF_MSG_TYPE_FILE_TRANSFER:
+    case HF_MSG_TYPE_SEND_FILE:
       return client_send_file_raw(cli_opt);
     case HF_MSG_TYPE_TEXT_MESSAGE:
       return client_send_message(cli_opt);
+    case HF_MSG_TYPE_GET_FILE:
+      return client_get_file(cli_opt);
     default:
       fprintf(stderr, "unsupported client message type: %u\n",
               (unsigned)cli_opt->msg_type);

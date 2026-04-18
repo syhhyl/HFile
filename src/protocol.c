@@ -114,8 +114,30 @@ int proto_get_file_name_len(const char *file_name, uint16_t *out_len) {
   return 0;
 }
 
+size_t proto_file_name_only_size(uint16_t file_name_len) {
+  return sizeof(uint16_t) + (size_t)file_name_len;
+}
+
 size_t proto_file_transfer_prefix_size(uint16_t file_name_len) {
-  return sizeof(uint16_t) + (size_t)file_name_len + sizeof(uint64_t);
+  return proto_file_name_only_size(file_name_len) + sizeof(uint64_t);
+}
+
+protocol_result_t encode_file_name_only(const char *file_name, uint8_t *out) {
+  uint16_t file_name_len = 0;
+  uint16_t net_len = 0;
+
+  if (out == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+  if (proto_get_file_name_len(file_name, &file_name_len) != 0) {
+    return PROTOCOL_ERR_FILE_NAME_LEN;
+  }
+
+  net_len = htons(file_name_len);
+  memcpy(out, &net_len, sizeof(net_len));
+  out += sizeof(net_len);
+  memcpy(out, file_name, (size_t)file_name_len);
+  return PROTOCOL_OK;
 }
 
 protocol_result_t encode_file_prefix(const char *file_name,
@@ -134,17 +156,13 @@ protocol_result_t encode_file_prefix(const char *file_name,
   net_len = htons(file_name_len);
   memcpy(out, &net_len, sizeof(net_len));
   out += sizeof(net_len);
-
   memcpy(out, file_name, (size_t)file_name_len);
   out += file_name_len;
-
   encode_u64_be(content_size, out);
   return PROTOCOL_OK;
 }
 
-protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
-                                                  const uint8_t *in,
-                                                  size_t len) {
+protocol_result_t proto_send_payload(socket_t sock, const uint8_t *in, size_t len) {
   ssize_t n = 0;
 
   if (is_socket_invalid(sock) || in == NULL) {
@@ -162,22 +180,25 @@ protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
   return PROTOCOL_OK;
 }
 
-protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
-                                                      char **file_name_out,
-                                                      uint64_t *content_size_out) {
+protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
+                                                  const uint8_t *in,
+                                                  size_t len) {
+  return proto_send_payload(sock, in, len);
+}
+
+protocol_result_t proto_recv_file_name_only(socket_t sock, char **file_name_out) {
   uint16_t net_len = 0;
   uint16_t file_name_len = 0;
   char *file_name = NULL;
-  uint8_t szbuf[8];
+  ssize_t n = 0;
 
-  if (file_name_out == NULL || content_size_out == NULL) {
+  if (file_name_out == NULL) {
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
 
   *file_name_out = NULL;
-  *content_size_out = 0;
 
-  ssize_t n = recv_all(sock, &net_len, sizeof(net_len));
+  n = recv_all(sock, &net_len, sizeof(net_len));
   if (n != (ssize_t)sizeof(net_len)) {
     return n < 0 ? PROTOCOL_ERR_IO : PROTOCOL_ERR_EOF;
   }
@@ -197,7 +218,31 @@ protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
     free(file_name);
     return n < 0 ? PROTOCOL_ERR_IO : PROTOCOL_ERR_EOF;
   }
+
   file_name[file_name_len] = '\0';
+  *file_name_out = file_name;
+  return PROTOCOL_OK;
+}
+
+protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
+                                                  char **file_name_out,
+                                                  uint64_t *content_size_out) {
+  char *file_name = NULL;
+  uint8_t szbuf[8];
+  ssize_t n = 0;
+  protocol_result_t res = PROTOCOL_OK;
+
+  if (file_name_out == NULL || content_size_out == NULL) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  *file_name_out = NULL;
+  *content_size_out = 0;
+
+  res = proto_recv_file_name_only(sock, &file_name);
+  if (res != PROTOCOL_OK) {
+    return res;
+  }
 
   n = recv_all(sock, szbuf, sizeof(szbuf));
   if (n != (ssize_t)sizeof(szbuf)) {
@@ -266,7 +311,8 @@ protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in) {
   
   header->msg_type = *base++;
   if (header->msg_type != HF_MSG_TYPE_TEXT_MESSAGE &&
-      header->msg_type != HF_MSG_TYPE_FILE_TRANSFER) {
+      header->msg_type != HF_MSG_TYPE_SEND_FILE &&
+      header->msg_type != HF_MSG_TYPE_GET_FILE) {
     return PROTOCOL_ERR_HEADER_MSG_TYPE;
   }
   

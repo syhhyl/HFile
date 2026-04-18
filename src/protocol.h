@@ -15,8 +15,9 @@
 #define HF_PROTOCOL_MAGIC 0x0429u
 #define HF_PROTOCOL_VERSION 0x03u
 
-#define HF_MSG_TYPE_FILE_TRANSFER 0x01u
+#define HF_MSG_TYPE_SEND_FILE 0x01u
 #define HF_MSG_TYPE_TEXT_MESSAGE 0x02u
+#define HF_MSG_TYPE_GET_FILE 0x03u
 
 #define HF_MSG_FLAG_NONE 0x00u
 
@@ -80,13 +81,20 @@ protocol_result_t recv_res_frame(socket_t sock, res_frame_t *frame);
 
 
 int proto_get_file_name_len(const char *file_name, uint16_t *out_len);
+size_t proto_file_name_only_size(uint16_t file_name_len);
 size_t proto_file_transfer_prefix_size(uint16_t file_name_len);
+protocol_result_t encode_file_name_only(const char *file_name, uint8_t *out);
 protocol_result_t encode_file_prefix(const char *file_name,
                                      uint64_t content_size,
                                      uint8_t *out);
+protocol_result_t proto_send_payload(socket_t sock,
+                                     const uint8_t *in,
+                                     size_t len);
 protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
                                                   const uint8_t *in,
                                                   size_t len);
+protocol_result_t proto_recv_file_name_only(socket_t sock,
+                                            char **file_name_out);
 protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
                                                        char **file_name_out,
                                                        uint64_t *content_size_out);
