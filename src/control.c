@@ -24,6 +24,102 @@ static int control_is_tty_stdout(void) {
 #endif
 }
 
+static int control_use_ansi_stdout(void) {
+#ifdef _WIN32
+  return 0;
+#else
+  return control_is_tty_stdout();
+#endif
+}
+
+static const char *control_ansi_reset(void) {
+  return "\033[0m";
+}
+
+static const char *control_ansi_bold(void) {
+  return "\033[1m";
+}
+
+static const char *control_ansi_dim(void) {
+  return "\033[2m";
+}
+
+static const char *control_ansi_cyan(void) {
+  return "\033[36m";
+}
+
+static const char *control_ansi_green(void) {
+  return "\033[32m";
+}
+
+static const char *control_ansi_yellow(void) {
+  return "\033[33m";
+}
+
+static void control_print_rich_divider(FILE *out) {
+  if (out == NULL) {
+    return;
+  }
+
+  if (control_use_ansi_stdout()) {
+    fprintf(out, "%s----------------------------------------%s\n",
+            control_ansi_dim(), control_ansi_reset());
+  } else {
+    fprintf(out, "----------------------------------------\n");
+  }
+}
+
+static void control_print_rich_title(FILE *out,
+                                     const char *title,
+                                     const char *state,
+                                     const char *state_color) {
+  if (out == NULL || title == NULL || state == NULL) {
+    return;
+  }
+
+  if (control_use_ansi_stdout()) {
+    fprintf(out, "%s%s%s  %s%s%s\n",
+            control_ansi_bold(), title, control_ansi_reset(),
+            state_color != NULL ? state_color : "",
+            state,
+            control_ansi_reset());
+  } else {
+    fprintf(out, "%s  %s\n", title, state);
+  }
+}
+
+static void control_print_rich_field(FILE *out,
+                                     const char *label,
+                                     const char *value) {
+  if (out == NULL || label == NULL || value == NULL) {
+    return;
+  }
+
+  if (control_use_ansi_stdout()) {
+    fprintf(out, "  %s%-12s%s %s\n",
+            control_ansi_cyan(), label, control_ansi_reset(), value);
+  } else {
+    fprintf(out, "  %-12s %s\n", label, value);
+  }
+}
+
+static void control_print_rich_field_num(FILE *out,
+                                         const char *label,
+                                         unsigned long value) {
+  char buf[64];
+  int n;
+
+  if (out == NULL || label == NULL) {
+    return;
+  }
+
+  n = snprintf(buf, sizeof(buf), "%lu", value);
+  if (n < 0 || (size_t)n >= sizeof(buf)) {
+    return;
+  }
+  control_print_rich_field(out, label, buf);
+}
+
 int control_build_url(uint16_t port,
                       char *url_out,
                       size_t url_out_cap,
@@ -114,13 +210,62 @@ void control_print_server_access_details(FILE *out,
     return;
   }
 
+  (void)log_path;
+  url[0] = '\0';
+
+  if (out == stdout && control_is_tty_stdout()) {
+    char listen_buf[128];
+
+    if (control_build_url(port, url, sizeof(url), &phone_reachable) == 0) {
+      listen_target = strstr(url, "://");
+      listen_target = listen_target != NULL ? listen_target + 3 : url;
+      {
+        int n = snprintf(listen_buf, sizeof(listen_buf), "%.*s (tcp + http)",
+                         (int)strcspn(listen_target, "/"), listen_target);
+        if (n < 0 || (size_t)n >= sizeof(listen_buf)) {
+          listen_buf[0] = '\0';
+        }
+      }
+    } else {
+      (void)snprintf(listen_buf, sizeof(listen_buf), "127.0.0.1:%u (tcp + http)",
+                     (unsigned)port);
+    }
+
+    control_print_rich_divider(out);
+    control_print_rich_title(out, "HFile",
+                             daemon_mode ? "DAEMON READY" : "SERVER READY",
+                             control_ansi_green());
+    control_print_rich_field(out, "Receive Dir", receive_dir);
+    control_print_rich_field_num(out, "Port", (unsigned long)port);
+    if (daemon_mode) {
+      control_print_rich_field_num(out, "PID", (unsigned long)pid);
+    }
+    if (listen_buf[0] != '\0') {
+      control_print_rich_field(out, "Listen", listen_buf);
+    }
+    if (url[0] != '\0') {
+      control_print_rich_field(out, "Web UI", url);
+      if (!phone_reachable) {
+        control_print_rich_field(out, "Mobile",
+                                 "LAN IPv4 not detected, using localhost");
+      }
+    }
+    if (!daemon_mode) {
+      control_print_rich_field(out, "Status", "Waiting for files and messages");
+    }
+    control_print_rich_divider(out);
+
+    if (url[0] != '\0') {
+      (void)control_print_qr_to(out, url);
+    }
+    fflush(out);
+    return;
+  }
+
   fprintf(out, daemon_mode ? "HFile daemon ready\n" : "HFile server ready\n");
   fprintf(out, "  receive dir: %s\n", receive_dir);
   if (daemon_mode) {
     fprintf(out, "  pid        : %ld\n", pid);
-    if (log_path != NULL) {
-      fprintf(out, "  error log  : %s\n", log_path);
-    }
   }
 
   if (control_build_url(port, url, sizeof(url), &phone_reachable) == 0) {
@@ -151,12 +296,25 @@ static void control_print_status(FILE *out, const daemon_state_t *state) {
     return;
   }
 
+  if (out == stdout && control_is_tty_stdout()) {
+    control_print_rich_divider(out);
+    control_print_rich_title(out, "HFile", "RUNNING", control_ansi_green());
+    control_print_rich_field_num(out, "PID", (unsigned long)state->pid);
+    control_print_rich_field(out, "Receive Dir", state->receive_dir);
+    control_print_rich_field_num(out, "Port", (unsigned long)state->port);
+    control_print_rich_field(out, "Web UI", state->web_url);
+    control_print_rich_divider(out);
+    if (state->web_url[0] != '\0') {
+      (void)control_print_qr_to(out, state->web_url);
+    }
+    return;
+  }
+
   fprintf(out, "status: running\n");
   fprintf(out, "pid: %ld\n", state->pid);
   fprintf(out, "receive dir: %s\n", state->receive_dir);
   fprintf(out, "port: %u\n", (unsigned)state->port);
   fprintf(out, "web ui: %s\n", state->web_url);
-  fprintf(out, "error log: %s\n", state->log_path);
 }
 
 static int control_pid_is_running(long pid) {
@@ -192,6 +350,13 @@ int control_status(void) {
   daemon_state_t state;
 
   if (control_load_running_state(&state) != 0) {
+    if (control_is_tty_stdout()) {
+      control_print_rich_divider(stdout);
+      control_print_rich_title(stdout, "HFile", "STOPPED", control_ansi_yellow());
+      control_print_rich_field(stdout, "Status", "No running daemon");
+      control_print_rich_divider(stdout);
+      return 1;
+    }
     printf("status: stopped\n");
     return 1;
   }
@@ -244,16 +409,14 @@ int control_stop(void) {
 #endif
 
   daemon_state_cleanup_files();
+  if (control_is_tty_stdout()) {
+    control_print_rich_divider(stdout);
+    control_print_rich_title(stdout, "HFile", "STOPPED", control_ansi_yellow());
+    control_print_rich_field_num(stdout, "PID", (unsigned long)state.pid);
+    control_print_rich_field(stdout, "Result", "Server stopped");
+    control_print_rich_divider(stdout);
+    return 0;
+  }
   printf("stopped pid %ld\n", state.pid);
   return 0;
-}
-
-int control_print_qr(void) {
-  daemon_state_t state;
-
-  if (control_load_running_state(&state) != 0) {
-    fprintf(stderr, "no running daemon found\n");
-    return 1;
-  }
-  return control_print_qr_to(stdout, state.web_url);
 }

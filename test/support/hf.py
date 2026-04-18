@@ -96,6 +96,11 @@ def tail_text_file(path: Path, max_bytes: int = 32 * 1024) -> str:
         return repr(data)
 
 
+def default_daemon_log_path() -> Path:
+    tmpdir = os.environ.get("TMPDIR") or "/tmp"
+    return Path(tmpdir) / "hf-daemon.log"
+
+
 def wait_for_text_in_file(
     path: Path,
     needle: str,
@@ -423,6 +428,7 @@ class HFileServer:
                 self._pid = self._proc.pid
             return
 
+        self.log_path = default_daemon_log_path()
         for line in log_text.splitlines():
             if line.startswith("  pid        : "):
                 try:

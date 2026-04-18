@@ -7,7 +7,6 @@
 
 int control_status(void);
 int control_stop(void);
-int control_print_qr(void);
 int control_build_url(uint16_t port,
                       char *url_out,
                       size_t url_out_cap,

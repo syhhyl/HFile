@@ -14,7 +14,6 @@ typedef enum {
   client_mode,
   status_mode,
   stop_mode,
-  qr_mode,
   init_mode
 } Mode;
 

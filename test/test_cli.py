@@ -35,7 +35,7 @@ class TestCLI(unittest.TestCase):
                 "args": [],
                 "rc": 1,
                 "stderr_contains": [
-                    "must specify one of -d, -c, -g, -m, status, stop, or -q",
+                    "must specify one of -d, -c, -g, -m, status, or stop",
                     "usage:",
                 ],
             },
@@ -95,12 +95,6 @@ class TestCLI(unittest.TestCase):
                 "args": ["-d", "out", "-i", "127.0.0.1"],
                 "rc": 1,
                 "stderr_contains": ["server mode does not accept -i", "usage:"],
-            },
-            {
-                "name": "control_has_i",
-                "args": ["-q", "-i", "127.0.0.1"],
-                "rc": 1,
-                "stderr_contains": ["control mode does not accept -i", "usage:"],
             },
             {
                 "name": "invalid_port",
@@ -170,13 +164,13 @@ class TestCLI(unittest.TestCase):
         )
         self.assertIn("invalid remote file", r.stderr)
 
-    def test_qr_requires_running_daemon(self) -> None:
-        run_hf(self.hf_path, ["stop"], timeout=5.0)
+    def test_qr_command_is_removed(self) -> None:
         r = run_hf(self.hf_path, ["-q"], timeout=5.0)
         self.assertEqual(
             1, r.returncode, f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}"
         )
-        self.assertIn("no running daemon found", r.stderr)
+        self.assertIn("invalid argument", r.stderr)
+        self.assertIn("usage:", r.stderr)
 
     def test_d_lifecycle_commands(self) -> None:
         run_hf(self.hf_path, ["stop"], timeout=5.0)
@@ -212,14 +206,6 @@ class TestCLI(unittest.TestCase):
                     self.assertIn("status: running", status.stdout)
                     self.assertIn(f"port: {port}", status.stdout)
                     self.assertIn(f"receive dir: {out_dir}", status.stdout)
-
-                    qr = run_hf(self.hf_path, ["-q"], timeout=5.0)
-                    self.assertEqual(
-                        0,
-                        qr.returncode,
-                        f"argv={qr.argv} stdout={qr.stdout!r} stderr={qr.stderr!r}",
-                    )
-                    self.assertTrue(any(ch in qr.stdout for ch in ("█", "▀", "▄")))
 
                     second = HFileServer(
                         hf_path=self.hf_path,
@@ -273,20 +259,6 @@ class TestCLI(unittest.TestCase):
                 self.assertIn(f"port: {port}", status.stdout)
                 self.assertIn(f"receive dir: {out_dir}", status.stdout)
                 self.assertIn("web ui: http://", status.stdout)
-                error_log_line = next(
-                    line
-                    for line in status.stdout.splitlines()
-                    if line.startswith("error log: ")
-                )
-                error_log_path = Path(error_log_line.split(": ", 1)[1])
-
-                qr = run_hf(self.hf_path, ["-q"], timeout=5.0)
-                self.assertEqual(
-                    0,
-                    qr.returncode,
-                    f"argv={qr.argv} stdout={qr.stdout!r} stderr={qr.stderr!r}",
-                )
-                self.assertTrue(any(ch in qr.stdout for ch in ("█", "▀", "▄")))
 
                 src = base_dir / "hello.txt"
                 src.write_bytes(b"hello daemon\n")
@@ -299,10 +271,6 @@ class TestCLI(unittest.TestCase):
                     0, send.returncode, f"argv={send.argv} stderr={send.stderr!r}"
                 )
                 self.assertEqual(b"hello daemon\n", (out_dir / src.name).read_bytes())
-                self.assertNotIn(
-                    "saved to",
-                    error_log_path.read_text(encoding="utf-8", errors="replace"),
-                )
 
                 conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5.0)
                 conn.request("GET", "/api/messages/stream")

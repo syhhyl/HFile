@@ -70,9 +70,8 @@ void usage(const char *argv0) {
           "  %s -g <remote_file> [-o <local_path>] [-i <ip>] [-p <port>]\n"
           "  %s -m <message> [-i <ip>] [-p <port>]\n"
           "  %s status\n"
-          "  %s stop\n"
-          "  %s -q\n",
-          argv0, argv0, argv0, argv0, argv0, argv0, argv0);
+          "  %s stop\n",
+          argv0, argv0, argv0, argv0, argv0, argv0);
 }
 
 int parse_port(const char *s, uint16_t *out) {
@@ -123,10 +122,6 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
       arg_start = 2;
     } else if (strcmp(argv[1], "stop") == 0) {
       opt->mode = stop_mode;
-      control_mode_selected = 1;
-      arg_start = 2;
-    } else if (strcmp(argv[1], "-q") == 0) {
-      opt->mode = qr_mode;
       control_mode_selected = 1;
       arg_start = 2;
     }
@@ -306,7 +301,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   }
 
   if (mode_count == 0) {
-    fprintf(stderr, "must specify one of -d, -c, -g, -m, status, stop, or -q\n");
+    fprintf(stderr, "must specify one of -d, -c, -g, -m, status, or stop\n");
     return PARSE_ERR;
   }
 
