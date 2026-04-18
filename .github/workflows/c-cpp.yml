@@ -39,8 +39,17 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Run test suite
-        run: python -m unittest -v test.test_hf
+      - name: Run support tests
+        run: python -m unittest -v test.test_support
+
+      - name: Run CLI tests
+        run: python -m unittest -v test.test_cli
+
+      - name: Run HTTP tests
+        run: python -m unittest -v test.test_http
+
+      - name: Run transfer tests
+        run: python -m unittest -v test.test_transfer
 
   windows-cross-build:
     name: Windows cross-build (MinGW)
