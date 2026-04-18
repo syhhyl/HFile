@@ -16,6 +16,8 @@ static inline void init_server_opt(const Opt *opt, server_opt_t *server_opt) {
 
 static inline void init_client_opt(const Opt *opt, client_opt_t *client_opt) {
   client_opt->path = opt->path;
+  client_opt->remote_path = opt->remote_path;
+  client_opt->output_path = opt->output_path;
   client_opt->message = opt->message;
   client_opt->ip = opt->ip;
   client_opt->port = opt->port;

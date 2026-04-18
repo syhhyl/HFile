@@ -82,6 +82,15 @@ class TestCLI(unittest.TestCase):
                 "stderr_contains": ["control mode does not accept -p", "usage:"],
             },
             {
+                "name": "put_and_get",
+                "args": ["-c", "in", "-g", "out"],
+                "rc": 1,
+                "stderr_contains": [
+                    "must choose exactly one client action: -c, -g, or -m",
+                    "usage:",
+                ],
+            },
+            {
                 "name": "server_has_i",
                 "args": ["-d", "out", "-i", "127.0.0.1"],
                 "rc": 1,
@@ -98,6 +107,12 @@ class TestCLI(unittest.TestCase):
                 "args": ["-d", "out", "-p", "nope"],
                 "rc": 1,
                 "stderr_contains": ["invalid port", "usage:"],
+            },
+            {
+                "name": "output_requires_get",
+                "args": ["-o", "out.txt"],
+                "rc": 1,
+                "stderr_contains": ["-o requires -g", "usage:"],
             },
         ]
 
@@ -145,6 +160,15 @@ class TestCLI(unittest.TestCase):
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
         self.assertIn("open", r.stderr)
+
+    def test_get_rejects_invalid_remote_file(self) -> None:
+        r = run_hf(self.hf_path, ["-g", "../bad"], timeout=5.0)
+        self.assertEqual(
+            r.returncode,
+            1,
+            f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+        self.assertIn("invalid remote file", r.stderr)
 
     def test_qr_requires_running_daemon(self) -> None:
         run_hf(self.hf_path, ["stop"], timeout=5.0)

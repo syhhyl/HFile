@@ -86,6 +86,10 @@ static protocol_result_t server_handle_file_transfer(
   socket_t conn,
   const server_opt_t *ser_opt,
   const protocol_header_t *proto_header);
+static protocol_result_t server_handle_get_file(
+  socket_t conn,
+  const server_opt_t *ser_opt,
+  const protocol_header_t *proto_header);
 static protocol_result_t server_send_response(socket_t conn,
                                               uint8_t phase,
                                               uint8_t status,
@@ -449,8 +453,11 @@ static int server_handle_protocol_connection(socket_t conn,
     case HF_MSG_TYPE_TEXT_MESSAGE:
       return server_handle_text_message(conn, &proto_header);
 
-    case HF_MSG_TYPE_FILE_TRANSFER:
+    case HF_MSG_TYPE_SEND_FILE:
       return server_handle_file_transfer(conn, ser_opt, &proto_header) == PROTOCOL_OK ? 0 : 1;
+
+    case HF_MSG_TYPE_GET_FILE:
+      return server_handle_get_file(conn, ser_opt, &proto_header) == PROTOCOL_OK ? 0 : 1;
 
     default:
       fprintf(stderr, "protocol error: unsupported message type: %u\n",
@@ -704,6 +711,139 @@ SEND_READY_REJECT:
 
 CLEANUP:
   if (file_name != NULL) free(file_name);
+  return result;
+}
+
+static protocol_result_t server_handle_get_file(
+  socket_t conn,
+  const server_opt_t *ser_opt,
+  const protocol_header_t *proto_header) {
+  char *file_name = NULL;
+  char full_path[4096];
+  fs_path_info_t info = {0};
+  int fd = -1;
+  protocol_result_t result = PROTOCOL_ERR_IO;
+
+  if (ser_opt == NULL) {
+    fprintf(stderr, "invalid get handler arguments\n");
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  if (proto_header->payload_size < (uint64_t)proto_file_name_only_size(1)) {
+    fprintf(stderr, "protocol error: get payload size too small\n");
+    (void)server_send_response(
+      conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED, PROTOCOL_ERR_INVALID_ARGUMENT);
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  result = proto_recv_file_name_only(conn, &file_name);
+  if (result != PROTOCOL_OK) {
+    if (result == PROTOCOL_ERR_FILE_NAME_LEN) {
+      fprintf(stderr, "protocol error: invalid get file name length\n");
+    } else if (result == PROTOCOL_ERR_ALLOC) {
+      perror("malloc(file_name)");
+    } else if (result == PROTOCOL_ERR_EOF) {
+      fprintf(stderr, "protocol error: unexpected EOF while receiving get request\n");
+    } else {
+      sock_perror("proto_recv_file_name_only");
+    }
+    goto SEND_READY_REJECT;
+  }
+
+  if (fs_validate_file_name(file_name) != 0) {
+    fprintf(stderr, "invalid get file name: %s\n", file_name);
+    result = PROTOCOL_ERR_INVALID_FILE_NAME;
+    goto SEND_READY_REJECT;
+  }
+
+  if (proto_header->payload_size !=
+      (uint64_t)proto_file_name_only_size((uint16_t)strlen(file_name))) {
+    fprintf(stderr, "protocol error: get payload size mismatch\n");
+    result = PROTOCOL_ERR_PAYLOAD_SIZE_MISMATCH;
+    goto SEND_READY_REJECT;
+  }
+
+  if (fs_join_path(full_path, sizeof(full_path), ser_opt->path, file_name) != 0) {
+    fprintf(stderr, "output path is too long\n");
+    result = PROTOCOL_ERR_INVALID_ARGUMENT;
+    goto SEND_READY_REJECT;
+  }
+
+  if (fs_get_path_info(full_path, &info) != 0 || info.kind != FS_PATH_KIND_FILE) {
+    result = PROTOCOL_ERR_INVALID_ARGUMENT;
+    goto SEND_READY_REJECT;
+  }
+
+#ifdef _WIN32
+  fd = fs_open(full_path, O_RDONLY | O_BINARY, 0);
+#else
+  fd = fs_open(full_path, O_RDONLY, 0);
+#endif
+  if (fd == -1) {
+    result = PROTOCOL_ERR_IO;
+    goto SEND_READY_REJECT;
+  }
+
+  result = server_send_response(
+    conn, PROTO_PHASE_READY, PROTO_STATUS_OK, PROTOCOL_OK);
+  if (result != PROTOCOL_OK) {
+    sock_perror("send_res_frame(get_ready)");
+    goto CLEANUP;
+  }
+
+  {
+    uint8_t prefix_buf[sizeof(uint16_t) + HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
+    result = encode_file_prefix(file_name, info.size, prefix_buf);
+    if (result != PROTOCOL_OK) {
+      goto SEND_FINAL_FAILED;
+    }
+    result = proto_send_payload(
+      conn,
+      prefix_buf,
+      proto_file_transfer_prefix_size((uint16_t)strlen(file_name)));
+    if (result != PROTOCOL_OK) {
+      goto CLEANUP;
+    }
+  }
+
+  {
+    net_send_file_result_t send_res = net_send_file_best_effort(conn, fd, info.size);
+    if (send_res != NET_SEND_FILE_OK) {
+      result = PROTOCOL_ERR_IO;
+      goto SEND_FINAL_FAILED;
+    }
+  }
+
+  result = server_send_response(
+    conn, PROTO_PHASE_FINAL, PROTO_STATUS_OK, PROTOCOL_OK);
+  if (result != PROTOCOL_OK) {
+    sock_perror("send_res_frame(get_final_ok)");
+    goto CLEANUP;
+  }
+
+  result = PROTOCOL_OK;
+  goto CLEANUP;
+
+SEND_FINAL_FAILED:
+  if (server_send_response(
+        conn, PROTO_PHASE_FINAL, PROTO_STATUS_FAILED, result) != PROTOCOL_OK) {
+    sock_perror("send_res_frame(get_final_failed)");
+  }
+  goto CLEANUP;
+
+SEND_READY_REJECT:
+  if (server_send_response(
+        conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED, result) != PROTOCOL_OK) {
+    sock_perror("send_res_frame(get_ready_rejected)");
+  }
+
+CLEANUP:
+  if (fd != -1) {
+    fs_close(fd);
+  }
+  if (file_name != NULL) {
+    free(file_name);
+  }
   return result;
 }
 
