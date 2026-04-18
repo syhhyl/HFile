@@ -224,6 +224,53 @@ class TestHTTP(unittest.TestCase):
             "msg: hello from browser", tail_text_file(self.server.log_path or Path(""))
         )
 
+    def test_message_post_trims_trailing_whitespace_before_store(self) -> None:
+        status, body, _ = self._request(
+            "POST",
+            "/api/messages",
+            data=json.dumps({"message": "hello \t\r\n"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
+
+        status, body, _ = self._request("GET", "/api/messages/latest")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(payload["has_message"], True)
+        self.assertEqual(payload["message"], "hello")
+
+    def test_message_post_all_whitespace_stores_empty_message(self) -> None:
+        status, body, _ = self._request(
+            "POST",
+            "/api/messages",
+            data=json.dumps({"message": " \t\r\n"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
+
+        status, body, _ = self._request("GET", "/api/messages/latest")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(payload["has_message"], True)
+        self.assertEqual(payload["message"], "")
+
+    def test_message_post_trims_trailing_unicode_whitespace_before_store(self) -> None:
+        status, body, _ = self._request(
+            "POST",
+            "/api/messages",
+            data=json.dumps({"message": "hello\u3000"}, ensure_ascii=False).encode(
+                "utf-8"
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
+
+        status, body, _ = self._request("GET", "/api/messages/latest")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(payload["has_message"], True)
+        self.assertEqual(payload["message"], "hello")
+
     def test_tcp_message_updates_latest_message(self) -> None:
         r = run_hf(
             self.hf_path,
@@ -251,6 +298,56 @@ class TestHTTP(unittest.TestCase):
         self.assertNotIn(
             "msg: hello from tcp", tail_text_file(self.server.log_path or Path(""))
         )
+
+    def test_tcp_message_trims_trailing_whitespace_before_store(self) -> None:
+        r = run_hf(
+            self.hf_path,
+            [
+                "-m",
+                "hello \t",
+                "-i",
+                self.server.host,
+                "-p",
+                str(self.server.port),
+            ],
+            timeout=8.0,
+        )
+        self.assertEqual(
+            r.returncode,
+            0,
+            f"client failed argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+
+        status, body, _ = self._request("GET", "/api/messages/latest")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(payload["has_message"], True)
+        self.assertEqual(payload["message"], "hello")
+
+    def test_tcp_message_all_whitespace_stores_empty_message(self) -> None:
+        r = run_hf(
+            self.hf_path,
+            [
+                "-m",
+                " \t",
+                "-i",
+                self.server.host,
+                "-p",
+                str(self.server.port),
+            ],
+            timeout=8.0,
+        )
+        self.assertEqual(
+            r.returncode,
+            0,
+            f"client failed argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+
+        status, body, _ = self._request("GET", "/api/messages/latest")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(payload["has_message"], True)
+        self.assertEqual(payload["message"], "")
 
     def test_message_stream_receives_updates(self) -> None:
         conn = http.client.HTTPConnection(

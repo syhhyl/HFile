@@ -1,5 +1,6 @@
 #include "message_store.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +42,76 @@ static void message_store_unlock(void) {
 #else
   (void)pthread_mutex_unlock(&g_message_store.mutex);
 #endif
+}
+
+static int message_store_is_unicode_whitespace(uint32_t cp) {
+  if (cp <= 0x7Fu) {
+    return isspace((unsigned char)cp) != 0;
+  }
+
+  return cp == 0x0085u || cp == 0x00A0u || cp == 0x1680u ||
+         (cp >= 0x2000u && cp <= 0x200Au) || cp == 0x2028u ||
+         cp == 0x2029u || cp == 0x202Fu || cp == 0x205Fu ||
+         cp == 0x3000u;
+}
+
+static size_t message_store_trailing_whitespace_bytes(const char *message,
+                                                      size_t len) {
+  size_t seq_len = 0;
+  uint32_t cp = 0;
+  unsigned char b0 = 0;
+  size_t start = 0;
+
+  if (len == 0) {
+    return 0;
+  }
+
+  if (((unsigned char)message[len - 1u] & 0x80u) == 0) {
+    return message_store_is_unicode_whitespace(
+             (unsigned char)message[len - 1u])
+             ? 1u
+             : 0u;
+  }
+
+  start = len - 1u;
+  while (start > 0 &&
+         (((unsigned char)message[start] & 0xC0u) == 0x80u)) {
+    start--;
+  }
+
+  b0 = (unsigned char)message[start];
+  if ((b0 & 0xE0u) == 0xC0u) {
+    seq_len = 2u;
+    cp = (uint32_t)(b0 & 0x1Fu);
+  } else if ((b0 & 0xF0u) == 0xE0u) {
+    seq_len = 3u;
+    cp = (uint32_t)(b0 & 0x0Fu);
+  } else if ((b0 & 0xF8u) == 0xF0u) {
+    seq_len = 4u;
+    cp = (uint32_t)(b0 & 0x07u);
+  } else {
+    return 0;
+  }
+
+  if (start + seq_len != len) {
+    return 0;
+  }
+
+  for (size_t i = start + 1u; i < len; i++) {
+    unsigned char bx = (unsigned char)message[i];
+    if ((bx & 0xC0u) != 0x80u) {
+      return 0;
+    }
+    cp = (cp << 6u) | (uint32_t)(bx & 0x3Fu);
+  }
+
+  if ((seq_len == 2u && cp < 0x80u) || (seq_len == 3u && cp < 0x800u) ||
+      (seq_len == 4u && cp < 0x10000u) ||
+      (cp >= 0xD800u && cp <= 0xDFFFu) || cp > 0x10FFFFu) {
+    return 0;
+  }
+
+  return message_store_is_unicode_whitespace(cp) ? seq_len : 0u;
 }
 
 int message_store_init(void) {
@@ -115,11 +186,21 @@ int message_store_set(const char *message) {
   }
 
   len = strlen(message);
+  while (len > 0) {
+    size_t trimmed = message_store_trailing_whitespace_bytes(message, len);
+    if (trimmed == 0) {
+      break;
+    }
+    len -= trimmed;
+  }
   copy = (char *)malloc(len + 1u);
   if (copy == NULL) {
     return 1;
   }
-  memcpy(copy, message, len + 1u);
+  if (len > 0) {
+    memcpy(copy, message, len);
+  }
+  copy[len] = '\0';
 
   message_store_lock();
   if (g_message_store.message != NULL) {
