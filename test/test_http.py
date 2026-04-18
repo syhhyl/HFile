@@ -95,7 +95,7 @@ class TestHTTP(unittest.TestCase):
         self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
         text = body.decode("utf-8", errors="replace")
         self.assertIn("HFile", text)
-        self.assertIn("If you need to move bytes, you'll like HFile.", text)
+        self.assertIn("Bytes with intent.", text)
         self.assertIn("/app.js", text)
         self.assertIn("Latest Message", text)
 
