@@ -1,7 +1,5 @@
 # HFile
 
-Bytes with intent.
-
 HFile is a native C file transfer tool built for simple deployment, predictable behavior, and low overhead.
 
 ## Why HFile
@@ -27,7 +25,6 @@ Install on Windows:
 irm https://syhhyl.github.io/HFile/install.ps1 | iex
 ```
 
-The installer downloads the latest GitHub Release and verifies it with `checksums.txt`.
 
 Start a server:
 
@@ -53,18 +50,6 @@ Open the Web UI:
 http://127.0.0.1:8888/
 ```
 
-On POSIX, `-d` starts the server in the background. On Windows, `-d` keeps the server attached to the current process. Only one HFile server can run at a time.
-
-## What It Does
-
-- Receive files from the HFile CLI.
-- Receive uploads from a browser on the same port.
-- Expose a small HTTP surface for automation.
-- Keep transfer behavior simple and predictable.
-
-## For Developers
-
-Build, test, and development details live in [AGENTS.md](./AGENTS.md).
 
 ## License
 
