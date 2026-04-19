@@ -24,70 +24,6 @@ static int control_is_tty_stdout(void) {
 #endif
 }
 
-static int control_use_ansi_stdout(void) {
-#ifdef _WIN32
-  return 0;
-#else
-  return control_is_tty_stdout();
-#endif
-}
-
-static const char *control_ansi_reset(void) {
-  return "\033[0m";
-}
-
-static const char *control_ansi_bold(void) {
-  return "\033[1m";
-}
-
-static const char *control_ansi_dim(void) {
-  return "\033[2m";
-}
-
-static const char *control_ansi_cyan(void) {
-  return "\033[36m";
-}
-
-static const char *control_ansi_green(void) {
-  return "\033[32m";
-}
-
-static const char *control_ansi_yellow(void) {
-  return "\033[33m";
-}
-
-static void control_print_rich_divider(FILE *out) {
-  if (out == NULL) {
-    return;
-  }
-
-  if (control_use_ansi_stdout()) {
-    fprintf(out, "%s----------------------------------------%s\n",
-            control_ansi_dim(), control_ansi_reset());
-  } else {
-    fprintf(out, "----------------------------------------\n");
-  }
-}
-
-static void control_print_rich_title(FILE *out,
-                                     const char *title,
-                                     const char *state,
-                                     const char *state_color) {
-  if (out == NULL || title == NULL || state == NULL) {
-    return;
-  }
-
-  if (control_use_ansi_stdout()) {
-    fprintf(out, "%s%s%s  %s%s%s\n",
-            control_ansi_bold(), title, control_ansi_reset(),
-            state_color != NULL ? state_color : "",
-            state,
-            control_ansi_reset());
-  } else {
-    fprintf(out, "%s  %s\n", title, state);
-  }
-}
-
 static void control_print_rich_field(FILE *out,
                                      const char *label,
                                      const char *value) {
@@ -95,12 +31,7 @@ static void control_print_rich_field(FILE *out,
     return;
   }
 
-  if (control_use_ansi_stdout()) {
-    fprintf(out, "  %s%-12s%s %s\n",
-            control_ansi_cyan(), label, control_ansi_reset(), value);
-  } else {
-    fprintf(out, "  %-12s %s\n", label, value);
-  }
+  fprintf(out, "  %-12s %s\n", label, value);
 }
 
 static void control_print_rich_field_num(FILE *out,
@@ -120,10 +51,29 @@ static void control_print_rich_field_num(FILE *out,
   control_print_rich_field(out, label, buf);
 }
 
+static void control_print_startup_banner(FILE *out) {
+  static const char *lines[] = {
+    "    __ _______ __   ",
+    "   / // / __(_) /__ ",
+    "  / _  / _// / / -_)",
+    " /_//_/_/ /_/_/\\__/",
+    "https://github.com/syhhyl/HFile"
+  };
+  size_t i;
+
+  if (out == NULL) {
+    return;
+  }
+
+  for (i = 0; i < sizeof(lines) / sizeof(lines[0]); i++) {
+    fprintf(out, "%s\n", lines[i]);
+  }
+}
+
 int control_build_url(uint16_t port,
-                      char *url_out,
-                      size_t url_out_cap,
-                      int *phone_reachable_out) {
+                       char *url_out,
+                       size_t url_out_cap,
+                       int *phone_reachable_out) {
   const char *host = NULL;
   char discovered_ip[64];
   if (url_out == NULL || url_out_cap == 0 || phone_reachable_out == NULL ||
@@ -150,18 +100,20 @@ int control_build_url(uint16_t port,
   return 0;
 }
 
-static int control_print_qr_to(FILE *out, const char *url) {
+static int control_print_qr_to(FILE *out,
+                               const char *url,
+                               int border,
+                               enum qrcodegen_Ecc ecc) {
   uint8_t temp[qrcodegen_BUFFER_LEN_MAX];
   uint8_t qr[qrcodegen_BUFFER_LEN_MAX];
-  const int border = 4;
 
-  if (out == NULL || url == NULL || url[0] == '\0') {
+  if (out == NULL || url == NULL || url[0] == '\0' || border < 0) {
     return 1;
   }
 
-  if (!qrcodegen_encodeText(url, temp, qr, qrcodegen_Ecc_MEDIUM,
-                            qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
-                            qrcodegen_Mask_AUTO, true)) {
+  if (!qrcodegen_encodeText(url, temp, qr, ecc,
+                             qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
+                             qrcodegen_Mask_AUTO, true)) {
     return 1;
   }
 
@@ -211,40 +163,16 @@ void control_print_server_access_details(FILE *out,
   }
 
   (void)log_path;
+  (void)pid;
   url[0] = '\0';
 
   if (out == stdout && control_is_tty_stdout()) {
-    char listen_buf[128];
+    (void)control_build_url(port, url, sizeof(url), &phone_reachable);
 
-    if (control_build_url(port, url, sizeof(url), &phone_reachable) == 0) {
-      listen_target = strstr(url, "://");
-      listen_target = listen_target != NULL ? listen_target + 3 : url;
-      {
-        int n = snprintf(listen_buf, sizeof(listen_buf), "%.*s (tcp + http)",
-                         (int)strcspn(listen_target, "/"), listen_target);
-        if (n < 0 || (size_t)n >= sizeof(listen_buf)) {
-          listen_buf[0] = '\0';
-        }
-      }
-    } else {
-      (void)snprintf(listen_buf, sizeof(listen_buf), "127.0.0.1:%u (tcp + http)",
-                     (unsigned)port);
-    }
-
-    control_print_rich_divider(out);
-    control_print_rich_title(out, "HFile",
-                             daemon_mode ? "DAEMON READY" : "SERVER READY",
-                             control_ansi_green());
+    control_print_startup_banner(out);
     control_print_rich_field(out, "Receive Dir", receive_dir);
-    control_print_rich_field_num(out, "Port", (unsigned long)port);
-    if (daemon_mode) {
-      control_print_rich_field_num(out, "PID", (unsigned long)pid);
-    }
-    if (listen_buf[0] != '\0') {
-      control_print_rich_field(out, "Listen", listen_buf);
-    }
     if (url[0] != '\0') {
-      control_print_rich_field(out, "Web UI", url);
+      control_print_rich_field(out, "Web", url);
       if (!phone_reachable) {
         control_print_rich_field(out, "Mobile",
                                  "LAN IPv4 not detected, using localhost");
@@ -253,10 +181,9 @@ void control_print_server_access_details(FILE *out,
     if (!daemon_mode) {
       control_print_rich_field(out, "Status", "Waiting for files and messages");
     }
-    control_print_rich_divider(out);
 
     if (url[0] != '\0') {
-      (void)control_print_qr_to(out, url);
+      (void)control_print_qr_to(out, url, 1, qrcodegen_Ecc_LOW);
     }
     fflush(out);
     return;
@@ -273,7 +200,7 @@ void control_print_server_access_details(FILE *out,
     listen_target = listen_target != NULL ? listen_target + 3 : url;
     fprintf(out, "  listen     : %.*s (tcp + http)\n",
             (int)strcspn(listen_target, "/"), listen_target);
-    fprintf(out, "  web ui     : %s\n", url);
+    fprintf(out, "  web        : %s\n", url);
     if (!phone_reachable) {
       fprintf(out, "  mobile     : could not detect a LAN IPv4, using localhost\n");
     }
@@ -282,7 +209,7 @@ void control_print_server_access_details(FILE *out,
       fprintf(out, "  status     : waiting for files and messages\n");
     }
     if (out == stdout && control_is_tty_stdout()) {
-      (void)control_print_qr_to(out, url);
+      (void)control_print_qr_to(out, url, 4, qrcodegen_Ecc_MEDIUM);
     }
   } else {
     fprintf(out, "  listen     : 127.0.0.1:%u (tcp + http)\n", (unsigned)port);
@@ -297,15 +224,12 @@ static void control_print_status(FILE *out, const daemon_state_t *state) {
   }
 
   if (out == stdout && control_is_tty_stdout()) {
-    control_print_rich_divider(out);
-    control_print_rich_title(out, "HFile", "RUNNING", control_ansi_green());
-    control_print_rich_field_num(out, "PID", (unsigned long)state->pid);
+    control_print_startup_banner(out);
     control_print_rich_field(out, "Receive Dir", state->receive_dir);
-    control_print_rich_field_num(out, "Port", (unsigned long)state->port);
-    control_print_rich_field(out, "Web UI", state->web_url);
-    control_print_rich_divider(out);
+    control_print_rich_field_num(out, "PID", (unsigned long)state->pid);
+    control_print_rich_field(out, "Web", state->web_url);
     if (state->web_url[0] != '\0') {
-      (void)control_print_qr_to(out, state->web_url);
+      (void)control_print_qr_to(out, state->web_url, 1, qrcodegen_Ecc_LOW);
     }
     return;
   }
@@ -314,7 +238,7 @@ static void control_print_status(FILE *out, const daemon_state_t *state) {
   fprintf(out, "pid: %ld\n", state->pid);
   fprintf(out, "receive dir: %s\n", state->receive_dir);
   fprintf(out, "port: %u\n", (unsigned)state->port);
-  fprintf(out, "web ui: %s\n", state->web_url);
+  fprintf(out, "web: %s\n", state->web_url);
 }
 
 static int control_pid_is_running(long pid) {
@@ -351,10 +275,8 @@ int control_status(void) {
 
   if (control_load_running_state(&state) != 0) {
     if (control_is_tty_stdout()) {
-      control_print_rich_divider(stdout);
-      control_print_rich_title(stdout, "HFile", "STOPPED", control_ansi_yellow());
+      control_print_startup_banner(stdout);
       control_print_rich_field(stdout, "Status", "No running daemon");
-      control_print_rich_divider(stdout);
       return 1;
     }
     printf("status: stopped\n");
@@ -410,11 +332,9 @@ int control_stop(void) {
 
   daemon_state_cleanup_files();
   if (control_is_tty_stdout()) {
-    control_print_rich_divider(stdout);
-    control_print_rich_title(stdout, "HFile", "STOPPED", control_ansi_yellow());
+    control_print_startup_banner(stdout);
     control_print_rich_field_num(stdout, "PID", (unsigned long)state.pid);
     control_print_rich_field(stdout, "Result", "Server stopped");
-    control_print_rich_divider(stdout);
     return 0;
   }
   printf("stopped pid %ld\n", state.pid);

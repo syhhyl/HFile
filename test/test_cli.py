@@ -46,12 +46,6 @@ class TestCLI(unittest.TestCase):
                 "stderr_contains": ["invalid argument", "usage:"],
             },
             {
-                "name": "removed_s",
-                "args": ["-s", "out"],
-                "rc": 1,
-                "stderr_contains": ["invalid argument", "usage:"],
-            },
-            {
                 "name": "duplicate_d",
                 "args": ["-d", "out1", "-d", "out2"],
                 "rc": 1,
@@ -164,14 +158,6 @@ class TestCLI(unittest.TestCase):
         )
         self.assertIn("invalid remote file", r.stderr)
 
-    def test_qr_command_is_removed(self) -> None:
-        r = run_hf(self.hf_path, ["-q"], timeout=5.0)
-        self.assertEqual(
-            1, r.returncode, f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}"
-        )
-        self.assertIn("invalid argument", r.stderr)
-        self.assertIn("usage:", r.stderr)
-
     def test_d_lifecycle_commands(self) -> None:
         run_hf(self.hf_path, ["stop"], timeout=5.0)
 
@@ -258,7 +244,7 @@ class TestCLI(unittest.TestCase):
                 self.assertIn("status: running", status.stdout)
                 self.assertIn(f"port: {port}", status.stdout)
                 self.assertIn(f"receive dir: {out_dir}", status.stdout)
-                self.assertIn("web ui: http://", status.stdout)
+                self.assertIn("web: http://", status.stdout)
 
                 src = base_dir / "hello.txt"
                 src.write_bytes(b"hello daemon\n")
