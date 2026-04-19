@@ -12,12 +12,14 @@ Short suites:
   cli       Run CLI tests
   http      Run HTTP tests
   transfer  Run transfer tests
+  perf      Run local benchmark end-to-end (prefer LAN IPv4, fallback localhost)
   perf-server  Run benchmark receive server
   perf-client  Run benchmark send client
 
 Examples:
   ./test.sh
   ./test.sh transfer
+  ./test.sh perf --sizes 256MiB --runs 1
   ./test.sh perf-server
   ./test.sh perf-client --server-host 192.168.1.10
   ./test.sh -v test.test_transfer
@@ -52,6 +54,10 @@ case "$1" in
   transfer)
     shift
     exec python3 -m unittest -v test.test_transfer "$@"
+    ;;
+  perf)
+    shift
+    exec python3 test/perf_transfer.py local "$@"
     ;;
   perf-server)
     shift

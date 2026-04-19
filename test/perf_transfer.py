@@ -9,6 +9,7 @@ import socket
 import statistics
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime
 from dataclasses import dataclass
@@ -134,10 +135,60 @@ def restore_cleanup_handlers(previous_int: object, previous_term: object) -> Non
     signal.signal(signal.SIGTERM, previous_term)
 
 
-def recv_line(sock: socket.socket) -> str:
+def stop_running_server_if_needed(hf_path: Path) -> None:
+    status = run_hf(hf_path, ["status"], timeout=5.0)
+    if status.returncode != 0:
+        return
+
+    if "status: running" not in status.stdout:
+        raise RuntimeError(
+            "unexpected status output while checking running server: "
+            f"stdout={status.stdout!r} stderr={status.stderr!r}"
+        )
+
+    print("detected running HFile server, stopping before perf run")
+    stop = run_hf(hf_path, ["stop"], timeout=10.0)
+    if stop.returncode != 0:
+        raise RuntimeError(
+            "failed to stop running HFile server before perf run: "
+            f"stdout={stop.stdout!r} stderr={stop.stderr!r}"
+        )
+
+    verify = run_hf(hf_path, ["status"], timeout=5.0)
+    if verify.returncode == 0:
+        raise RuntimeError(
+            "running HFile server still present after stop: "
+            f"stdout={verify.stdout!r} stderr={verify.stderr!r}"
+        )
+
+
+def resolve_local_perf_host(preferred_host: str | None) -> tuple[str, bool]:
+    if preferred_host is not None and preferred_host.strip():
+        return preferred_host.strip(), False
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 53))
+        host = sock.getsockname()[0]
+    except OSError:
+        host = "127.0.0.1"
+    finally:
+        sock.close()
+
+    if host in ("0.0.0.0", "127.0.0.1", ""):
+        return "127.0.0.1", True
+    return host, False
+
+
+def recv_line(sock: socket.socket, abort_event: threading.Event | None = None) -> str:
     chunks = bytearray()
     while True:
-        data = sock.recv(1)
+        try:
+            data = sock.recv(1)
+        except socket.timeout:
+            if abort_event is not None and abort_event.is_set():
+                raise RuntimeError("benchmark server aborted")
+            continue
         if not data:
             raise RuntimeError("control connection closed unexpectedly")
         if data == b"\n":
@@ -201,6 +252,7 @@ def wait_for_completed_file(
     file_name: str,
     expected_size: int,
     timeout: float,
+    abort_event: threading.Event | None = None,
 ) -> float:
     target = out_dir / file_name
     start = time.monotonic()
@@ -208,6 +260,8 @@ def wait_for_completed_file(
     deadline = start + timeout + 10.0
 
     while time.monotonic() < deadline:
+        if abort_event is not None and abort_event.is_set():
+            raise RuntimeError("benchmark server aborted")
         try:
             size = target.stat().st_size
         except FileNotFoundError:
@@ -232,34 +286,40 @@ def handle_server_batch(
     label: str,
     expected_size: int,
     runs: int,
+    abort_event: threading.Event | None = None,
 ) -> list[float]:
     intervals: list[float] = []
     timeout = transfer_timeout_seconds(expected_size)
 
     for _ in range(runs):
-        file_name, file_size = parse_file_start(recv_line(conn))
+        file_name, file_size = parse_file_start(recv_line(conn, abort_event))
         if file_size != expected_size:
             raise RuntimeError(
                 f"expected file size {expected_size} for {label}, got {file_size}"
             )
 
         send_line(conn, "READY")
-        elapsed = wait_for_completed_file(out_dir, file_name, expected_size, timeout)
+        elapsed = wait_for_completed_file(
+            out_dir, file_name, expected_size, timeout, abort_event
+        )
         intervals.append(elapsed)
         (out_dir / file_name).unlink(missing_ok=True)
         send_line(conn, f"DONE {file_name}")
 
-    expect_line(recv_line(conn), "END", f"batch end for {label}")
+    expect_line(recv_line(conn, abort_event), "END", f"batch end for {label}")
     send_line(conn, "DONE")
     return intervals
 
 
 def run_server(args: argparse.Namespace) -> int:
     hf_path = resolve_hf_path()
+    stop_running_server_if_needed(hf_path)
     sizes = parse_sizes(args.sizes)
     labels = [human_size(size) for size in sizes]
     size_by_label = dict(zip(labels, sizes, strict=True))
     metrics_by_batch: list[BatchMetrics] = []
+    ready_event = getattr(args, "_ready_event", None)
+    abort_event = getattr(args, "_abort_event", None)
 
     with tempfile.TemporaryDirectory(prefix="hf_perf_server_") as tmp_dir:
         out_dir = Path(tmp_dir) / "outputs"
@@ -272,6 +332,10 @@ def run_server(args: argparse.Namespace) -> int:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((args.control_host, args.control_port))
         listener.listen(1)
+        if abort_event is not None:
+            listener.settimeout(0.2)
+        if ready_event is not None:
+            ready_event.set()
 
         print("mode       : perf-server")
         print(f"hf_port    : {server.port}")
@@ -284,9 +348,19 @@ def run_server(args: argparse.Namespace) -> int:
             for label in labels:
                 print()
                 print(f"waiting for batch {label}...")
-                conn, addr = listener.accept()
+                while True:
+                    try:
+                        conn, addr = listener.accept()
+                        break
+                    except socket.timeout:
+                        if abort_event is not None and abort_event.is_set():
+                            raise RuntimeError("benchmark server aborted")
                 with conn:
-                    batch_label, batch_runs = parse_batch_start(recv_line(conn))
+                    if abort_event is not None:
+                        conn.settimeout(0.2)
+                    batch_label, batch_runs = parse_batch_start(
+                        recv_line(conn, abort_event)
+                    )
                     if batch_label != label:
                         raise RuntimeError(
                             f"expected batch {label}, got {batch_label!r}"
@@ -304,6 +378,7 @@ def run_server(args: argparse.Namespace) -> int:
                         label,
                         size_by_label[label],
                         args.runs,
+                        abort_event,
                     )
 
                 metrics = BatchMetrics(
@@ -437,6 +512,87 @@ def run_client(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_local(args: argparse.Namespace) -> int:
+    hf_path = resolve_hf_path()
+    stop_running_server_if_needed(hf_path)
+    local_host, used_loopback_fallback = resolve_local_perf_host(args.control_host)
+
+    if used_loopback_fallback:
+        print("local host : 127.0.0.1 (LAN IPv4 unavailable, using fallback)")
+    else:
+        print(f"local host : {local_host}")
+
+    ready_event = threading.Event()
+    abort_event = threading.Event()
+    done_event = threading.Event()
+    server_state: dict[str, object] = {"error": None, "returncode": None}
+
+    server_args = argparse.Namespace(
+        hf_port=args.hf_port,
+        control_host=local_host,
+        control_port=args.control_port,
+        runs=args.runs,
+        sizes=args.sizes,
+        results_dir=args.results_dir,
+        _ready_event=ready_event,
+        _abort_event=abort_event,
+    )
+
+    def server_target() -> None:
+        try:
+            server_state["returncode"] = run_server(server_args)
+        except BaseException as exc:
+            server_state["error"] = exc
+        finally:
+            done_event.set()
+
+    server_thread = threading.Thread(target=server_target, name="hf-perf-server")
+    server_thread.start()
+
+    deadline = time.monotonic() + 15.0
+    while not ready_event.wait(timeout=0.05):
+        if done_event.is_set():
+            error = server_state["error"]
+            if isinstance(error, BaseException):
+                raise RuntimeError("perf server failed before ready") from error
+            raise RuntimeError("perf server exited before ready")
+        if time.monotonic() >= deadline:
+            abort_event.set()
+            server_thread.join(timeout=5.0)
+            raise TimeoutError("timed out waiting for local perf server to become ready")
+
+    client_args = argparse.Namespace(
+        server_host=local_host,
+        hf_port=args.hf_port,
+        control_port=args.control_port,
+        runs=args.runs,
+        sizes=args.sizes,
+        random_seed=args.random_seed,
+    )
+
+    try:
+        client_rc = run_client(client_args)
+    except BaseException:
+        abort_event.set()
+        server_thread.join(timeout=10.0)
+        raise
+
+    server_thread.join(timeout=10.0)
+    if server_thread.is_alive():
+        abort_event.set()
+        server_thread.join(timeout=5.0)
+        raise RuntimeError("perf server did not exit after local benchmark finished")
+
+    error = server_state["error"]
+    if isinstance(error, BaseException):
+        raise RuntimeError("perf server failed during local benchmark") from error
+
+    server_rc = server_state["returncode"]
+    if server_rc not in (None, 0):
+        return int(server_rc)
+    return client_rc
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manual HFile transfer benchmark")
     subparsers = parser.add_subparsers(dest="mode", required=True)
@@ -491,6 +647,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="seed for deterministic file generation",
     )
     client_parser.set_defaults(func=run_client)
+
+    local_parser = subparsers.add_parser("local", help="Run local benchmark end-to-end")
+    local_parser.add_argument("--hf-port", type=int, default=8090, help="hf server port")
+    local_parser.add_argument(
+        "--control-host",
+        default=None,
+        help="control/listener host; defaults to detected LAN IPv4, fallback 127.0.0.1",
+    )
+    local_parser.add_argument(
+        "--control-port", type=int, default=8091, help="benchmark control port"
+    )
+    local_parser.add_argument(
+        "--runs", type=int, default=DEFAULT_RUNS, help="files per batch"
+    )
+    local_parser.add_argument(
+        "--sizes",
+        default=None,
+        help="comma-separated sizes, e.g. 64MiB,256MiB,1GiB,4GiB",
+    )
+    local_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="directory for timestamped summary output",
+    )
+    local_parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=12345,
+        help="seed for deterministic file generation",
+    )
+    local_parser.set_defaults(func=run_local)
 
     return parser
 
