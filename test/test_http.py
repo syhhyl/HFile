@@ -83,6 +83,39 @@ class TestHTTP(unittest.TestCase):
             finally:
                 e.close()
 
+    def _chunked_request(
+        self,
+        method: str,
+        path: str,
+        chunks: list[bytes],
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, bytes, object]:
+        conn = http.client.HTTPConnection(
+            self.server.host, self.server.port, timeout=5.0
+        )
+        try:
+            conn.putrequest(method, path)
+            conn.putheader("Transfer-Encoding", "chunked")
+            for key, value in (headers or {}).items():
+                conn.putheader(key, value)
+            conn.endheaders()
+
+            for chunk in chunks:
+                conn.send(f"{len(chunk):X}\r\n".encode("ascii"))
+                if chunk:
+                    conn.send(chunk)
+                conn.send(b"\r\n")
+            conn.send(b"0\r\n\r\n")
+
+            resp = conn.getresponse()
+            try:
+                return resp.status, resp.read(), resp.headers
+            finally:
+                resp.close()
+        finally:
+            conn.close()
+
     def _reset_output_path(self, path: Path) -> None:
         if path.exists():
             if path.is_file() or path.is_symlink():
@@ -98,6 +131,7 @@ class TestHTTP(unittest.TestCase):
         self.assertIn("Bytes with intent.", text)
         self.assertIn("/app.js", text)
         self.assertIn("Latest Message", text)
+        self.assertIn("Current Folder: /", text)
 
     def test_static_assets_are_served(self) -> None:
         status, body, headers = self._request("GET", "/styles.css")
@@ -109,6 +143,8 @@ class TestHTTP(unittest.TestCase):
         self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
         self.assertIn("application/javascript", headers.get_content_type())
         self.assertIn("EventSource", body.decode("utf-8", errors="replace"))
+        self.assertIn("Current Folder:", body.decode("utf-8", errors="replace"))
+        self.assertIn("loadFiles(parentDir(currentDir))", body.decode("utf-8", errors="replace"))
 
     def test_upload_list_and_download(self) -> None:
         src = self.in_dir / "mobile.txt"
@@ -149,6 +185,31 @@ class TestHTTP(unittest.TestCase):
         )
         self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
         self.assertFalse(dst.exists(), f"file not deleted: {dst}")
+
+    def test_chunked_upload_list_and_download(self) -> None:
+        src = self.in_dir / "chunked.txt"
+        src.write_bytes(b"hello from chunked upload\n")
+        dst = self.out_dir / src.name
+        self._reset_output_path(dst)
+
+        status, body, _ = self._chunked_request(
+            "PUT",
+            f"/api/files/{urllib.parse.quote(src.name)}",
+            [b"hello from ", b"chunked upload\n"],
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
+        self.assertTrue(
+            wait_for_file_stable(dst, timeout=5.0),
+            f"file not saved: {dst}; server_log_tail={tail_text_file(self.server.log_path or Path(''))!r}",
+        )
+
+        status, body, _ = self._request(
+            "GET", f"/api/files/{urllib.parse.quote(src.name)}"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, src.read_bytes())
+        assert_files_equal(self, src, dst)
 
     def test_rejects_invalid_file_name(self) -> None:
         invalid_name = urllib.parse.quote("\\bad.txt", safe="")
@@ -206,6 +267,41 @@ class TestHTTP(unittest.TestCase):
         self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
         self.assertFalse((self.out_dir / "docs").exists())
 
+    def test_root_directory_listing_accepts_symlink_output_dir(self) -> None:
+        if os.name == "nt":
+            self.skipTest("symlinked output dir coverage is POSIX-only")
+
+        shared_server = self.__class__.server
+        shared_server.stop()
+
+        with make_temp_dir(prefix="hf_http_symlink_root_") as tmp_dir:
+            base_dir = Path(tmp_dir)
+            real_out_dir = base_dir / "real_outputs"
+            real_out_dir.mkdir(parents=True, exist_ok=True)
+            linked_out_dir = base_dir / "linked_outputs"
+            linked_out_dir.symlink_to(real_out_dir, target_is_directory=True)
+            (real_out_dir / "through-symlink.txt").write_bytes(b"hello from symlink root\n")
+
+            log_path = base_dir / "hf_http_symlink_root.log"
+            port = reserve_free_port()
+            server = HFileServer(
+                hf_path=self.hf_path,
+                out_dir=linked_out_dir,
+                port=port,
+                log_path=log_path,
+            )
+            server.start(startup_timeout=5.0)
+            try:
+                req = urllib.request.Request(server.http_url + "/api/files", method="GET")
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    self.assertEqual(resp.status, 200)
+                    payload = json.loads(resp.read().decode("utf-8"))
+                names = [item["name"] for item in payload]
+                self.assertIn("through-symlink.txt", names)
+            finally:
+                server.stop()
+                shared_server.start(startup_timeout=5.0)
+
     def test_message_post_updates_latest_message(self) -> None:
         status, body, _ = self._request(
             "POST",
@@ -223,6 +319,36 @@ class TestHTTP(unittest.TestCase):
         self.assertNotIn(
             "msg: hello from browser", tail_text_file(self.server.log_path or Path(""))
         )
+
+    def test_message_post_accepts_chunked_body(self) -> None:
+        status, body, _ = self._chunked_request(
+            "POST",
+            "/api/messages",
+            [b'{"message":"hello ', b'from chunked"}'],
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
+
+        status, body, _ = self._request("GET", "/api/messages/latest")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(payload["has_message"], True)
+        self.assertEqual(payload["message"], "hello from chunked")
+
+    def test_message_post_accepts_unicode_escape_sequences(self) -> None:
+        status, body, _ = self._request(
+            "POST",
+            "/api/messages",
+            data=b'{"message":"\\u4f60\\u597d"}',
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
+
+        status, body, _ = self._request("GET", "/api/messages/latest")
+        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(payload["has_message"], True)
+        self.assertEqual(payload["message"], "你好")
 
     def test_message_post_trims_trailing_whitespace_before_store(self) -> None:
         status, body, _ = self._request(
