@@ -784,24 +784,33 @@ static protocol_result_t server_handle_get_file(
     goto SEND_READY_REJECT;
   }
 
-  result = server_send_response(
-    conn, PROTO_PHASE_READY, PROTO_STATUS_OK, PROTOCOL_OK);
-  if (result != PROTOCOL_OK) {
-    sock_perror("send_res_frame(get_ready)");
-    goto CLEANUP;
-  }
-
   {
+    uint8_t ready_prefix_buf[HF_PROTOCOL_RES_FRAME_SIZE + sizeof(uint16_t) +
+                             HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
+    res_frame_t ready_frame = {0};
     uint8_t prefix_buf[sizeof(uint16_t) + HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
+    size_t prefix_size = proto_file_transfer_prefix_size((uint16_t)strlen(file_name));
+
+    ready_frame.phase = PROTO_PHASE_READY;
+    ready_frame.status = PROTO_STATUS_OK;
+    ready_frame.error_code = PROTOCOL_OK;
+    result = encode_res_frame(&ready_frame, ready_prefix_buf);
+    if (result != PROTOCOL_OK) {
+      goto CLEANUP;
+    }
+
     result = encode_file_prefix(file_name, info.size, prefix_buf);
     if (result != PROTOCOL_OK) {
       goto SEND_FINAL_FAILED;
     }
+
+    memcpy(ready_prefix_buf + HF_PROTOCOL_RES_FRAME_SIZE, prefix_buf, prefix_size);
     result = proto_send_payload(
       conn,
-      prefix_buf,
-      proto_file_transfer_prefix_size((uint16_t)strlen(file_name)));
+      ready_prefix_buf,
+      HF_PROTOCOL_RES_FRAME_SIZE + prefix_size);
     if (result != PROTOCOL_OK) {
+      sock_perror("send(get_ready_prefix)");
       goto CLEANUP;
     }
   }

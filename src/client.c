@@ -347,6 +347,8 @@ static int client_send_file_raw(const client_opt_t *opt) {
   header.payload_size = payload_size;
 
   uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
+  uint8_t preamble_buf[HF_PROTOCOL_HEADER_SIZE + sizeof(uint16_t) +
+                       HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
   proto_res = encode_header(&header, header_buf);
   if (proto_res != PROTOCOL_OK) {
     fprintf(stderr, "failed to encode protocol header\n");
@@ -363,18 +365,14 @@ static int client_send_file_raw(const client_opt_t *opt) {
   }
 
 
-  proto_res = send_header(sock, header_buf);
-  if (proto_res != PROTOCOL_OK) {
-    sock_perror("send_header");
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
-
   size_t file_prefix_size = proto_file_transfer_prefix_size(file_name_len);
-  proto_res = proto_send_file_transfer_prefix(sock, file_prefix_buf,
-                                              file_prefix_size);
+  memcpy(preamble_buf, header_buf, sizeof(header_buf));
+  memcpy(preamble_buf + sizeof(header_buf), file_prefix_buf, file_prefix_size);
+
+  proto_res = proto_send_payload(sock, preamble_buf,
+                                 sizeof(header_buf) + file_prefix_size);
   if (proto_res != PROTOCOL_OK) {
-    sock_perror("protocol_send_file_transfer_prefix");
+    sock_perror("send(file_preamble)");
     exit_code = 1;
     goto CLEAN_UP;
   }
@@ -531,6 +529,9 @@ static int client_get_file(const client_opt_t *opt) {
     protocol_header_t header = {0};
     uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
     uint8_t request_buf[sizeof(uint16_t) + HF_PROTOCOL_MAX_FILE_NAME_LEN];
+    uint8_t preamble_buf[HF_PROTOCOL_HEADER_SIZE + sizeof(uint16_t) +
+                         HF_PROTOCOL_MAX_FILE_NAME_LEN];
+    size_t request_size = proto_file_name_only_size(remote_name_len);
 
     init_header(&header);
     header.msg_type = HF_MSG_TYPE_GET_FILE;
@@ -551,17 +552,13 @@ static int client_get_file(const client_opt_t *opt) {
       goto CLEAN_UP;
     }
 
-    proto_res = send_header(sock, header_buf);
-    if (proto_res != PROTOCOL_OK) {
-      sock_perror("send_header");
-      exit_code = 1;
-      goto CLEAN_UP;
-    }
+    memcpy(preamble_buf, header_buf, sizeof(header_buf));
+    memcpy(preamble_buf + sizeof(header_buf), request_buf, request_size);
 
-    proto_res = proto_send_payload(
-      sock, request_buf, proto_file_name_only_size(remote_name_len));
+    proto_res = proto_send_payload(sock, preamble_buf,
+                                   sizeof(header_buf) + request_size);
     if (proto_res != PROTOCOL_OK) {
-      sock_perror("send(get_request)");
+      sock_perror("send(get_preamble)");
       exit_code = 1;
       goto CLEAN_UP;
     }
