@@ -139,8 +139,8 @@ EXTRACT_DIR="${TMPDIR}/extract"
 log "Installing ${BIN_NAME} ${TAG} for ${OS}-${ARCH}"
 log "Download: ${ARCHIVE_URL}"
 
-curl -fL "$ARCHIVE_URL" -o "$ARCHIVE_PATH"
-curl -fL "$CHECKSUMS_URL" -o "$CHECKSUMS_PATH"
+curl -fsSL "$ARCHIVE_URL" -o "$ARCHIVE_PATH"
+curl -fsSL "$CHECKSUMS_URL" -o "$CHECKSUMS_PATH"
 verify_checksum "$CHECKSUMS_PATH" "$ARCHIVE_NAME" "$ARCHIVE_PATH"
 
 mkdir -p "$EXTRACT_DIR"

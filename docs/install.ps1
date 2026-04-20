@@ -84,8 +84,15 @@ try {
   Write-Log "Installing hf $tag for windows-amd64"
   Write-Log "Download: $archiveUrl"
 
-  Invoke-WebRequest -Uri $archiveUrl -OutFile $archivePath
-  Invoke-WebRequest -Uri $checksumsUrl -OutFile $checksumsPath
+  $previousProgressPreference = $ProgressPreference
+  $ProgressPreference = 'SilentlyContinue'
+  try {
+    Invoke-WebRequest -Uri $archiveUrl -OutFile $archivePath
+    Invoke-WebRequest -Uri $checksumsUrl -OutFile $checksumsPath
+  }
+  finally {
+    $ProgressPreference = $previousProgressPreference
+  }
 
   $expected = Select-String -Path $checksumsPath -Pattern ([regex]::Escape($archiveName)) |
     ForEach-Object { ($_ -split '\s+')[0] } |
