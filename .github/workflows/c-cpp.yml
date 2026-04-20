@@ -41,25 +41,3 @@ jobs:
 
       - name: Run test suite
         run: python -m unittest -v test.test_hf
-
-  windows-cross-build:
-    name: Windows cross-build (MinGW)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v5
-
-      - name: Set up Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v6
-
-      - name: Install MinGW
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mingw-w64
-
-      - name: Make build script executable
-        run: chmod +x ./build.sh
-
-      - name: Cross build for Windows
-        run: BUILD_TYPE=Release ./build.sh -w

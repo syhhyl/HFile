@@ -2,7 +2,7 @@
 
 ## Build And Verify
 
-- Default local build: `./build.sh`. It configures CMake + Ninja, exports `build/compile_commands.json`, and deletes `build/` automatically when switching native vs `-w` MinGW cross-builds.
+- Default local build: `./build.sh`. It configures CMake + Ninja and exports `build/compile_commands.json`.
 - `./test.sh` does not build first. Run a build before any test suite.
 - CI does not use `build.sh`; it runs `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`, `cmake --build build`, then `python -m unittest -v test.test_hf` on macOS, Linux, and Windows.
 - Focused verification shortcuts:

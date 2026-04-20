@@ -2,7 +2,6 @@
 set -e
 
 BUILD_TYPE=${BUILD_TYPE:-Debug}
-USE_WINDOWS=0
 DO_INSTALL=0
 
 usage() {
@@ -13,15 +12,13 @@ Configure and build the project with CMake + Ninja.
 
 Options:
   -t, --target <type>  Set CMake build type (default: $BUILD_TYPE)
-  -w, --windows        Cross-compile for Windows using MinGW
-  -i, --install        Install after a successful non-Windows build
+  -i, --install        Install after a successful build
   -h, --help           Show this help message
 
 Examples:
   $0
   BUILD_TYPE=Release $0
   $0 -t Release
-  $0 -w
   $0 -i
 EOF
 }
@@ -37,9 +34,6 @@ need_value() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    -w|--windows)
-      USE_WINDOWS=1
-      ;;
     -i|--install)
       DO_INSTALL=1
       ;;
@@ -60,27 +54,6 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-LAST_PLATFORM_FILE=.build_platform
-
-if [ -f "$LAST_PLATFORM_FILE" ]; then
-    LAST_PLATFORM=$(cat "$LAST_PLATFORM_FILE")
-else
-    LAST_PLATFORM=""
-fi
-
-if [ "$USE_WINDOWS" = "1" ]; then
-    CURRENT_PLATFORM="Windows"
-else
-    CURRENT_PLATFORM=$(uname -s)
-fi
-
-if [ "$CURRENT_PLATFORM" != "$LAST_PLATFORM" ] && [ -d build ]; then
-    echo "Platform changed, cleaning build directory..."
-    rm -rf build
-fi
-
-echo "$CURRENT_PLATFORM" > "$LAST_PLATFORM_FILE"
-
 CMAKE_OPTS=(
   -S . -B build
   -G Ninja
@@ -89,20 +62,9 @@ CMAKE_OPTS=(
   -DCMAKE_INSTALL_PREFIX=$HOME/.local
 )
 
-if [ "$USE_WINDOWS" = "1" ]; then
-  CMAKE_OPTS+=(
-    -DCMAKE_SYSTEM_NAME=Windows
-    -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc
-  )
-fi
-
 cmake "${CMAKE_OPTS[@]}"
 cmake --build build
 
 if [ "$DO_INSTALL" = "1" ]; then
-  if [ "$USE_WINDOWS" != "1" ]; then
-    cmake --install build
-  else
-    echo "Windows skip install"
-  fi
+  cmake --install build
 fi
