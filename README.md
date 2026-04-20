@@ -2,15 +2,6 @@
 
 HFile is a native C file transfer tool built for simple deployment, predictable behavior, and low overhead.
 
-## Why HFile
-
-- One binary, one port, almost no setup.
-- CLI, HTTP API, and Web UI in a single server process.
-- Send from terminal, browser, or script without changing servers.
-- Stream large files instead of buffering entire payloads in memory.
-- Write to a temp file first, then atomically finalize on success.
-- Native C implementation with a small, explicit protocol surface.
-
 ## Quick Start
 
 Install the latest release on macOS or Linux:
