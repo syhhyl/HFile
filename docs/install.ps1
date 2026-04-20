@@ -112,7 +112,7 @@ try {
   Ensure-UserPath -Path $installDir
 
   Write-Log "Installed to $(Join-Path $installDir $BinName)"
-  Write-Log "Run 'hf --help' to get started"
+  Write-Log "Run 'hf -h' to get started"
 }
 finally {
   if (Test-Path -LiteralPath $tempRoot) {

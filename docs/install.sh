@@ -162,4 +162,4 @@ case ":$PATH:" in
     ;;
 esac
 
-log "Run '${BIN_NAME} --help' to get started"
+log "Run '${BIN_NAME} -h' to get started"
