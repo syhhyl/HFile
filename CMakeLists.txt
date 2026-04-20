@@ -4,6 +4,7 @@ project(HFile VERSION 0.0.1 LANGUAGES C)
 
 add_executable(hf
   src/hfile.c
+  src/app_service.c
   src/server.c
   src/http.c
   src/message_store.c

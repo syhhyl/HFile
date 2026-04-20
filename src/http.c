@@ -1,3 +1,4 @@
+#include "app_service.h"
 #include "http.h"
 
 #include "fs.h"
@@ -5,7 +6,6 @@
 #include "net.h"
 #include "protocol.h"
 #include "shutdown.h"
-#include "transfer_io.h"
 #include "webui.h"
 
 #include <ctype.h>
@@ -1264,10 +1264,8 @@ CLEANUP:
 
 static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
                           const char *relative_path) {
-  char path[4096];
   char header[1024];
-  int fd = -1;
-  fs_path_info_t info = {0};
+  app_download_t download = {.fd = -1};
   int exit_code = 1;
   char safe_name[512];
   size_t safe_len = 0;
@@ -1275,20 +1273,7 @@ static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
   if (fs_validate_relative_path(relative_path) != 0) {
     return http_send_json_error(conn, 400, "Bad Request", "invalid file path");
   }
-  if (fs_join_relative_path(path, sizeof(path), ser_opt->path, relative_path) != 0) {
-    return http_send_json_error(conn, 400, "Bad Request", "invalid path");
-  }
-  if (fs_get_path_info(path, &info) != 0 || info.kind != FS_PATH_KIND_FILE) {
-    return http_send_json_error(conn, 404, "Not Found", "file not found");
-  }
-
-#ifdef _WIN32
-  fd = fs_open(path, O_RDONLY | O_BINARY, 0);
-#else
-  fd = fs_open(path, O_RDONLY, 0);
-#endif
-  if (fd == -1) {
-    perror("open(http_download)");
+  if (app_prepare_download(ser_opt->path, relative_path, &download) != PROTOCOL_OK) {
     return http_send_json_error(conn, 404, "Not Found", "file not found");
   }
 
@@ -1309,7 +1294,7 @@ static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
                    "Content-Disposition: attachment; filename=\"%s\"\r\n"
                    "Connection: close\r\n"
                    "\r\n",
-                   info.size, safe_name);
+                   download.info.size, safe_name);
   if (n < 0 || (size_t)n >= sizeof(header)) {
     goto CLEANUP;
   }
@@ -1319,7 +1304,7 @@ static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
   }
 
   net_send_file_result_t send_file_res =
-    net_send_file_best_effort(conn, fd, info.size);
+    net_send_file_best_effort(conn, download.fd, download.info.size);
   if (send_file_res != NET_SEND_FILE_OK) {
     if (send_file_res == NET_SEND_FILE_SOURCE_CHANGED) {
       fprintf(stderr, "source file changed during http download\n");
@@ -1332,7 +1317,7 @@ static int http_send_file(socket_t conn, const server_opt_t *ser_opt,
   exit_code = 0;
 
 CLEANUP:
-  if (fd != -1) fs_close(fd);
+  app_download_cleanup(&download);
   return exit_code;
 }
 
@@ -1477,7 +1462,7 @@ static int http_handle_messages_post(socket_t conn, const server_opt_t *ser_opt,
     goto CLEANUP;
   }
   (void)ser_opt;
-  if (message_store_set(message) != 0) {
+  if (app_submit_message(message) != PROTOCOL_OK) {
     (void)http_send_json_error(conn, 500, "Internal Server Error",
                                "failed to store message");
     goto CLEANUP;
@@ -1634,15 +1619,14 @@ static int http_handle_file_put(socket_t conn, const server_opt_t *ser_opt,
 
   char saved_path[4096];
   if (req->transfer_chunked) {
-    recv_result = transfer_recv_socket_chunked_file(
-      conn, ser_opt->path, relative_path, HF_HTTP_UPLOAD_MAX,
-      "recv(http_body_chunked)", "http chunked upload ended early",
-      saved_path, sizeof(saved_path));
+    recv_result = app_receive_file(conn, ser_opt->path, relative_path,
+                                   HF_HTTP_UPLOAD_MAX,
+                                   APP_UPLOAD_HTTP_CHUNKED, saved_path,
+                                   sizeof(saved_path));
   } else {
-    recv_result = transfer_recv_socket_http_file(
-      conn, ser_opt->path, relative_path, req->content_length,
-      "recv(http_body)", "http upload ended early", saved_path,
-      sizeof(saved_path));
+    recv_result = app_receive_file(conn, ser_opt->path, relative_path,
+                                   req->content_length, APP_UPLOAD_HTTP,
+                                   saved_path, sizeof(saved_path));
   }
   if (recv_result == PROTOCOL_ERR_MSG_TOO_LARGE) {
     return http_send_json_error(conn, 413, "Payload Too Large", "upload too large");

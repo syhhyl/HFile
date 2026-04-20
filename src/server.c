@@ -1,3 +1,4 @@
+#include "app_service.h"
 #include "cli.h"
 #include "control.h"
 #include "daemon_state.h"
@@ -7,7 +8,6 @@
 #include "protocol.h"
 #include "shutdown.h"
 #include "server.h"
-#include "transfer_io.h"
 
 #include <stddef.h>
 #include <fcntl.h>
@@ -593,9 +593,8 @@ static int server_handle_text_message(socket_t conn,
   }
 
   message[message_len] = '\0';
-  if (message_store_set(message) != 0) {
-    fprintf(stderr, "failed to store latest message\n");
-    result = PROTOCOL_ERR_IO;
+  result = app_submit_message(message);
+  if (result != PROTOCOL_OK) {
     goto SEND_RESPONSE;
   }
 
@@ -628,7 +627,7 @@ static protocol_result_t server_handle_file_transfer(
   const server_opt_t *ser_opt,
   const protocol_header_t *proto_header) {
   char *file_name = NULL;
-  char full_path[4096];
+  char saved_path[4096];
   uint64_t content_size = 0;
   uint64_t prefix_size = 0;
   protocol_result_t result = PROTOCOL_ERR_IO;
@@ -681,10 +680,9 @@ static protocol_result_t server_handle_file_transfer(
     goto CLEANUP;
   }
 
-  result = transfer_recv_socket_file(conn, ser_opt->path, file_name, content_size,
-                                     "recv(file_body)",
-                                     "protocol error: unexpected EOF while receiving file",
-                                     full_path, sizeof(full_path));
+  result = app_receive_file(conn, ser_opt->path, file_name, content_size,
+                            APP_UPLOAD_PROTOCOL, saved_path,
+                            sizeof(saved_path));
   if (result != PROTOCOL_OK) {
     if (server_send_response(
           conn, PROTO_PHASE_FINAL, PROTO_STATUS_FAILED, result) != PROTOCOL_OK) {
@@ -719,9 +717,7 @@ static protocol_result_t server_handle_get_file(
   const server_opt_t *ser_opt,
   const protocol_header_t *proto_header) {
   char *file_name = NULL;
-  char full_path[4096];
-  fs_path_info_t info = {0};
-  int fd = -1;
+  app_download_t download = {.fd = -1};
   protocol_result_t result = PROTOCOL_ERR_IO;
 
   if (ser_opt == NULL) {
@@ -763,24 +759,11 @@ static protocol_result_t server_handle_get_file(
     goto SEND_READY_REJECT;
   }
 
-  if (fs_join_path(full_path, sizeof(full_path), ser_opt->path, file_name) != 0) {
-    fprintf(stderr, "output path is too long\n");
-    result = PROTOCOL_ERR_INVALID_ARGUMENT;
-    goto SEND_READY_REJECT;
-  }
-
-  if (fs_get_path_info(full_path, &info) != 0 || info.kind != FS_PATH_KIND_FILE) {
-    result = PROTOCOL_ERR_INVALID_ARGUMENT;
-    goto SEND_READY_REJECT;
-  }
-
-#ifdef _WIN32
-  fd = fs_open(full_path, O_RDONLY | O_BINARY, 0);
-#else
-  fd = fs_open(full_path, O_RDONLY, 0);
-#endif
-  if (fd == -1) {
-    result = PROTOCOL_ERR_IO;
+  result = app_prepare_download(ser_opt->path, file_name, &download);
+  if (result != PROTOCOL_OK) {
+    if (result == PROTOCOL_ERR_IO) {
+      result = PROTOCOL_ERR_INVALID_ARGUMENT;
+    }
     goto SEND_READY_REJECT;
   }
 
@@ -799,7 +782,7 @@ static protocol_result_t server_handle_get_file(
       goto CLEANUP;
     }
 
-    result = encode_file_prefix(file_name, info.size, prefix_buf);
+    result = encode_file_prefix(file_name, download.info.size, prefix_buf);
     if (result != PROTOCOL_OK) {
       goto SEND_FINAL_FAILED;
     }
@@ -816,7 +799,8 @@ static protocol_result_t server_handle_get_file(
   }
 
   {
-    net_send_file_result_t send_res = net_send_file_best_effort(conn, fd, info.size);
+    net_send_file_result_t send_res = net_send_file_best_effort(conn, download.fd,
+                                                                download.info.size);
     if (send_res != NET_SEND_FILE_OK) {
       result = PROTOCOL_ERR_IO;
       goto SEND_FINAL_FAILED;
@@ -847,9 +831,7 @@ SEND_READY_REJECT:
   }
 
 CLEANUP:
-  if (fd != -1) {
-    fs_close(fd);
-  }
+  app_download_cleanup(&download);
   if (file_name != NULL) {
     free(file_name);
   }
