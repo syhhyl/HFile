@@ -26,9 +26,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Set up Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v6
-
       - name: Set up MSVC
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
