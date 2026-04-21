@@ -1723,13 +1723,99 @@ CLEANUP:
   return exit_code;
 }
 
+typedef int (*http_exact_route_handler_t)(socket_t conn,
+                                          const server_opt_t *ser_opt,
+                                          const http_request_t *req);
+
+typedef struct {
+  const char *path;
+  const char *method;
+  http_exact_route_handler_t handler;
+} http_exact_route_t;
+
+static int http_route_files_list(socket_t conn, const server_opt_t *ser_opt,
+                                 const http_request_t *req) {
+  return http_handle_files_list(conn, ser_opt, req);
+}
+
+static int http_route_messages_post(socket_t conn, const server_opt_t *ser_opt,
+                                    const http_request_t *req) {
+  return http_handle_messages_post(conn, ser_opt, req);
+}
+
+static int http_route_messages_latest_get(socket_t conn,
+                                          const server_opt_t *ser_opt,
+                                          const http_request_t *req) {
+  (void)ser_opt;
+  (void)req;
+  return http_handle_messages_latest_get(conn);
+}
+
+static int http_route_messages_stream(socket_t conn,
+                                      const server_opt_t *ser_opt,
+                                      const http_request_t *req) {
+  (void)ser_opt;
+  (void)req;
+  return http_handle_messages_stream(conn);
+}
+
+static const http_exact_route_t http_exact_routes[] = {
+  {"/api/files", "GET", http_route_files_list},
+  {"/api/messages", "POST", http_route_messages_post},
+  {"/api/messages/latest", "GET", http_route_messages_latest_get},
+  {"/api/messages/stream", "GET", http_route_messages_stream},
+};
+
+static int http_dispatch_exact_route(socket_t conn,
+                                     const server_opt_t *ser_opt,
+                                     const http_request_t *req) {
+  size_t route_count = sizeof(http_exact_routes) / sizeof(http_exact_routes[0]);
+
+  for (size_t i = 0; i < route_count; i++) {
+    const http_exact_route_t *route = &http_exact_routes[i];
+
+    if (strcmp(req->path, route->path) != 0) {
+      continue;
+    }
+    if (strcmp(req->method, route->method) != 0) {
+      return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
+    }
+    return route->handler(conn, ser_opt, req);
+  }
+
+  return -1;
+}
+
+static int http_dispatch_file_route(socket_t conn,
+                                    const server_opt_t *ser_opt,
+                                    const http_request_t *req) {
+  char route_name[HF_HTTP_PATH_MAX];
+
+  if (strncmp(req->path, "/api/files/", 11) != 0) {
+    return -1;
+  }
+  if (http_decode_name(req->path + 11, route_name, sizeof(route_name)) != 0) {
+    return http_send_json_error(conn, 400, "Bad Request", "invalid file name");
+  }
+  if (strcmp(req->method, "GET") == 0) {
+    return http_send_file(conn, ser_opt, route_name);
+  }
+  if (strcmp(req->method, "PUT") == 0) {
+    return http_handle_file_put(conn, ser_opt, req, route_name);
+  }
+  if (strcmp(req->method, "DELETE") == 0) {
+    return http_handle_file_delete(conn, ser_opt, route_name);
+  }
+  return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
+}
+
 int handle_http_connection(socket_t conn, const server_opt_t *ser_opt) {
   char header_block[HF_HTTP_HEADER_MAX];
-  char route_name[HF_HTTP_PATH_MAX];
   http_request_t req = {0};
   const webui_asset_t *asset = NULL;
   int read_res = http_read_header_block(conn, header_block, sizeof(header_block));
   int parse_res = 0;
+  int route_res = 0;
 
   if (read_res == -1) {
     sock_perror("recv(http_header)");
@@ -1758,44 +1844,15 @@ int handle_http_connection(socket_t conn, const server_opt_t *ser_opt) {
       return http_handle_webui_asset(conn, asset);
     }
   }
-  if (strcmp(req.path, "/api/files") == 0) {
-    if (strcmp(req.method, "GET") != 0) {
-      return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
-    }
-    return http_handle_files_list(conn, ser_opt, &req);
+
+  route_res = http_dispatch_exact_route(conn, ser_opt, &req);
+  if (route_res != -1) {
+    return route_res;
   }
-  if (strcmp(req.path, "/api/messages") == 0) {
-    if (strcmp(req.method, "POST") == 0) {
-      return http_handle_messages_post(conn, ser_opt, &req);
-    }
-    return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
-  }
-  if (strcmp(req.path, "/api/messages/latest") == 0) {
-    if (strcmp(req.method, "GET") == 0) {
-      return http_handle_messages_latest_get(conn);
-    }
-    return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
-  }
-  if (strcmp(req.path, "/api/messages/stream") == 0) {
-    if (strcmp(req.method, "GET") == 0) {
-      return http_handle_messages_stream(conn);
-    }
-    return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
-  }
-  if (strncmp(req.path, "/api/files/", 11) == 0) {
-    if (http_decode_name(req.path + 11, route_name, sizeof(route_name)) != 0) {
-      return http_send_json_error(conn, 400, "Bad Request", "invalid file name");
-    }
-    if (strcmp(req.method, "GET") == 0) {
-      return http_send_file(conn, ser_opt, route_name);
-    }
-    if (strcmp(req.method, "PUT") == 0) {
-      return http_handle_file_put(conn, ser_opt, &req, route_name);
-    }
-    if (strcmp(req.method, "DELETE") == 0) {
-      return http_handle_file_delete(conn, ser_opt, route_name);
-    }
-    return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
+
+  route_res = http_dispatch_file_route(conn, ser_opt, &req);
+  if (route_res != -1) {
+    return route_res;
   }
 
   return http_send_json_error(conn, 404, "Not Found", "route not found");
