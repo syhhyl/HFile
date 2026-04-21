@@ -428,7 +428,7 @@ static server_conn_kind_t server_detect_connection_kind(socket_t conn) {
   return SERVER_CONN_KIND_PROTOCOL;
 }
 
-static int server_handle_protocol_connection(socket_t conn,
+static int handle_protocol_connection(socket_t conn,
                                              const server_opt_t *ser_opt) {
   uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
   protocol_header_t proto_header = {0};
@@ -480,12 +480,13 @@ static void *server_connection_thread_main(void *arg) {
 
   switch (server_detect_connection_kind(conn)) {
     case SERVER_CONN_KIND_HTTP:
-      (void)http_handle_connection(conn, &opt);
+      (void)handle_http_connection(conn, &opt);
       break;
     case SERVER_CONN_KIND_PROTOCOL:
-      (void)server_handle_protocol_connection(conn, &opt);
+      (void)handle_protocol_connection(conn, &opt);
       break;
     default:
+      fprintf(stderr, "we don't support this mode\n");
       break;
   }
 
@@ -1385,13 +1386,6 @@ int server(const server_opt_t *ser_opt) {
     return 1;
   }
 
-  if (!ser_opt->daemonize) {
-    if (server_prepare_state_files() != 0) {
-      return 1;
-    }
-    return server_run_process(ser_opt, -1, NULL, 0, 1);
-  }
-
   if (daemon_state_default_log_path(log_path, sizeof(log_path)) != 0) {
     fprintf(stderr, "invalid log file path\n");
     return 1;
@@ -1445,7 +1439,6 @@ int server(const server_opt_t *ser_opt) {
   }
 
   server_opt_t child_opt = *ser_opt;
-  child_opt.daemonize = 0;
   int exit_code = server_run_process(&child_opt, ready_pipe[1], log_path, 1, 1);
   return exit_code;
 #endif

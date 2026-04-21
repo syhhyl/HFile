@@ -4,6 +4,6 @@
 #include "cli.h"
 #include "net.h"
 
-int http_handle_connection(socket_t conn, const server_opt_t *ser_opt);
+int handle_http_connection(socket_t conn, const server_opt_t *ser_opt);
 
 #endif  // HF_HTTP_H

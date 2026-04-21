@@ -43,7 +43,7 @@ typedef struct {
 typedef struct {
   const char *path;
   uint16_t port;
-  uint8_t daemonize;
+  // uint8_t daemonize;
 } server_opt_t;
 
 

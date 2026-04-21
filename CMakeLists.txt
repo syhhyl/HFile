@@ -18,6 +18,7 @@ add_executable(hf
   src/net.c
   src/fs.c
   src/shutdown.c
+  third_party/picohttpparser.c
   third_party/qrcodegen.c
 )
 
