@@ -11,7 +11,6 @@
 static inline void init_server_opt(const Opt *opt, server_opt_t *server_opt) {
   server_opt->path = opt->path;
   server_opt->port = opt->port;
-  server_opt->daemonize = opt->daemonize;
 }
 
 static inline void init_client_opt(const Opt *opt, client_opt_t *client_opt) {

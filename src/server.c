@@ -1385,13 +1385,6 @@ int server(const server_opt_t *ser_opt) {
     return 1;
   }
 
-  if (!ser_opt->daemonize) {
-    if (server_prepare_state_files() != 0) {
-      return 1;
-    }
-    return server_run_process(ser_opt, -1, NULL, 0, 1);
-  }
-
   if (daemon_state_default_log_path(log_path, sizeof(log_path)) != 0) {
     fprintf(stderr, "invalid log file path\n");
     return 1;
@@ -1445,7 +1438,6 @@ int server(const server_opt_t *ser_opt) {
   }
 
   server_opt_t child_opt = *ser_opt;
-  child_opt.daemonize = 0;
   int exit_code = server_run_process(&child_opt, ready_pipe[1], log_path, 1, 1);
   return exit_code;
 #endif
