@@ -7,6 +7,7 @@
 #include "protocol.h"
 #include "shutdown.h"
 #include "webui.h"
+#include "picohttpparser.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -32,6 +33,7 @@
 #endif
 
 #define HF_HTTP_HEADER_MAX 16384u
+#define HF_HTTP_MAX_HEADERS 64u
 #define HF_HTTP_PATH_MAX 1024u
 #define HF_HTTP_CONTENT_TYPE_MAX 128u
 #define HF_HTTP_UPLOAD_MAX (16ULL * 1024ULL * 1024ULL * 1024ULL)
@@ -120,19 +122,6 @@ static void http_buf_free(http_buf_t *buf) {
   buf->data = NULL;
   buf->len = 0;
   buf->cap = 0;
-}
-
-static int http_ascii_stricmp(const char *a, const char *b) {
-  while (*a != '\0' && *b != '\0') {
-    int ca = tolower((unsigned char)*a);
-    int cb = tolower((unsigned char)*b);
-    if (ca != cb) {
-      return ca - cb;
-    }
-    a++;
-    b++;
-  }
-  return tolower((unsigned char)*a) - tolower((unsigned char)*b);
 }
 
 static int http_ascii_starts_with(const char *s, const char *prefix) {
@@ -587,27 +576,49 @@ static int http_read_header_block(socket_t conn, char *out, size_t out_cap) {
   return 2;
 }
 
-static char *http_trim(char *s) {
-  char *end = NULL;
+static int http_header_name_equals(const struct phr_header *header,
+                                   const char *name) {
+  size_t i = 0;
 
-  while (*s != '\0' && isspace((unsigned char)*s)) {
-    s++;
+  if (header == NULL || name == NULL) {
+    return 0;
   }
 
-  end = s + strlen(s);
-  while (end > s && isspace((unsigned char)end[-1])) {
-    end--;
+  while (name[i] != '\0') {
+    if (i >= header->name_len) {
+      return 0;
+    }
+    if (tolower((unsigned char)header->name[i]) !=
+        tolower((unsigned char)name[i])) {
+      return 0;
+    }
+    i++;
   }
-  *end = '\0';
-  return s;
+
+  return i == header->name_len;
+}
+
+static int http_copy_header_value(char *dst, size_t dst_cap,
+                                  const char *src, size_t src_len) {
+  if (dst == NULL || src == NULL || dst_cap == 0u || src_len >= dst_cap) {
+    return 1;
+  }
+
+  memcpy(dst, src, src_len);
+  dst[src_len] = '\0';
+  return 0;
 }
 
 static int http_parse_request(char *header_block, http_request_t *req) {
-  char *line = NULL;
-  char *save = NULL;
-  char *method = NULL;
-  char *path = NULL;
-  char *version = NULL;
+  const char *method = NULL;
+  const char *path = NULL;
+  size_t method_len = 0;
+  size_t path_len = 0;
+  int minor_version = -1;
+  struct phr_header headers[HF_HTTP_MAX_HEADERS];
+  size_t num_headers = HF_HTTP_MAX_HEADERS;
+  int parse_res = 0;
+  char header_value[HF_HTTP_CONTENT_TYPE_MAX];
 
   if (header_block == NULL || req == NULL) {
     return 1;
@@ -615,64 +626,55 @@ static int http_parse_request(char *header_block, http_request_t *req) {
 
   memset(req, 0, sizeof(*req));
 
-  line = strtok_r(header_block, "\r\n", &save);
-  if (line == NULL) {
+  parse_res = phr_parse_request(header_block, strlen(header_block),
+                                &method, &method_len,
+                                &path, &path_len,
+                                &minor_version, headers, &num_headers, 0);
+  if (parse_res <= 0) {
     return 1;
   }
 
-  method = strtok(line, " ");
-  path = strtok(NULL, " ");
-  version = strtok(NULL, " ");
-  if (method == NULL || path == NULL || version == NULL ||
-      strtok(NULL, " ") != NULL) {
-    return 1;
-  }
-
-  if (strcmp(version, "HTTP/1.1") != 0) {
+  if (minor_version != 1) {
     return 2;
   }
 
-  if (strlen(method) >= sizeof(req->method) ||
-      strlen(path) >= sizeof(req->path)) {
+  if (method_len >= sizeof(req->method) || path_len >= sizeof(req->path)) {
     return 1;
   }
 
-  memcpy(req->method, method, strlen(method) + 1u);
-  memcpy(req->path, path, strlen(path) + 1u);
+  memcpy(req->method, method, method_len);
+  req->method[method_len] = '\0';
+  memcpy(req->path, path, path_len);
+  req->path[path_len] = '\0';
   req->query[0] = '\0';
 
-  for (;;) {
-    char *name = NULL;
-    char *value = NULL;
-    line = strtok_r(NULL, "\r\n", &save);
-    if (line == NULL) {
-      break;
-    }
-    if (*line == '\0') {
-      continue;
-    }
+  for (size_t i = 0; i < num_headers; i++) {
+    const struct phr_header *header = &headers[i];
 
-    value = strchr(line, ':');
-    if (value == NULL) {
+    if (header->name == NULL) {
       return 1;
     }
-    *value++ = '\0';
-    name = http_trim(line);
-    value = http_trim(value);
-
-    if (http_ascii_stricmp(name, "Content-Length") == 0) {
-      if (http_parse_u64(value, &req->content_length) != 0) {
+    if (http_header_name_equals(header, "Content-Length")) {
+      if (http_copy_header_value(header_value, sizeof(header_value),
+                                 header->value, header->value_len) != 0) {
+        return 1;
+      }
+      if (http_parse_u64(header_value, &req->content_length) != 0) {
         return 1;
       }
       req->has_content_length = 1;
-    } else if (http_ascii_stricmp(name, "Content-Type") == 0) {
-      if (strlen(value) >= sizeof(req->content_type)) {
+    } else if (http_header_name_equals(header, "Content-Type")) {
+      if (http_copy_header_value(req->content_type, sizeof(req->content_type),
+                                 header->value, header->value_len) != 0) {
         return 1;
       }
-      memcpy(req->content_type, value, strlen(value) + 1u);
-    } else if (http_ascii_stricmp(name, "Transfer-Encoding") == 0) {
+    } else if (http_header_name_equals(header, "Transfer-Encoding")) {
+      if (http_copy_header_value(header_value, sizeof(header_value),
+                                 header->value, header->value_len) != 0) {
+        return 1;
+      }
       req->has_transfer_encoding = 1;
-      if (http_header_has_token(value, "chunked")) {
+      if (http_header_has_token(header_value, "chunked")) {
         req->transfer_chunked = 1;
       }
     }
