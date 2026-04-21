@@ -428,7 +428,7 @@ static server_conn_kind_t server_detect_connection_kind(socket_t conn) {
   return SERVER_CONN_KIND_PROTOCOL;
 }
 
-static int server_handle_protocol_connection(socket_t conn,
+static int handle_protocol_connection(socket_t conn,
                                              const server_opt_t *ser_opt) {
   uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
   protocol_header_t proto_header = {0};
@@ -483,7 +483,7 @@ static void *server_connection_thread_main(void *arg) {
       (void)handle_http_connection(conn, &opt);
       break;
     case SERVER_CONN_KIND_PROTOCOL:
-      (void)server_handle_protocol_connection(conn, &opt);
+      (void)handle_protocol_connection(conn, &opt);
       break;
     default:
       fprintf(stderr, "we don't support this mode\n");
