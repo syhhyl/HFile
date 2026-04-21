@@ -480,12 +480,13 @@ static void *server_connection_thread_main(void *arg) {
 
   switch (server_detect_connection_kind(conn)) {
     case SERVER_CONN_KIND_HTTP:
-      (void)http_handle_connection(conn, &opt);
+      (void)handle_http_connection(conn, &opt);
       break;
     case SERVER_CONN_KIND_PROTOCOL:
       (void)server_handle_protocol_connection(conn, &opt);
       break;
     default:
+      fprintf(stderr, "we don't support this mode\n");
       break;
   }
 

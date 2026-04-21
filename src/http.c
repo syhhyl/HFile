@@ -1721,7 +1721,7 @@ CLEANUP:
   return exit_code;
 }
 
-int http_handle_connection(socket_t conn, const server_opt_t *ser_opt) {
+int handle_http_connection(socket_t conn, const server_opt_t *ser_opt) {
   char header_block[HF_HTTP_HEADER_MAX];
   char route_name[HF_HTTP_PATH_MAX];
   http_request_t req = {0};
