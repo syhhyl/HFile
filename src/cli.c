@@ -300,7 +300,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   }
 
   if (mode_count == 0) {
-    fprintf(stderr, "must specify one of -d, -c, -g, -m, status, or stop\n");
+    // fprintf(stderr, "must specify one of -d, -c, -g, -m, status, or stop\n");
     return PARSE_ERR;
   }
 

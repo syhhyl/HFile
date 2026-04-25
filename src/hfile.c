@@ -52,13 +52,9 @@ int main(int argc, char **argv) {
   Opt opt = {0};
   parse_result_t res = parse_args(argc, argv, &opt);
 
-  if (res == PARSE_HELP) {
+  if (res == PARSE_HELP || res == PARSE_ERR) {
     usage(argv[0]);
-    ret = 0;
-    goto CLEAN_UP;
-  } else if (res == PARSE_ERR) {
-    usage(argv[0]);
-    ret = 1;
+    ret = (res == PARSE_HELP) ? 0 : 1;
     goto CLEAN_UP;
   }
 
