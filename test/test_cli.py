@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import socket
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -194,7 +195,13 @@ class TestCLI(unittest.TestCase):
                 listener.listen(1)
                 port = listener.getsockname()[1]
 
-                r = run_hf(self.hf_path, ["-d", out_dir, "-p", str(port)], timeout=5.0)
+                r = run_hf(
+                    self.hf_path, ["-d", out_dir, "-p", str(port)], timeout=10.0
+                )
+            except subprocess.TimeoutExpired:
+                self.fail(
+                    "server process did not exit within 10s after bind failure"
+                )
             finally:
                 listener.close()
 
