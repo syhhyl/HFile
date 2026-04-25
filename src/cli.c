@@ -95,7 +95,6 @@ int need_value(int argc, char **argv, int *i, const char **out) {
 parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   if (opt == NULL) return PARSE_ERR;
 
-  opt->mode = init_mode;
   opt->path = NULL;
   opt->remote_path = NULL;
   opt->output_path = NULL;

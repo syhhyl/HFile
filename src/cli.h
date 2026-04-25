@@ -14,7 +14,6 @@ typedef enum {
   client_mode,
   status_mode,
   stop_mode,
-  init_mode
 } Mode;
 
 typedef struct {
@@ -43,7 +42,6 @@ typedef struct {
 typedef struct {
   const char *path;
   uint16_t port;
-  // uint8_t daemonize;
 } server_opt_t;
 
 
