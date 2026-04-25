@@ -112,14 +112,12 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->port = 8888;
   opt->msg_type = 0;
 
-  int seen_d = 0;
-  int seen_c = 0;
-  int seen_g = 0;
-  int seen_m = 0;
-  int seen_o = 0;
-  int ip_set = 0;
+  int server_selected = 0;
+  int client_actions = 0;
+  char client_action = '\0';
+  int output_seen = 0;
+  int ip_seen = 0;
   int control_mode_selected = 0;
-  int mode_count = 0;
   int arg_start = 1;
 
   if (argc > 1) {
@@ -161,7 +159,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "control mode does not accept -d\n");
           return PARSE_ERR;
         }
-        if (seen_d) {
+        if (server_selected) {
           fprintf(stderr, "duplicate -d\n");
           return PARSE_ERR;
         }
@@ -171,7 +169,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
         opt->path = v;
         opt->mode = server_mode;
-        seen_d = 1;
+        server_selected = 1;
         break;
       }
 
@@ -181,7 +179,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "control mode does not accept -c\n");
           return PARSE_ERR;
         }
-        if (seen_c) {
+        if (client_action == 'c') {
           fprintf(stderr, "duplicate -c\n");
           return PARSE_ERR;
         }
@@ -193,7 +191,8 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         opt->path = v;
         opt->message = NULL;
         opt->msg_type = HF_MSG_TYPE_SEND_FILE;
-        seen_c = 1;
+        client_action = 'c';
+        client_actions++;
         break;
       }
 
@@ -203,7 +202,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "control mode does not accept -g\n");
           return PARSE_ERR;
         }
-        if (seen_g) {
+        if (client_action == 'g') {
           fprintf(stderr, "duplicate -g\n");
           return PARSE_ERR;
         }
@@ -214,7 +213,8 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         opt->mode = client_mode;
         opt->remote_path = v;
         opt->msg_type = HF_MSG_TYPE_GET_FILE;
-        seen_g = 1;
+        client_action = 'g';
+        client_actions++;
         break;
       }
       
@@ -224,7 +224,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "control mode does not accept -m\n");
           return PARSE_ERR;
         }
-        if (seen_m) {
+        if (client_action == 'm') {
           fprintf(stderr, "duplicate -m\n");
           return PARSE_ERR;
         }
@@ -236,7 +236,8 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         opt->path = NULL;
         opt->message = v;
         opt->msg_type = HF_MSG_TYPE_TEXT_MESSAGE;
-        seen_m = 1;
+        client_action = 'm';
+        client_actions++;
         break;
       }
 
@@ -246,7 +247,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "control mode does not accept -o\n");
           return PARSE_ERR;
         }
-        if (seen_o) {
+        if (output_seen) {
           fprintf(stderr, "duplicate -o\n");
           return PARSE_ERR;
         }
@@ -255,7 +256,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         }
 
         opt->output_path = v;
-        seen_o = 1;
+        output_seen = 1;
         break;
       }
 
@@ -266,7 +267,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         }
 
         opt->ip = v;
-        ip_set = 1;
+        ip_seen = 1;
         break;
       }
 
@@ -292,38 +293,36 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
   }
 
-  mode_count = seen_d + seen_c + seen_g + seen_m + (control_mode_selected ? 1 : 0);
-
-  if (seen_o && !seen_g) {
+  if (output_seen && client_action != 'g') {
     fprintf(stderr, "-o requires -g\n");
     return PARSE_ERR;
   }
 
-  if (mode_count == 0) {
-    // fprintf(stderr, "must specify one of -d, -c, -g, -m, status, or stop\n");
+  if (!server_selected && client_actions == 0 && !control_mode_selected) {
+    fprintf(stderr, "must specify one of -d, -c, -g, -m, status, or stop\n");
     return PARSE_ERR;
   }
 
-  if (seen_d && (seen_c || seen_g || seen_m)) {
+  if (server_selected && client_actions > 0) {
     fprintf(stderr, "cannot use server and client modes together\n");
     return PARSE_ERR;
   }
 
-  if ((seen_c + seen_g + seen_m) > 1) {
+  if (client_actions > 1) {
     fprintf(stderr, "must choose exactly one client action: -c, -g, or -m\n");
     return PARSE_ERR;
   }
 
   if (!control_mode_selected) {
-    opt->mode = seen_d ? server_mode : client_mode;
+    opt->mode = server_selected ? server_mode : client_mode;
   }
   if (opt->mode == server_mode && opt->path == NULL) return PARSE_ERR;
-  if (opt->mode == client_mode && seen_c && opt->path == NULL) return PARSE_ERR;
-  if (opt->mode == client_mode && seen_g && opt->remote_path == NULL) return PARSE_ERR;
-  if (opt->mode == client_mode && seen_m && opt->message == NULL) {
+  if (opt->mode == client_mode && client_action == 'c' && opt->path == NULL) return PARSE_ERR;
+  if (opt->mode == client_mode && client_action == 'g' && opt->remote_path == NULL) return PARSE_ERR;
+  if (opt->mode == client_mode && client_action == 'm' && opt->message == NULL) {
     return PARSE_ERR;
   }
-  if (ip_set && opt->mode != client_mode) {
+  if (ip_seen && opt->mode != client_mode) {
     fprintf(stderr, "%s mode does not accept -i\n",
             opt->mode == server_mode ? "server" : "control");
     return PARSE_ERR;
