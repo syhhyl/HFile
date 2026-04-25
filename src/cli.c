@@ -299,7 +299,6 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   }
 
   if (!server_selected && client_actions == 0 && !control_mode_selected) {
-    fprintf(stderr, "must specify one of -d, -c, -g, -m, status, or stop\n");
     return PARSE_ERR;
   }
 

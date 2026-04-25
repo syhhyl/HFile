@@ -34,10 +34,7 @@ class TestCLI(unittest.TestCase):
                 "name": "no_args",
                 "args": [],
                 "rc": 1,
-                "stderr_contains": [
-                    "must specify one of -d, -c, -g, -m, status, or stop",
-                    "usage:",
-                ],
+                "stderr_contains": ["usage:"],
             },
             {
                 "name": "invalid_token",
