@@ -9,20 +9,11 @@
 #include <string.h>
 
 #ifdef _WIN32
-  #include <io.h>
   #include <windows.h>
 #else
   #include <signal.h>
   #include <unistd.h>
 #endif
-
-static int control_is_tty_stdout(void) {
-#ifdef _WIN32
-  return _isatty(_fileno(stdout)) ? 1 : 0;
-#else
-  return isatty(fileno(stdout)) ? 1 : 0;
-#endif
-}
 
 static void control_print_rich_field(FILE *out,
                                      const char *label,
@@ -165,28 +156,25 @@ void control_print_server_access_details(FILE *out,
   (void)pid;
   url[0] = '\0';
 
-  if (out == stdout && control_is_tty_stdout()) {
-    (void)control_build_url(port, url, sizeof(url), &phone_reachable);
+  (void)control_build_url(port, url, sizeof(url), &phone_reachable);
 
-    control_print_startup_banner(out);
-    control_print_rich_field(out, "Receive Dir", receive_dir);
-    if (url[0] != '\0') {
-      control_print_rich_field(out, "Web", url);
-      if (!phone_reachable) {
-        control_print_rich_field(out, "Mobile",
-                                 "LAN IPv4 not detected, using localhost");
-      }
+  control_print_startup_banner(out);
+  control_print_rich_field(out, "Receive Dir", receive_dir);
+  if (url[0] != '\0') {
+    control_print_rich_field(out, "Web", url);
+    if (!phone_reachable) {
+      control_print_rich_field(out, "Mobile",
+                               "LAN IPv4 not detected, using localhost");
     }
-    if (!daemon_mode) {
-      control_print_rich_field(out, "Status", "Waiting for files and messages");
-    }
-
-    if (url[0] != '\0') {
-      (void)control_print_qr_to(out, url, 1, qrcodegen_Ecc_LOW);
-    }
-    fflush(out);
-    return;
   }
+  if (!daemon_mode) {
+    control_print_rich_field(out, "Status", "Waiting for files and messages");
+  }
+
+  if (url[0] != '\0') {
+    (void)control_print_qr_to(out, url, 1, qrcodegen_Ecc_LOW);
+  }
+  fflush(out);
 }
 
 static void control_print_status(FILE *out, const daemon_state_t *state) {
@@ -194,22 +182,13 @@ static void control_print_status(FILE *out, const daemon_state_t *state) {
     return;
   }
 
-  if (out == stdout && control_is_tty_stdout()) {
-    control_print_startup_banner(out);
-    control_print_rich_field(out, "Receive Dir", state->receive_dir);
-    control_print_rich_field_num(out, "PID", (unsigned long)state->pid);
-    control_print_rich_field(out, "Web", state->web_url);
-    if (state->web_url[0] != '\0') {
-      (void)control_print_qr_to(out, state->web_url, 1, qrcodegen_Ecc_LOW);
-    }
-    return;
+  control_print_startup_banner(out);
+  control_print_rich_field(out, "Receive Dir", state->receive_dir);
+  control_print_rich_field_num(out, "PID", (unsigned long)state->pid);
+  control_print_rich_field(out, "Web", state->web_url);
+  if (state->web_url[0] != '\0') {
+    (void)control_print_qr_to(out, state->web_url, 1, qrcodegen_Ecc_LOW);
   }
-
-  fprintf(out, "status: running\n");
-  fprintf(out, "pid: %ld\n", state->pid);
-  fprintf(out, "receive dir: %s\n", state->receive_dir);
-  fprintf(out, "port: %u\n", (unsigned)state->port);
-  fprintf(out, "web: %s\n", state->web_url);
 }
 
 static int control_pid_is_running(long pid) {
@@ -245,12 +224,8 @@ int control_status(void) {
   daemon_state_t state;
 
   if (control_load_running_state(&state) != 0) {
-    if (control_is_tty_stdout()) {
-      control_print_startup_banner(stdout);
-      control_print_rich_field(stdout, "Status", "No running daemon");
-      return 1;
-    }
-    printf("status: stopped\n");
+    control_print_startup_banner(stdout);
+    control_print_rich_field(stdout, "Status", "No running daemon");
     return 1;
   }
 
@@ -302,12 +277,8 @@ int control_stop(void) {
 #endif
 
   daemon_state_cleanup_files();
-  if (control_is_tty_stdout()) {
-    control_print_startup_banner(stdout);
-    control_print_rich_field_num(stdout, "PID", (unsigned long)state.pid);
-    control_print_rich_field(stdout, "Result", "Server stopped");
-    return 0;
-  }
-  printf("stopped pid %ld\n", state.pid);
+  control_print_startup_banner(stdout);
+  control_print_rich_field_num(stdout, "PID", (unsigned long)state.pid);
+  control_print_rich_field(stdout, "Result", "Server stopped");
   return 0;
 }

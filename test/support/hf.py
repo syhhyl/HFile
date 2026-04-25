@@ -443,6 +443,11 @@ class HFileServer:
                     self._pid = int(line.split(":", 1)[1].strip())
                 except ValueError:
                     self._pid = None
+            elif line.startswith("  PID"):
+                try:
+                    self._pid = int(line.split()[-1])
+                except ValueError:
+                    self._pid = None
 
     def __enter__(self) -> "HFileServer":
         self.start()
