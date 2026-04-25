@@ -374,7 +374,8 @@ class HFileServer:
                 with socket.create_connection((self.host, self.port), timeout=0.2):
                     pass
                 self._capture_runtime_details()
-                return
+                if os.name == "nt" or self._pid is not None:
+                    return
             except OSError:
                 pass
 
@@ -383,7 +384,7 @@ class HFileServer:
         tail = tail_text_file(self._startup_log_path or Path(""))
         raise TimeoutError(
             f"hf server not ready after {timeout:.1f}s on {self.host}:{self.port}. "
-            f"port did not accept connections. "
+            f"port did not accept connections or daemon state was not ready. "
             f"log tail:\n{tail}"
         )
 

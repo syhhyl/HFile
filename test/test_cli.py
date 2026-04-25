@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 
 from test.support.hf import (
+    HFileServer,
     make_temp_dir,
+    reserve_free_port,
     resolve_hf_path,
     run_hf,
 )
@@ -152,6 +155,33 @@ class TestCLI(unittest.TestCase):
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
         self.assertIn("invalid remote file", r.stderr)
+
+    @unittest.skipIf(os.name == "nt", "Windows does not daemonize")
+    def test_daemon_rejects_second_instance_on_different_port(self) -> None:
+        with make_temp_dir(prefix="hf_cli_daemon_") as tmp_dir:
+            base_dir = Path(tmp_dir)
+            first_dir = base_dir / "first"
+            second_dir = base_dir / "second"
+            server = HFileServer(
+                hf_path=self.hf_path,
+                out_dir=first_dir,
+                port=reserve_free_port(),
+            )
+            server.start(startup_timeout=5.0)
+            try:
+                second = run_hf(
+                    self.hf_path,
+                    ["-d", second_dir, "-p", str(reserve_free_port())],
+                    timeout=5.0,
+                )
+                self.assertEqual(
+                    1,
+                    second.returncode,
+                    f"argv={second.argv} stdout={second.stdout!r} stderr={second.stderr!r}",
+                )
+                self.assertIn("HFile is already running", second.stderr)
+            finally:
+                server.stop()
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
