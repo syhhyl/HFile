@@ -408,22 +408,6 @@ static server_conn_kind_t server_detect_connection_kind(socket_t conn) {
     return SERVER_CONN_KIND_HTTP;
   }
 
-  if (n >= 4) {
-    if (memcmp(buf, "GET ", 4) == 0 || memcmp(buf, "PUT ", 4) == 0) {
-      return SERVER_CONN_KIND_HTTP;
-    }
-  }
-  if (n >= 5) {
-    if (memcmp(buf, "POST ", 5) == 0 || memcmp(buf, "HEAD ", 5) == 0) {
-      return SERVER_CONN_KIND_HTTP;
-    }
-  }
-  if (n >= 7) {
-    if (memcmp(buf, "DELETE ", 7) == 0 || memcmp(buf, "OPTIONS", 7) == 0) {
-      return SERVER_CONN_KIND_HTTP;
-    }
-  }
-
   return SERVER_CONN_KIND_PROTOCOL;
 }
 
