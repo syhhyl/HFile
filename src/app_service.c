@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 protocol_result_t app_submit_message(const char *message) {
   if (message == NULL) {
@@ -64,8 +65,13 @@ protocol_result_t app_prepare_download(const char *base_dir,
                                        const char *target_path,
                                        app_download_t *download_out) {
   char full_path[4096];
-  fs_path_info_t info = {0};
   int fd = -1;
+  int open_flags = O_RDONLY;
+#ifdef _WIN32
+  struct _stat64 st;
+#else
+  struct stat st;
+#endif
 
   if (base_dir == NULL || target_path == NULL || download_out == NULL) {
     return PROTOCOL_ERR_INVALID_ARGUMENT;
@@ -76,21 +82,40 @@ protocol_result_t app_prepare_download(const char *base_dir,
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
 
-  if (fs_get_path_info(full_path, &info) != 0 || info.kind != FS_PATH_KIND_FILE) {
-    return PROTOCOL_ERR_INVALID_ARGUMENT;
-  }
-
 #ifdef _WIN32
-  fd = fs_open(full_path, O_RDONLY | O_BINARY, 0);
+  open_flags |= O_BINARY;
 #else
-  fd = fs_open(full_path, O_RDONLY, 0);
+  #ifdef O_NOFOLLOW
+  open_flags |= O_NOFOLLOW;
+  #endif
 #endif
+  fd = fs_open(full_path, open_flags, 0);
   if (fd == -1) {
     return PROTOCOL_ERR_IO;
   }
 
+#ifdef _WIN32
+  if (_fstat64(fd, &st) != 0) {
+#else
+  if (fstat(fd, &st) != 0) {
+#endif
+    fs_close(fd);
+    return PROTOCOL_ERR_IO;
+  }
+
+#ifdef _WIN32
+  if ((st.st_mode & _S_IFMT) != _S_IFREG || st.st_size < 0) {
+#else
+  if (!S_ISREG(st.st_mode) || st.st_size < 0) {
+#endif
+    fs_close(fd);
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
   download_out->fd = fd;
-  download_out->info = info;
+  download_out->info.kind = FS_PATH_KIND_FILE;
+  download_out->info.size = (uint64_t)st.st_size;
+  download_out->info.mtime = (uint64_t)st.st_mtime;
   return PROTOCOL_OK;
 }
 
