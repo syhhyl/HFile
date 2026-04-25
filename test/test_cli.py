@@ -135,6 +135,36 @@ class TestCLI(unittest.TestCase):
         )
         self.assertIn("inet_pton", r.stderr)
 
+    def test_dash_prefixed_values_are_not_rejected_by_parser(self) -> None:
+        cases = [
+            {
+                "name": "message",
+                "args": ["-m", "-hello", "-i", "not_an_ip"],
+                "not_contains": "invalid message",
+            },
+            {
+                "name": "remote_file",
+                "args": ["-g", "-remote.txt", "-i", "not_an_ip"],
+                "not_contains": "invalid remote file",
+            },
+            {
+                "name": "output_path",
+                "args": ["-g", "remote.txt", "-o", "-out.txt", "-i", "not_an_ip"],
+                "not_contains": "invalid output path",
+            },
+        ]
+
+        for c in cases:
+            with self.subTest(name=c["name"]):
+                r = run_hf(self.hf_path, c["args"], timeout=5.0)
+                self.assertEqual(
+                    r.returncode,
+                    1,
+                    f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+                )
+                self.assertIn("inet_pton", r.stderr)
+                self.assertNotIn(c["not_contains"], r.stderr)
+
     def test_client_rejects_missing_source_file(self) -> None:
         with make_temp_dir(prefix="hf_cli_") as tmp_dir:
             missing = Path(tmp_dir) / "missing.txt"

@@ -74,7 +74,7 @@ void usage(const char *argv0) {
           argv0, argv0, argv0, argv0, argv0, argv0);
 }
 
-int parse_port(const char *s, uint16_t *out) {
+static int parse_port(const char *s, uint16_t *out) {
   if (s == NULL || *s == '\0') return 1;
   errno = 0;
   char *end = NULL;
@@ -85,10 +85,19 @@ int parse_port(const char *s, uint16_t *out) {
   return 0;
 }
 
-int need_value(int argc, char **argv, int *i, const char **out) {
+static int need_value(int argc, char **argv, int *i, const char **out) {
   if (*i + 1 >= argc) return 1;
   *i = *i + 1;
   *out = argv[*i];
+  return 0;
+}
+
+static int take_value(int argc, char **argv, int *i,
+                      const char *error_message, const char **out) {
+  if (need_value(argc, argv, i, out) != 0) {
+    fprintf(stderr, "%s\n", error_message);
+    return 1;
+  }
   return 0;
 }
 
@@ -102,7 +111,6 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->ip = "127.0.0.1";
   opt->port = 8888;
   opt->msg_type = 0;
-  opt->daemonize = 0;
 
   int seen_d = 0;
   int seen_c = 0;
@@ -157,14 +165,12 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "duplicate -d\n");
           return PARSE_ERR;
         }
-        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
-          fprintf(stderr, "invalid server path\n");
+        if (take_value(argc, argv, &i, "invalid server path", &v) != 0) {
           return PARSE_ERR;
         }
 
         opt->path = v;
         opt->mode = server_mode;
-        opt->daemonize = 1;
         seen_d = 1;
         break;
       }
@@ -179,8 +185,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "duplicate -c\n");
           return PARSE_ERR;
         }
-        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
-          fprintf(stderr, "invalid client path\n");
+        if (take_value(argc, argv, &i, "invalid client path", &v) != 0) {
           return PARSE_ERR;
         }
 
@@ -202,8 +207,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "duplicate -g\n");
           return PARSE_ERR;
         }
-        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
-          fprintf(stderr, "invalid remote file\n");
+        if (take_value(argc, argv, &i, "invalid remote file", &v) != 0) {
           return PARSE_ERR;
         }
 
@@ -224,8 +228,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "duplicate -m\n");
           return PARSE_ERR;
         }
-        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
-          fprintf(stderr, "invalid message\n");
+        if (take_value(argc, argv, &i, "invalid message", &v) != 0) {
           return PARSE_ERR;
         }
         
@@ -247,8 +250,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "duplicate -o\n");
           return PARSE_ERR;
         }
-        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
-          fprintf(stderr, "invalid output path\n");
+        if (take_value(argc, argv, &i, "invalid output path", &v) != 0) {
           return PARSE_ERR;
         }
 
@@ -259,8 +261,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
       case 'i': {
         const char *v = NULL;
-        if (need_value(argc, argv, &i, &v) != 0 || v[0] == '-') {
-          fprintf(stderr, "invalid argument\n");
+        if (take_value(argc, argv, &i, "invalid argument", &v) != 0) {
           return PARSE_ERR;
         }
 
@@ -275,8 +276,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
           fprintf(stderr, "control mode does not accept -p\n");
           return PARSE_ERR;
         }
-        if (need_value(argc, argv, &i, &v) != 0) {
-          fprintf(stderr, "invalid port\n");
+        if (take_value(argc, argv, &i, "invalid port", &v) != 0) {
           return PARSE_ERR;
         }
         if (parse_port(v, &opt->port) != 0) {

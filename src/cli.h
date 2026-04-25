@@ -25,7 +25,6 @@ typedef struct {
   const char *ip;
   uint16_t port;
   uint8_t msg_type;
-  uint8_t daemonize;
 } Opt;
 
 typedef struct {
@@ -47,8 +46,6 @@ typedef struct {
 
 
 void usage(const char *argv0);
-int parse_port(const char *s, uint16_t *out);
-int need_value(int argc, char **argv, int *i, const char **out);
 parse_result_t parse_args(int argc, char **argv, Opt *opt);
 int load_windows_utf8_argv(int *argc_out, char ***argv_out);
 void free_windows_argv(char **argv, int argc);
