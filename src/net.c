@@ -404,13 +404,8 @@ static net_recv_file_result_t net_recv_file_all(socket_t sock,
   int pipefd[2] = {-1, -1};
   uint64_t remaining = content_size;
   uint64_t moved = 0;
-
-  if (pipe(pipefd) != 0) {
-    if (errno == EMFILE || errno == ENFILE) {
-      return NET_RECV_FILE_IO;
-    }
-    return NET_RECV_FILE_UNSUPPORTED;
-  }
+  int use_pipe_fallback = 0;
+  off_t file_offset = 0;
 
   while (remaining > 0) {
     size_t want = CHUNK_SIZE;
@@ -418,32 +413,41 @@ static net_recv_file_result_t net_recv_file_all(socket_t sock,
       want = (size_t)remaining;
     }
 
-    ssize_t n = splice(sock, NULL, pipefd[1], NULL, want,
-                       SPLICE_F_MOVE | SPLICE_F_MORE);
-    if (n < 0) {
-      if ((errno == EINVAL || errno == ENOSYS || errno == ENOTSUP) && moved == 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return NET_RECV_FILE_UNSUPPORTED;
+    ssize_t n;
+    if (!use_pipe_fallback) {
+      n = splice(sock, NULL, out_fd, &file_offset, want,
+                 SPLICE_F_MOVE | SPLICE_F_MORE);
+      if (n < 0) {
+        if ((errno == EINVAL || errno == ENOSYS || errno == ENOTSUP) && moved == 0) {
+          if (pipe(pipefd) != 0) {
+            if (errno == EMFILE || errno == ENFILE) {
+              return NET_RECV_FILE_IO;
+            }
+            return NET_RECV_FILE_UNSUPPORTED;
+          }
+          use_pipe_fallback = 1;
+          continue;
+        }
+        if (errno == EINTR) {
+          continue;
+        }
+        return NET_RECV_FILE_IO;
       }
-      if (errno == EINTR) {
-        continue;
+      if (n == 0) {
+        return NET_RECV_FILE_EOF;
       }
-      close(pipefd[0]);
-      close(pipefd[1]);
-      return NET_RECV_FILE_IO;
-    }
-    if (n == 0) {
-      close(pipefd[0]);
-      close(pipefd[1]);
-      return NET_RECV_FILE_EOF;
-    }
-
-    ssize_t pipe_remaining = n;
-    while (pipe_remaining > 0) {
-      ssize_t written = splice(pipefd[0], NULL, out_fd, NULL, (size_t)pipe_remaining,
-                               SPLICE_F_MOVE | SPLICE_F_MORE);
-      if (written < 0) {
+      file_offset += n;
+      remaining -= (uint64_t)n;
+      moved += (uint64_t)n;
+    } else {
+      n = splice(sock, NULL, pipefd[1], NULL, want,
+                 SPLICE_F_MOVE | SPLICE_F_MORE);
+      if (n < 0) {
+        if ((errno == EINVAL || errno == ENOSYS || errno == ENOTSUP) && moved == 0) {
+          close(pipefd[0]);
+          close(pipefd[1]);
+          return NET_RECV_FILE_UNSUPPORTED;
+        }
         if (errno == EINTR) {
           continue;
         }
@@ -451,19 +455,40 @@ static net_recv_file_result_t net_recv_file_all(socket_t sock,
         close(pipefd[1]);
         return NET_RECV_FILE_IO;
       }
-      if (written == 0) {
+      if (n == 0) {
         close(pipefd[0]);
         close(pipefd[1]);
-        return NET_RECV_FILE_IO;
+        return NET_RECV_FILE_EOF;
       }
-      pipe_remaining -= written;
-      remaining -= (uint64_t)written;
-      moved += (uint64_t)written;
+
+      ssize_t pipe_remaining = n;
+      while (pipe_remaining > 0) {
+        ssize_t written = splice(pipefd[0], NULL, out_fd, NULL, (size_t)pipe_remaining,
+                                 SPLICE_F_MOVE | SPLICE_F_MORE);
+        if (written < 0) {
+          if (errno == EINTR) {
+            continue;
+          }
+          close(pipefd[0]);
+          close(pipefd[1]);
+          return NET_RECV_FILE_IO;
+        }
+        if (written == 0) {
+          close(pipefd[0]);
+          close(pipefd[1]);
+          return NET_RECV_FILE_IO;
+        }
+        pipe_remaining -= written;
+        remaining -= (uint64_t)written;
+        moved += (uint64_t)written;
+      }
     }
   }
 
-  close(pipefd[0]);
-  close(pipefd[1]);
+  if (use_pipe_fallback) {
+    close(pipefd[0]);
+    close(pipefd[1]);
+  }
   return NET_RECV_FILE_OK;
 #else
   (void)sock;
