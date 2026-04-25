@@ -240,6 +240,29 @@ class TestCLI(unittest.TestCase):
             else:
                 state_path.unlink(missing_ok=True)
 
+    @unittest.skipIf(os.name == "nt", "POSIX daemon state path coverage")
+    def test_status_cleans_malformed_daemon_state(self) -> None:
+        state_path = Path(os.environ.get("TMPDIR") or "/tmp") / "hf-daemon.state"
+        original = state_path.read_bytes() if state_path.exists() else None
+
+        try:
+            state_path.write_text(f"pid={os.getpid()}\n", encoding="utf-8")
+
+            r = run_hf(self.hf_path, ["status"], timeout=5.0)
+
+            self.assertEqual(
+                r.returncode,
+                1,
+                f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+            )
+            self.assertIn("No running daemon", r.stdout)
+            self.assertFalse(state_path.exists())
+        finally:
+            if original is not None:
+                state_path.write_bytes(original)
+            else:
+                state_path.unlink(missing_ok=True)
+
     @unittest.skipIf(os.name == "nt", "Windows does not daemonize")
     def test_daemon_rejects_second_instance_on_different_port(self) -> None:
         with make_temp_dir(prefix="hf_cli_daemon_") as tmp_dir:

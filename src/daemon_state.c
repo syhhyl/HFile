@@ -36,22 +36,30 @@ static int daemon_state_copy_str(char *out, size_t out_cap, const char *value) {
 static int daemon_state_write_text_file(const char *path, const char *text) {
   char tmp_path[4096];
   int fd = -1;
+  size_t len = 0;
 
   if (path == NULL || text == NULL) {
     return 1;
   }
 
-  if (fs_make_temp_path(tmp_path, sizeof(tmp_path), path,
-                        (int)daemon_state_process_id(), 0) != 0) {
-    return 1;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    if (fs_make_temp_path(tmp_path, sizeof(tmp_path), path,
+                          (int)daemon_state_process_id(), attempt) != 0) {
+      return 1;
+    }
+    fd = fs_open_temp_file(tmp_path);
+    if (fd != -1) {
+      break;
+    }
+    if (errno != EEXIST) {
+      return 1;
+    }
   }
-
-  fd = fs_open_temp_file(tmp_path);
   if (fd == -1) {
     return 1;
   }
 
-  size_t len = strlen(text);
+  len = strlen(text);
   if (fs_write_all(fd, text, len) != (ssize_t)len) {
     (void)fs_close(fd);
     fs_remove_quiet(tmp_path);
@@ -141,7 +149,9 @@ int daemon_state_write(const daemon_state_t *state) {
   char text[12288];
   int n = 0;
 
-  if (state == NULL || daemon_state_default_state_path(state_path, sizeof(state_path)) != 0) {
+  if (state == NULL || state->pid <= 0 || state->receive_dir[0] == '\0' ||
+      state->port == 0 ||
+      daemon_state_default_state_path(state_path, sizeof(state_path)) != 0) {
     return 1;
   }
 
@@ -169,6 +179,9 @@ int daemon_state_read(daemon_state_t *state) {
   FILE *fp = NULL;
   char state_path[4096];
   char line[4608];
+  int have_pid = 0;
+  int have_receive_dir = 0;
+  int have_port = 0;
 
   if (state == NULL || daemon_state_default_state_path(state_path, sizeof(state_path)) != 0) {
     return 1;
@@ -192,11 +205,12 @@ int daemon_state_read(daemon_state_t *state) {
     value[strcspn(value, "\r\n")] = '\0';
 
     if (strcmp(line, "pid") == 0) {
-      (void)daemon_state_parse_long(value, &state->pid);
+      have_pid = daemon_state_parse_long(value, &state->pid) == 0 && state->pid > 0;
     } else if (strcmp(line, "receive_dir") == 0) {
-      (void)daemon_state_copy_str(state->receive_dir, sizeof(state->receive_dir), value);
+      have_receive_dir = value[0] != '\0' &&
+        daemon_state_copy_str(state->receive_dir, sizeof(state->receive_dir), value) == 0;
     } else if (strcmp(line, "port") == 0) {
-      (void)daemon_state_parse_u16(value, &state->port);
+      have_port = daemon_state_parse_u16(value, &state->port) == 0 && state->port != 0;
     } else if (strcmp(line, "web_url") == 0) {
       (void)daemon_state_copy_str(state->web_url, sizeof(state->web_url), value);
     } else if (strcmp(line, "log_path") == 0) {
@@ -210,7 +224,7 @@ int daemon_state_read(daemon_state_t *state) {
   }
 
   (void)fclose(fp);
-  return state->pid > 0 ? 0 : 1;
+  return have_pid && have_receive_dir && have_port ? 0 : 1;
 }
 
 void daemon_state_cleanup_files(void) {
