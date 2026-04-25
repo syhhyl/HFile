@@ -22,7 +22,6 @@ jobs:
           - target: darwin-arm64
             os: macos-14
             archive: hf-darwin-arm64.tar.gz
-            cmake_osx_architectures: arm64
           - target: windows-amd64
             os: windows-latest
             archive: hf-windows-amd64.zip
@@ -36,26 +35,9 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Configure CMake
-        shell: bash
-        env:
-          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_osx_architectures }}
-        run: |
-          cmake_args=(
-            -S .
-            -B build
-            -G Ninja
-            -DCMAKE_BUILD_TYPE=Release
-          )
-
-          if [ -n "${CMAKE_OSX_ARCHITECTURES:-}" ]; then
-            cmake_args+=("-DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}")
-          fi
-
-          cmake "${cmake_args[@]}"
-
       - name: Build
-        run: cmake --build build
+        shell: bash
+        run: bash ./build-nob.sh
 
       - name: Package archive
         shell: bash
