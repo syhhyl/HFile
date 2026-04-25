@@ -328,12 +328,16 @@ static inline int create_listener_socket(
   }
 
 #ifdef _WIN32
-  if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt,
+  if (setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&opt,
                  sizeof(opt)) == SOCKET_ERROR) {
 #else
   if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
 #endif
+#ifdef _WIN32
+    sock_perror("setsockopt(SO_EXCLUSIVEADDRUSE)");
+#else
     sock_perror("setsockopt(SO_REUSEADDR)");
+#endif
     socket_close(sock);
     return 1;
   }
