@@ -220,6 +220,12 @@ static int control_load_running_state(daemon_state_t *state) {
   return 0;
 }
 
+static int control_report_already_stopped(void) {
+  daemon_state_cleanup_files();
+  printf("already stopped\n");
+  return 0;
+}
+
 int control_status(void) {
   daemon_state_t state;
 
@@ -243,8 +249,11 @@ int control_stop(void) {
 
 #ifdef _WIN32
   HANDLE process = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE,
-                               (DWORD)state.pid);
+                                (DWORD)state.pid);
   if (process == NULL) {
+    if (GetLastError() == ERROR_INVALID_PARAMETER) {
+      return control_report_already_stopped();
+    }
     fprintf(stderr, "failed to open process %ld\n", state.pid);
     return 1;
   }
@@ -261,6 +270,9 @@ int control_stop(void) {
   CloseHandle(process);
 #else
   if (kill((pid_t)state.pid, SIGTERM) != 0) {
+    if (errno == ESRCH) {
+      return control_report_already_stopped();
+    }
     perror("kill(SIGTERM)");
     return 1;
   }

@@ -200,6 +200,46 @@ class TestCLI(unittest.TestCase):
         )
         self.assertIn("invalid remote file", r.stderr)
 
+    @unittest.skipIf(os.name == "nt", "POSIX daemon state path coverage")
+    def test_stop_cleans_stale_daemon_state(self) -> None:
+        state_path = Path(os.environ.get("TMPDIR") or "/tmp") / "hf-daemon.state"
+        original = state_path.read_bytes() if state_path.exists() else None
+
+        try:
+            stale_pid = 999999
+            while stale_pid > 1:
+                try:
+                    os.kill(stale_pid, 0)
+                    stale_pid -= 1
+                except ProcessLookupError:
+                    break
+                except PermissionError:
+                    stale_pid -= 1
+            state_path.write_text(
+                f"pid={stale_pid}\n"
+                f"receive_dir=/tmp\n"
+                f"port=8888\n"
+                f"web_url=http://127.0.0.1:8888/\n"
+                f"log_path=/tmp/hf-daemon.log\n"
+                f"daemon_mode=1\n",
+                encoding="utf-8",
+            )
+
+            r = run_hf(self.hf_path, ["stop"], timeout=5.0)
+
+            self.assertEqual(
+                r.returncode,
+                0,
+                f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+            )
+            self.assertIn("already stopped", r.stdout)
+            self.assertFalse(state_path.exists())
+        finally:
+            if original is not None:
+                state_path.write_bytes(original)
+            else:
+                state_path.unlink(missing_ok=True)
+
     @unittest.skipIf(os.name == "nt", "Windows does not daemonize")
     def test_daemon_rejects_second_instance_on_different_port(self) -> None:
         with make_temp_dir(prefix="hf_cli_daemon_") as tmp_dir:
