@@ -128,10 +128,6 @@ static int daemon_state_parse_long(const char *value, long *out) {
   return 0;
 }
 
-int daemon_state_default_pid_path(char *out, size_t out_cap) {
-  return daemon_state_global_path("hf-daemon.pid", out, out_cap);
-}
-
 int daemon_state_default_log_path(char *out, size_t out_cap) {
   return daemon_state_global_path("hf-daemon.log", out, out_cap);
 }
@@ -218,12 +214,8 @@ int daemon_state_read(daemon_state_t *state) {
 }
 
 void daemon_state_cleanup_files(void) {
-  char pid_path[4096];
   char state_path[4096];
 
-  if (daemon_state_default_pid_path(pid_path, sizeof(pid_path)) == 0) {
-    fs_remove_quiet(pid_path);
-  }
   if (daemon_state_default_state_path(state_path, sizeof(state_path)) == 0) {
     fs_remove_quiet(state_path);
   }

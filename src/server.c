@@ -71,6 +71,7 @@ typedef struct {
 typedef struct {
   char receive_dir[4096];
   char log_path[4096];
+  long pid;
   uint16_t port;
   int daemon_mode;
   char last_web_url[256];
@@ -97,8 +98,7 @@ static protocol_result_t server_send_response(socket_t conn,
 static int server_build_current_web_url(uint16_t port,
                                         char *web_url_out,
                                         size_t web_url_out_cap);
-static int server_persist_daemon_state(const char *receive_dir,
-                                       uint16_t port,
+static int server_persist_daemon_state(const server_opt_t *ser_opt,
                                        const char *log_path,
                                        int daemon_mode,
                                        char *web_url_out,
@@ -107,8 +107,7 @@ static void server_sleep_ms(uint32_t timeout_ms);
 static int server_wait_for_refresh_interval(uint32_t seconds);
 static int server_start_state_watcher(server_thread_t *thread_out,
                                       server_state_watcher_ctx_t **ctx_out,
-                                      const char *receive_dir,
-                                      uint16_t port,
+                                      const server_opt_t *ser_opt,
                                       const char *log_path,
                                       int daemon_mode,
                                       const char *initial_web_url);
@@ -916,26 +915,27 @@ static int server_build_current_web_url(uint16_t port,
   return 0;
 }
 
-static int server_persist_daemon_state(const char *receive_dir,
-                                       uint16_t port,
+static int server_persist_daemon_state(const server_opt_t *ser_opt,
                                        const char *log_path,
                                        int daemon_mode,
                                        char *web_url_out,
                                        size_t web_url_out_cap) {
   daemon_state_t state = {0};
 
-  if (receive_dir == NULL || receive_dir[0] == '\0' || port == 0) {
+  if (ser_opt == NULL || ser_opt->path == NULL || ser_opt->path[0] == '\0' ||
+      ser_opt->port == 0 || ser_opt->pid <= 0) {
     return 1;
   }
 
-  state.pid = server_current_pid_long();
-  (void)snprintf(state.receive_dir, sizeof(state.receive_dir), "%s", receive_dir);
+  state.pid = ser_opt->pid;
+  (void)snprintf(state.receive_dir, sizeof(state.receive_dir), "%s", ser_opt->path);
   (void)snprintf(state.log_path, sizeof(state.log_path), "%s",
                  log_path != NULL ? log_path : "");
-  state.port = port;
+  state.port = ser_opt->port;
   state.daemon_mode = daemon_mode ? 1 : 0;
 
-  if (server_build_current_web_url(port, state.web_url, sizeof(state.web_url)) != 0) {
+  if (server_build_current_web_url(ser_opt->port, state.web_url,
+                                   sizeof(state.web_url)) != 0) {
     state.web_url[0] = '\0';
   }
 
@@ -988,10 +988,14 @@ static void *server_state_watcher_main(void *arg) {
     }
 
     if (strcmp(web_url, ctx->last_web_url) != 0) {
-      if (server_persist_daemon_state(ctx->receive_dir, ctx->port,
-                                      ctx->log_path[0] != '\0' ? ctx->log_path : NULL,
-                                      ctx->daemon_mode,
-                                      NULL, 0) != 0) {
+      server_opt_t opt = {0};
+      opt.path = ctx->receive_dir;
+      opt.port = ctx->port;
+      opt.pid = ctx->pid;
+
+      if (server_persist_daemon_state(
+            &opt, ctx->log_path[0] != '\0' ? ctx->log_path : NULL,
+            ctx->daemon_mode, NULL, 0) != 0) {
         fprintf(stderr, "failed to refresh daemon state\n");
         continue;
       }
@@ -1009,15 +1013,15 @@ static void *server_state_watcher_main(void *arg) {
 
 static int server_start_state_watcher(server_thread_t *thread_out,
                                       server_state_watcher_ctx_t **ctx_out,
-                                      const char *receive_dir,
-                                      uint16_t port,
+                                      const server_opt_t *ser_opt,
                                       const char *log_path,
                                       int daemon_mode,
                                       const char *initial_web_url) {
   server_state_watcher_ctx_t *ctx = NULL;
 
-  if (thread_out == NULL || ctx_out == NULL || receive_dir == NULL ||
-      receive_dir[0] == '\0' || initial_web_url == NULL) {
+  if (thread_out == NULL || ctx_out == NULL || ser_opt == NULL ||
+      ser_opt->path == NULL || ser_opt->path[0] == '\0' || ser_opt->port == 0 ||
+      ser_opt->pid <= 0 || initial_web_url == NULL) {
     return 1;
   }
 
@@ -1031,10 +1035,11 @@ static int server_start_state_watcher(server_thread_t *thread_out,
   }
 
   memset(ctx, 0, sizeof(*ctx));
-  (void)snprintf(ctx->receive_dir, sizeof(ctx->receive_dir), "%s", receive_dir);
+  (void)snprintf(ctx->receive_dir, sizeof(ctx->receive_dir), "%s", ser_opt->path);
   (void)snprintf(ctx->log_path, sizeof(ctx->log_path), "%s",
                  log_path != NULL ? log_path : "");
-  ctx->port = port;
+  ctx->pid = ser_opt->pid;
+  ctx->port = ser_opt->port;
   ctx->daemon_mode = daemon_mode ? 1 : 0;
   (void)snprintf(ctx->last_web_url, sizeof(ctx->last_web_url), "%s", initial_web_url);
 
@@ -1128,99 +1133,29 @@ static int server_notify_parent(int *ready_fd, uint8_t status) {
 #endif
 }
 
+#ifndef _WIN32
+
 static int server_pid_is_running_long(long pid) {
   if (pid <= 0) {
     return 0;
   }
-
-#ifdef _WIN32
-  HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
-  DWORD wait_res = WAIT_FAILED;
-  if (process == NULL) {
-    return 0;
-  }
-  wait_res = WaitForSingleObject(process, 0);
-  CloseHandle(process);
-  return wait_res == WAIT_TIMEOUT ? 1 : 0;
-#else
   if (kill((pid_t)pid, 0) == 0) {
     return 1;
   }
   return errno == EPERM ? 1 : 0;
-#endif
 }
 
-static int server_prepare_state_files(void) {
+static int server_prepare_daemon_state(void) {
   daemon_state_t state = {0};
 
-  if (daemon_state_read(&state) == 0 && server_pid_is_running_long(state.pid)) {
-    fprintf(stderr, "HFile is already running\nrun 'hf status' or 'hf stop'\n");
-    return 1;
-  }
-
-  daemon_state_cleanup_files();
-  return 0;
-}
-
-#ifndef _WIN32
-
-static int server_load_pid_file(const char *pid_path, pid_t *pid_out) {
-  FILE *fp = NULL;
-  long value = 0;
-
-  if (pid_out == NULL) {
-    return 1;
-  }
-  *pid_out = 0;
-
-  fp = fopen(pid_path, "r");
-  if (fp == NULL) {
-    if (errno == ENOENT) {
-      return 0;
+  if (daemon_state_read(&state) == 0) {
+    if (server_pid_is_running_long(state.pid)) {
+      fprintf(stderr, "HFile is already running\nrun 'hf status' or 'hf stop'\n");
+      return 1;
     }
-    perror("fopen(pid_file)");
-    return 1;
+    daemon_state_cleanup_files();
   }
 
-  if (fscanf(fp, "%ld", &value) != 1) {
-    value = 0;
-  }
-  (void)fclose(fp);
-
-  if (value > 0) {
-    *pid_out = (pid_t)value;
-  }
-  return 0;
-}
-
-static int server_prepare_pid_file(const char *pid_path) {
-  pid_t existing_pid = 0;
-
-  if (server_load_pid_file(pid_path, &existing_pid) != 0) {
-    return 1;
-  }
-  if (server_pid_is_running_long((long)existing_pid)) {
-    fprintf(stderr, "HFile is already running\nrun 'hf status' or 'hf stop'\n");
-    return 1;
-  }
-  return server_prepare_state_files();
-}
-
-static int server_write_pid_file(const char *pid_path, pid_t pid) {
-  FILE *fp = fopen(pid_path, "w");
-  if (fp == NULL) {
-    perror("fopen(pid_file)");
-    return 1;
-  }
-  if (fprintf(fp, "%ld\n", (long)pid) < 0) {
-    perror("fprintf(pid_file)");
-    (void)fclose(fp);
-    return 1;
-  }
-  if (fclose(fp) != 0) {
-    perror("fclose(pid_file)");
-    return 1;
-  }
   return 0;
 }
 
@@ -1279,8 +1214,7 @@ static int server_wait_for_daemon_ready(int ready_fd, pid_t child_pid) {
 static int server_run_process(const server_opt_t *ser_opt,
                               int ready_fd,
                               const char *log_path,
-                              int daemon_mode,
-                              int persist_state) {
+                              int daemon_mode) {
   int exit_code = 0;
   int ready_notified = 0;
   server_thread_t state_watcher_thread = {0};
@@ -1310,11 +1244,10 @@ static int server_run_process(const server_opt_t *ser_opt,
     goto CLOSE_SOCK;
   }
 
-  if (persist_state) {
+  if (daemon_mode) {
     char initial_web_url[256];
 
-    if (server_persist_daemon_state(ser_opt->path, ser_opt->port, log_path,
-                                    daemon_mode,
+    if (server_persist_daemon_state(ser_opt, log_path, daemon_mode,
                                     initial_web_url, sizeof(initial_web_url)) != 0) {
       fprintf(stderr, "failed to persist daemon state\n");
       exit_code = 1;
@@ -1322,8 +1255,8 @@ static int server_run_process(const server_opt_t *ser_opt,
     }
 
     if (server_start_state_watcher(&state_watcher_thread, &state_watcher_ctx,
-                                   ser_opt->path, ser_opt->port, log_path,
-                                   daemon_mode, initial_web_url) != 0) {
+                                   ser_opt, log_path, daemon_mode,
+                                   initial_web_url) != 0) {
       fprintf(stderr, "failed to start daemon state watcher\n");
     }
   }
@@ -1336,7 +1269,8 @@ static int server_run_process(const server_opt_t *ser_opt,
     ready_notified = 1;
   }
 
-  server_print_access_details(ser_opt, log_path, server_current_pid_long(), daemon_mode);
+  server_print_access_details(ser_opt, log_path, server_current_pid_long(),
+                              daemon_mode);
 
   exit_code = server_run_listener(sock, ser_opt);
   if (shutdown_requested()) {
@@ -1357,7 +1291,7 @@ CLEAN_UP:
   if (ready_fd >= 0 && !ready_notified) {
     (void)server_notify_parent(&ready_fd, 0u);
   }
-  if (persist_state) {
+  if (daemon_mode) {
     daemon_state_cleanup_files();
   }
   message_store_cleanup();
@@ -1371,16 +1305,11 @@ int server(const server_opt_t *ser_opt) {
     fprintf(stderr, "invalid server options\n");
     return 1;
   }
-  if (server_prepare_state_files() != 0) {
-    return 1;
-  }
   fprintf(stderr,
           "daemon mode is not supported on Windows; running attached server instead\n");
-  return server_run_process(ser_opt, -1, NULL, 0, 1);
+  return server_run_process(ser_opt, -1, NULL, 0);
 #else
   char log_path[4096];
-  char pid_path[4096];
-
   if (ser_opt == NULL) {
     fprintf(stderr, "invalid server options\n");
     return 1;
@@ -1390,11 +1319,7 @@ int server(const server_opt_t *ser_opt) {
     fprintf(stderr, "invalid log file path\n");
     return 1;
   }
-  if (daemon_state_default_pid_path(pid_path, sizeof(pid_path)) != 0) {
-    fprintf(stderr, "invalid pid file path\n");
-    return 1;
-  }
-  if (server_prepare_pid_file(pid_path) != 0) {
+  if (server_prepare_daemon_state() != 0) {
     return 1;
   }
 
@@ -1433,13 +1358,10 @@ int server(const server_opt_t *ser_opt) {
     (void)server_notify_parent(&ready_pipe[1], 0u);
     return 1;
   }
-  if (server_write_pid_file(pid_path, getpid()) != 0) {
-    (void)server_notify_parent(&ready_pipe[1], 0u);
-    return 1;
-  }
 
   server_opt_t child_opt = *ser_opt;
-  int exit_code = server_run_process(&child_opt, ready_pipe[1], log_path, 1, 1);
+  child_opt.pid = server_current_pid_long();
+  int exit_code = server_run_process(&child_opt, ready_pipe[1], log_path, 1);
   return exit_code;
 #endif
 }

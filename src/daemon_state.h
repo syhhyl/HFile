@@ -13,7 +13,6 @@ typedef struct {
   int daemon_mode;
 } daemon_state_t;
 
-int daemon_state_default_pid_path(char *out, size_t out_cap);
 int daemon_state_default_log_path(char *out, size_t out_cap);
 int daemon_state_default_state_path(char *out, size_t out_cap);
 int daemon_state_write(const daemon_state_t *state);

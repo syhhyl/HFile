@@ -42,6 +42,7 @@ typedef struct {
 typedef struct {
   const char *path;
   uint16_t port;
+  long pid;
 } server_opt_t;
 
 
