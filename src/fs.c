@@ -291,9 +291,17 @@ void fs_remove_quiet(const char *path) {
 
 int fs_basename_from_path(const char **file_path, const char **file_name) {
   if (*file_path == NULL) return 1;
-  char *tmp;
+  const char *tmp;
 #ifdef _WIN32
-  tmp = strrchr(*file_path, '\\');
+  const char *slash = strrchr(*file_path, '/');
+  const char *backslash = strrchr(*file_path, '\\');
+  if (slash == NULL) {
+    tmp = backslash;
+  } else if (backslash == NULL) {
+    tmp = slash;
+  } else {
+    tmp = slash > backslash ? slash : backslash;
+  }
 #else
   tmp = strrchr(*file_path, '/');
 #endif
@@ -370,7 +378,7 @@ static int fs_remove_tree_validate(const char *path) {
     return 1;
   }
 
-  while ((de = readdir(dp)) != NULL) {
+  while ((errno = 0, de = readdir(dp)) != NULL) {
     char child_path[4096];
 
     if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
@@ -385,6 +393,11 @@ static int fs_remove_tree_validate(const char *path) {
       closedir(dp);
       return 1;
     }
+  }
+
+  if (errno != 0) {
+    closedir(dp);
+    return 1;
   }
 
   closedir(dp);
@@ -459,7 +472,7 @@ static int fs_remove_tree_impl(const char *path) {
     return 1;
   }
 
-  while ((de = readdir(dp)) != NULL) {
+  while ((errno = 0, de = readdir(dp)) != NULL) {
     char child_path[4096];
 
     if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
@@ -474,6 +487,11 @@ static int fs_remove_tree_impl(const char *path) {
       closedir(dp);
       return 1;
     }
+  }
+
+  if (errno != 0) {
+    closedir(dp);
+    return 1;
   }
 
   if (closedir(dp) != 0) {
