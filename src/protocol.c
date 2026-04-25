@@ -180,12 +180,6 @@ protocol_result_t proto_send_payload(socket_t sock, const uint8_t *in, size_t le
   return PROTOCOL_OK;
 }
 
-protocol_result_t proto_send_file_transfer_prefix(socket_t sock,
-                                                  const uint8_t *in,
-                                                  size_t len) {
-  return proto_send_payload(sock, in, len);
-}
-
 protocol_result_t proto_recv_file_name_only(socket_t sock, char **file_name_out) {
   uint16_t net_len = 0;
   uint16_t file_name_len = 0;
@@ -324,20 +318,6 @@ protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in) {
   header->payload_size = decode_u64_be(base);
 
   return PROTOCOL_OK;
-}
-
-protocol_result_t send_header(socket_t sock, const uint8_t *in) {
-  if (is_socket_invalid(sock) || in == NULL) {
-    return PROTOCOL_ERR_INVALID_ARGUMENT;
-  }
-  
-  ssize_t n = send_all(sock, in, HF_PROTOCOL_HEADER_SIZE);
-  if (n < HF_PROTOCOL_HEADER_SIZE) {
-    if (n >= 0) return PROTOCOL_ERR_SHORT_WRITE;
-    return PROTOCOL_ERR_IO;
-  }
-  
-  return PROTOCOL_OK; 
 }
 
 protocol_result_t recv_header(socket_t sock, uint8_t *out) {
