@@ -199,9 +199,25 @@ class TestCLI(unittest.TestCase):
                     self.hf_path, ["-d", out_dir, "-p", str(port)], timeout=10.0
                 )
             except subprocess.TimeoutExpired:
-                self.fail(
-                    "server process did not exit within 10s after bind failure"
-                )
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(1.0)
+                    sock.connect(("127.0.0.1", port))
+                    sock.close()
+                    self.fail(
+                        f"server is running on port {port} - "
+                        "SO_EXCLUSIVEADDRUSE failed to prevent rebind; "
+                        "test scenario requires Windows exclusive port binding"
+                    )
+                except ConnectionRefusedError:
+                    self.fail(
+                        "server process timed out but port is not accepting connections; "
+                        "bind may have failed but process did not exit properly"
+                    )
+                except OSError:
+                    self.fail(
+                        "server process did not exit within 10s after bind failure"
+                    )
             finally:
                 listener.close()
 
