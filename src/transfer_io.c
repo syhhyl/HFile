@@ -16,75 +16,6 @@
 
 #define TRANSFER_CHUNK_LINE_MAX 128u
 
-static protocol_result_t transfer_recv_socket_file_buffered(socket_t conn,
-                                                            int out,
-                                                            uint64_t content_size,
-                                                            const char *recv_ctx,
-                                                            const char *short_read_message) {
-  char stack_buf[STACK_BUF_SIZE];
-  char *heap_buf = NULL;
-  char *buf = stack_buf;
-  size_t buf_cap = STACK_BUF_SIZE;
-  uint64_t remaining = content_size;
-
-  if (content_size > HEAP_THRESHOLD) {
-    heap_buf = (char *)malloc(HEAP_BUF_SIZE);
-    if (heap_buf == NULL) {
-      fprintf(stderr, "heap buf malloc failed\n");
-      return PROTOCOL_ERR_ALLOC;
-    }
-    buf = heap_buf;
-    buf_cap = HEAP_BUF_SIZE;
-  }
-
-  while (remaining > 0) {
-    size_t want = buf_cap;
-    if ((uint64_t)want > remaining) {
-      want = (size_t)remaining;
-    }
-
-#ifdef _WIN32
-    int tmp = recv(conn, buf, (int)want, 0);
-    if (tmp == SOCKET_ERROR) {
-      int err = WSAGetLastError();
-      if (err == WSAEINTR) {
-        continue;
-      }
-      sock_perror(recv_ctx);
-      free(heap_buf);
-      return PROTOCOL_ERR_IO;
-    }
-    ssize_t n = (ssize_t)tmp;
-#else
-    ssize_t n = recv(conn, buf, want, 0);
-    if (n < 0) {
-      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
-        continue;
-      }
-      sock_perror(recv_ctx);
-      free(heap_buf);
-      return PROTOCOL_ERR_IO;
-    }
-#endif
-    if (n == 0) {
-      fprintf(stderr, "%s\n", short_read_message);
-      free(heap_buf);
-      return PROTOCOL_ERR_EOF;
-    }
-
-    if (fs_write_all(out, buf, (size_t)n) != n) {
-      perror("write_all");
-      free(heap_buf);
-      return PROTOCOL_ERR_IO;
-    }
-
-    remaining -= (uint64_t)n;
-  }
-
-  free(heap_buf);
-  return PROTOCOL_OK;
-}
-
 static protocol_result_t transfer_recv_socket_http_file_buffered(
   socket_t conn,
   int out,
@@ -453,7 +384,7 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
     return result;
   }
 
-  net_recv_file_result_t recv_res = net_recv_file_all(conn, out, content_size);
+  net_recv_file_result_t recv_res = net_recv_file_best_effort(conn, out, content_size);
   if (recv_res == NET_RECV_FILE_OK) {
     result = PROTOCOL_OK;
   } else if (recv_res == NET_RECV_FILE_EOF) {
@@ -465,8 +396,7 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
   } else if (recv_res == NET_RECV_FILE_INVALID_ARGUMENT) {
     result = PROTOCOL_ERR_INVALID_ARGUMENT;
   } else {
-    result = transfer_recv_socket_file_buffered(
-      conn, out, content_size, recv_ctx, short_read_message);
+    result = PROTOCOL_ERR_IO;
   }
   if (result != PROTOCOL_OK) {
     goto CLEANUP;

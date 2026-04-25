@@ -32,9 +32,6 @@
 
 
 
-int net_init();
-void net_cleanup();
-
 bool is_socket_invalid(socket_t sock);
 
 typedef enum {
@@ -64,8 +61,6 @@ ssize_t recv_all(
 
 void encode_u64_be(uint64_t v, uint8_t out[8]);
 uint64_t decode_u64_be(const uint8_t in[8]);
-void encode_u32_be(uint32_t v, uint8_t out[4]);
-uint32_t decode_u32_be(const uint8_t in[4]);
 
 void sock_perror(const char *msg);
 
@@ -75,18 +70,12 @@ int socket_close(socket_t s);
 int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out);
 int net_primary_ipv4(char *out, size_t out_cap);
 
-net_send_file_result_t net_send_file_all(socket_t sock,
-                                         int in_fd,
-                                         uint64_t content_size);
 net_send_file_result_t net_send_file_best_effort(socket_t sock,
-                                                 int in_fd,
-                                                 uint64_t content_size);
-net_recv_file_result_t net_recv_file_all(socket_t sock,
-                                         int out_fd,
-                                         uint64_t content_size);
+                                                  int in_fd,
+                                                  uint64_t content_size);
 net_recv_file_result_t net_recv_file_best_effort(socket_t sock,
-                                                 int out_fd,
-                                                 uint64_t content_size);
+                                                  int out_fd,
+                                                  uint64_t content_size);
 
 
 #endif  // HF_NET_H

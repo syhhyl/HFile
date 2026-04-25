@@ -117,20 +117,6 @@ uint64_t decode_u64_be(const uint8_t in[8]) {
          (uint64_t)in[7];
 }
 
-void encode_u32_be(uint32_t v, uint8_t out[4]) {
-  out[0] = (uint8_t)((v >> 24) & 0xFFu);
-  out[1] = (uint8_t)((v >> 16) & 0xFFu);
-  out[2] = (uint8_t)((v >> 8) & 0xFFu);
-  out[3] = (uint8_t)(v & 0xFFu);
-}
-
-uint32_t decode_u32_be(const uint8_t in[4]) {
-  return ((uint32_t)in[0] << 24) |
-         ((uint32_t)in[1] << 16) |
-         ((uint32_t)in[2] << 8) |
-         (uint32_t)in[3];
-}
-
 void sock_perror(const char *msg) {
 #ifdef _WIN32
   int err = WSAGetLastError();
@@ -260,9 +246,9 @@ int net_primary_ipv4(char *out, size_t out_cap) {
   return 0;
 }
 
-net_send_file_result_t net_send_file_all(socket_t sock,
-                                         int in_fd,
-                                         uint64_t content_size) {
+static net_send_file_result_t net_send_file_all(socket_t sock,
+                                                int in_fd,
+                                                uint64_t content_size) {
   if (content_size == 0) {
     return NET_SEND_FILE_OK;
   }
@@ -403,9 +389,9 @@ net_send_file_result_t net_send_file_best_effort(socket_t sock,
   return net_send_file_buffered(sock, in_fd, content_size);
 }
 
-net_recv_file_result_t net_recv_file_all(socket_t sock,
-                                         int out_fd,
-                                         uint64_t content_size) {
+static net_recv_file_result_t net_recv_file_all(socket_t sock,
+                                                int out_fd,
+                                                uint64_t content_size) {
   if (content_size == 0) {
     return NET_RECV_FILE_OK;
   }
