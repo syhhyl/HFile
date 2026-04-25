@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
     ret = control_stop();
   } else usage(argv[0]);
 
-  if (shutdown_requested()) {
+  if (shutdown_signal_number() != 0) {
     ret = shutdown_exit_code();
   }
 

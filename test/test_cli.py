@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import unittest
 from pathlib import Path
 
@@ -176,6 +177,32 @@ class TestCLI(unittest.TestCase):
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
         self.assertIn("open", r.stderr)
+
+    @unittest.skipIf(
+        os.name != "nt", "POSIX daemon parent does not expose child shutdown state"
+    )
+    def test_server_start_failure_is_not_reported_as_signal_exit(self) -> None:
+        with make_temp_dir(prefix="hf_cli_bind_") as tmp_dir:
+            out_dir = Path(tmp_dir) / "out"
+            out_dir.mkdir()
+
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                port = listener.getsockname()[1]
+
+                r = run_hf(self.hf_path, ["-d", out_dir, "-p", str(port)], timeout=5.0)
+            finally:
+                listener.close()
+
+        self.assertEqual(
+            r.returncode,
+            1,
+            f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
 
     @unittest.skipIf(os.name == "nt", "directory open behavior differs on Windows")
     def test_client_rejects_directory_source(self) -> None:
