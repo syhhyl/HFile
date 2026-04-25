@@ -291,7 +291,7 @@ class HFileServer:
     """Manage an hf server process.
 
     The server is started with stdout/stderr redirected to a log file. Readiness
-    is determined by waiting for a stable server startup log line.
+    is determined by waiting until the configured TCP port accepts connections.
     """
 
     def __init__(
@@ -361,9 +361,6 @@ class HFileServer:
 
     def wait_ready(self, *, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout
-        readiness_marker = (
-            "HFile server ready" if os.name == "nt" else "HFile daemon ready"
-        )
 
         while time.monotonic() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
@@ -373,18 +370,20 @@ class HFileServer:
                         f"hf server exited early (rc={self._proc.returncode}). log tail:\n{tail}"
                     )
 
-            if self._startup_log_path is not None:
-                log_text = tail_text_file(self._startup_log_path)
-                if readiness_marker in log_text:
-                    self._capture_runtime_details(log_text)
-                    return
+            try:
+                with socket.create_connection((self.host, self.port), timeout=0.2):
+                    pass
+                self._capture_runtime_details()
+                return
+            except OSError:
+                pass
 
             time.sleep(0.05)
 
         tail = tail_text_file(self._startup_log_path or Path(""))
         raise TimeoutError(
             f"hf server not ready after {timeout:.1f}s on {self.host}:{self.port}. "
-            f"expected log line containing {readiness_marker!r}. "
+            f"port did not accept connections. "
             f"log tail:\n{tail}"
         )
 
@@ -422,23 +421,27 @@ class HFileServer:
                 pass
             self._log_fh = None
 
-    def _capture_runtime_details(self, log_text: str) -> None:
+    def _capture_runtime_details(self) -> None:
         if os.name == "nt":
             if self._proc is not None:
                 self._pid = self._proc.pid
             return
 
         self.log_path = default_daemon_log_path()
-        for line in log_text.splitlines():
-            if line.startswith("  pid        : "):
+        try:
+            status = run_hf(self.hf_path, ["status"], timeout=2.0)
+        except Exception:
+            return
+
+        if status.returncode != 0:
+            return
+
+        for line in status.stdout.splitlines():
+            if line.startswith("pid: "):
                 try:
                     self._pid = int(line.split(":", 1)[1].strip())
                 except ValueError:
                     self._pid = None
-            elif line.startswith("  error log  : "):
-                path = line.split(":", 1)[1].strip()
-                if path:
-                    self.log_path = Path(path)
 
     def __enter__(self) -> "HFileServer":
         self.start()

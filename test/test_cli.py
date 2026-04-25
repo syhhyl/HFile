@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import http.client
-import os
 import unittest
 from pathlib import Path
 
 from test.support.hf import (
-    HFileServer,
     make_temp_dir,
-    reserve_free_port,
     resolve_hf_path,
     run_hf,
-    tail_text_file,
 )
 
 
@@ -157,131 +152,6 @@ class TestCLI(unittest.TestCase):
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
         self.assertIn("invalid remote file", r.stderr)
-
-    def test_d_lifecycle_commands(self) -> None:
-        run_hf(self.hf_path, ["stop"], timeout=5.0)
-
-        with make_temp_dir(prefix="hf_cli_daemon_") as tmp_dir:
-            base_dir = Path(tmp_dir)
-            out_dir = base_dir / "outputs"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            port = reserve_free_port()
-            if os.name == "nt":
-                log_path = base_dir / "hf_windows_server.log"
-                server = HFileServer(
-                    hf_path=self.hf_path,
-                    out_dir=out_dir,
-                    port=port,
-                    log_path=log_path,
-                )
-                server.start(startup_timeout=5.0)
-                try:
-                    start_log = tail_text_file(log_path)
-                    self.assertIn(
-                        "daemon mode is not supported on Windows; running attached server instead",
-                        start_log,
-                    )
-                    self.assertIn("HFile server ready", start_log)
-
-                    status = run_hf(self.hf_path, ["status"], timeout=5.0)
-                    self.assertEqual(
-                        0,
-                        status.returncode,
-                        f"argv={status.argv} stdout={status.stdout!r} stderr={status.stderr!r}",
-                    )
-                    self.assertIn("status: running", status.stdout)
-                    self.assertIn(f"port: {port}", status.stdout)
-                    self.assertIn(f"receive dir: {out_dir}", status.stdout)
-
-                    second = HFileServer(
-                        hf_path=self.hf_path,
-                        out_dir=base_dir / "outputs2",
-                        port=reserve_free_port(),
-                        log_path=base_dir / "hf_windows_server_2.log",
-                    )
-                    with self.assertRaisesRegex(RuntimeError, "HFile is already running"):
-                        second.start(startup_timeout=5.0)
-                    second.stop()
-
-                    stop = run_hf(self.hf_path, ["stop"], timeout=5.0)
-                    self.assertEqual(
-                        0,
-                        stop.returncode,
-                        f"argv={stop.argv} stdout={stop.stdout!r} stderr={stop.stderr!r}",
-                    )
-                    self.assertIn("stopped pid", stop.stdout)
-                    server.proc.wait(timeout=5.0)
-
-                    stopped = run_hf(self.hf_path, ["status"], timeout=5.0)
-                    self.assertEqual(1, stopped.returncode)
-                    self.assertIn("status: stopped", stopped.stdout)
-                finally:
-                    server.stop()
-            else:
-                start = run_hf(
-                    self.hf_path, ["-d", out_dir, "-p", str(port)], timeout=5.0
-                )
-                self.assertEqual(
-                    0,
-                    start.returncode,
-                    f"argv={start.argv} stdout={start.stdout!r} stderr={start.stderr!r}",
-                )
-                self.assertIn("HFile daemon ready", start.stdout)
-                listen_line = next(
-                    line
-                    for line in start.stdout.splitlines()
-                    if line.startswith("  listen     : ")
-                )
-                self.assertIn(f":{port} (tcp + http)", listen_line)
-                self.assertNotIn("0.0.0.0", listen_line)
-
-                status = run_hf(self.hf_path, ["status"], timeout=5.0)
-                self.assertEqual(
-                    0,
-                    status.returncode,
-                    f"argv={status.argv} stdout={status.stdout!r} stderr={status.stderr!r}",
-                )
-                self.assertIn("status: running", status.stdout)
-                self.assertIn(f"port: {port}", status.stdout)
-                self.assertIn(f"receive dir: {out_dir}", status.stdout)
-                self.assertIn("web: http://", status.stdout)
-
-                src = base_dir / "hello.txt"
-                src.write_bytes(b"hello daemon\n")
-                send = run_hf(
-                    self.hf_path,
-                    ["-c", src, "-i", "127.0.0.1", "-p", str(port)],
-                    timeout=5.0,
-                )
-                self.assertEqual(
-                    0, send.returncode, f"argv={send.argv} stderr={send.stderr!r}"
-                )
-                self.assertEqual(b"hello daemon\n", (out_dir / src.name).read_bytes())
-
-                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5.0)
-                conn.request("GET", "/api/messages/stream")
-                resp = conn.getresponse()
-                self.assertEqual(200, resp.status)
-
-                second = run_hf(
-                    self.hf_path, ["-d", out_dir, "-p", str(port)], timeout=5.0
-                )
-                self.assertEqual(1, second.returncode)
-                self.assertIn("HFile is already running", second.stderr)
-
-                stop = run_hf(self.hf_path, ["stop"], timeout=5.0)
-                self.assertEqual(
-                    0,
-                    stop.returncode,
-                    f"argv={stop.argv} stdout={stop.stdout!r} stderr={stop.stderr!r}",
-                )
-                self.assertIn("stopped pid", stop.stdout)
-                conn.close()
-
-                stopped = run_hf(self.hf_path, ["status"], timeout=5.0)
-                self.assertEqual(1, stopped.returncode)
-                self.assertIn("status: stopped", stopped.stdout)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

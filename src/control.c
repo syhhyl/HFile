@@ -155,7 +155,6 @@ void control_print_server_access_details(FILE *out,
                                          long pid,
                                          int daemon_mode) {
   char url[256];
-  const char *listen_target = NULL;
   int phone_reachable = 0;
 
   if (out == NULL || receive_dir == NULL) {
@@ -188,34 +187,6 @@ void control_print_server_access_details(FILE *out,
     fflush(out);
     return;
   }
-
-  fprintf(out, daemon_mode ? "HFile daemon ready\n" : "HFile server ready\n");
-  fprintf(out, "  receive dir: %s\n", receive_dir);
-  if (daemon_mode) {
-    fprintf(out, "  pid        : %ld\n", pid);
-  }
-
-  if (control_build_url(port, url, sizeof(url), &phone_reachable) == 0) {
-    listen_target = strstr(url, "://");
-    listen_target = listen_target != NULL ? listen_target + 3 : url;
-    fprintf(out, "  listen     : %.*s (tcp + http)\n",
-            (int)strcspn(listen_target, "/"), listen_target);
-    fprintf(out, "  web        : %s\n", url);
-    if (!phone_reachable) {
-      fprintf(out, "  mobile     : could not detect a LAN IPv4, using localhost\n");
-    }
-
-    if (!daemon_mode) {
-      fprintf(out, "  status     : waiting for files and messages\n");
-    }
-    if (out == stdout && control_is_tty_stdout()) {
-      (void)control_print_qr_to(out, url, 4, qrcodegen_Ecc_MEDIUM);
-    }
-  } else {
-    fprintf(out, "  listen     : 127.0.0.1:%u (tcp + http)\n", (unsigned)port);
-  }
-
-  fflush(out);
 }
 
 static void control_print_status(FILE *out, const daemon_state_t *state) {
