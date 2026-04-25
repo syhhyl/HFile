@@ -322,7 +322,7 @@ net_send_file_result_t net_send_file_all(socket_t sock,
         offset += sent;
       }
 
-      if (errno == EINTR || errno == EAGAIN) {
+      if (errno == EINTR) {
         continue;
       }
       if ((errno == EINVAL || errno == ENOTSUP || errno == ENOSYS) &&
@@ -440,7 +440,7 @@ net_recv_file_result_t net_recv_file_all(socket_t sock,
         close(pipefd[1]);
         return NET_RECV_FILE_UNSUPPORTED;
       }
-      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (errno == EINTR) {
         continue;
       }
       close(pipefd[0]);
@@ -458,7 +458,7 @@ net_recv_file_result_t net_recv_file_all(socket_t sock,
       ssize_t written = splice(pipefd[0], NULL, out_fd, NULL, (size_t)pipe_remaining,
                                SPLICE_F_MOVE | SPLICE_F_MORE);
       if (written < 0) {
-        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (errno == EINTR) {
           continue;
         }
         close(pipefd[0]);
@@ -533,7 +533,7 @@ static net_recv_file_result_t net_recv_file_buffered(socket_t sock,
 #else
     ssize_t n = recv(sock, buf, want, 0);
     if (n < 0) {
-      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (errno == EINTR) {
         continue;
       }
       free(heap_buf);

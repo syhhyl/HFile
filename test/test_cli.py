@@ -177,6 +177,20 @@ class TestCLI(unittest.TestCase):
         )
         self.assertIn("open", r.stderr)
 
+    @unittest.skipIf(os.name == "nt", "directory open behavior differs on Windows")
+    def test_client_rejects_directory_source(self) -> None:
+        with make_temp_dir(prefix="hf_cli_") as tmp_dir:
+            src_dir = Path(tmp_dir) / "source-dir"
+            src_dir.mkdir()
+            r = run_hf(self.hf_path, ["-c", src_dir], timeout=5.0)
+
+        self.assertEqual(
+            r.returncode,
+            1,
+            f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+        self.assertIn("invalid source file", r.stderr)
+
     def test_get_rejects_invalid_remote_file(self) -> None:
         r = run_hf(self.hf_path, ["-g", "../bad"], timeout=5.0)
         self.assertEqual(

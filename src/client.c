@@ -16,8 +16,11 @@
 #ifdef _WIN32
   #include <process.h>
 #else
+  #include <sys/time.h>
   #include <unistd.h>
 #endif
+
+#define CLIENT_SOCKET_TIMEOUT_MS 30000u
 
 static const char *client_protocol_result_name(protocol_result_t res) {
   switch (res) {
@@ -144,6 +147,112 @@ static int client_check_response(const res_frame_t *frame,
   return 1;
 }
 
+static int client_recv_checked_response(socket_t sock,
+                                        uint8_t expected_phase,
+                                        const char *kind,
+                                        res_frame_t *frame_out) {
+  res_frame_t frame = {0};
+
+  if (client_recv_response(sock, expected_phase, kind, &frame) != 0) {
+    return 1;
+  }
+  if (client_check_response(&frame, expected_phase, kind) != 0) {
+    return 1;
+  }
+  if (frame_out != NULL) {
+    *frame_out = frame;
+  }
+  return 0;
+}
+
+static void client_shutdown_write(socket_t sock) {
+#ifdef _WIN32
+  if (shutdown(sock, SD_SEND) == SOCKET_ERROR) {
+    sock_perror("shutdown(SD_SEND)");
+  }
+#else
+  if (shutdown(sock, SHUT_WR) < 0) {
+    sock_perror("shutdown(SHUT_WR)");
+  }
+#endif
+}
+
+static int client_set_socket_timeouts(socket_t sock, uint32_t timeout_ms) {
+#ifdef _WIN32
+  DWORD timeout = (DWORD)timeout_ms;
+  if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout,
+                 sizeof(timeout)) == SOCKET_ERROR) {
+    return 1;
+  }
+  if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout,
+                 sizeof(timeout)) == SOCKET_ERROR) {
+    return 1;
+  }
+#else
+  struct timeval tv;
+  tv.tv_sec = (time_t)(timeout_ms / 1000u);
+  tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
+  if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+    return 1;
+  }
+  if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
+    return 1;
+  }
+#endif
+  return 0;
+}
+
+static int client_send_header_payload(socket_t sock,
+                                      uint8_t msg_type,
+                                      uint64_t payload_size,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      const char *send_ctx) {
+  protocol_header_t header = {0};
+  uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
+  uint8_t preamble_buf[HF_PROTOCOL_HEADER_SIZE + sizeof(uint16_t) +
+                       HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
+  protocol_result_t proto_res = PROTOCOL_OK;
+
+  init_header(&header);
+  header.msg_type = msg_type;
+  header.flags = HF_MSG_FLAG_NONE;
+  header.payload_size = payload_size;
+
+  proto_res = encode_header(&header, header_buf);
+  if (proto_res != PROTOCOL_OK) {
+    fprintf(stderr, "failed to encode protocol header\n");
+    return 1;
+  }
+
+  if (payload_len <= sizeof(preamble_buf) - sizeof(header_buf)) {
+    memcpy(preamble_buf, header_buf, sizeof(header_buf));
+    if (payload_len > 0) {
+      memcpy(preamble_buf + sizeof(header_buf), payload, payload_len);
+    }
+    proto_res = proto_send_payload(sock, preamble_buf,
+                                   sizeof(header_buf) + payload_len);
+    if (proto_res != PROTOCOL_OK) {
+      sock_perror(send_ctx);
+      return 1;
+    }
+    return 0;
+  }
+
+  proto_res = proto_send_payload(sock, header_buf, sizeof(header_buf));
+  if (proto_res != PROTOCOL_OK) {
+    sock_perror(send_ctx);
+    return 1;
+  }
+  if (payload_len > 0 &&
+      proto_send_payload(sock, payload, payload_len) != PROTOCOL_OK) {
+    sock_perror(send_ctx);
+    return 1;
+  }
+
+  return 0;
+}
+
 static int client_connect(const char *ip, uint16_t port, socket_t *sock_out) {
   socket_t sock;
 
@@ -177,6 +286,12 @@ static int client_connect(const char *ip, uint16_t port, socket_t *sock_out) {
     return 1;
   }
 
+  if (client_set_socket_timeouts(sock, CLIENT_SOCKET_TIMEOUT_MS) != 0) {
+    sock_perror("setsockopt(client_timeout)");
+    socket_close(sock);
+    return 1;
+  }
+
   *sock_out = sock;
   return 0;
 }
@@ -203,8 +318,12 @@ static int client_get_file_size(int in, uint64_t *content_size_out) {
     return 1;
   }
 
-  if (st.st_size < 0) {
-    fprintf(stderr, "invalid source file size\n");
+#ifdef _WIN32
+  if ((st.st_mode & _S_IFMT) != _S_IFREG || st.st_size < 0) {
+#else
+  if (!S_ISREG(st.st_mode) || st.st_size < 0) {
+#endif
+    fprintf(stderr, "invalid source file\n");
     return 1;
   }
 
@@ -290,7 +409,6 @@ static int client_send_file_raw(const client_opt_t *opt) {
   const char *file_name = NULL;
   uint16_t file_name_len = 0;
   uint64_t content_size = 0;
-  protocol_result_t proto_res;
 
   if (fs_basename_from_path(&path, &file_name) != 0) {
     fprintf(stderr, "invalid client path\n");
@@ -340,24 +458,9 @@ static int client_send_file_raw(const client_opt_t *opt) {
   uint64_t payload_size =
     (uint64_t)proto_file_transfer_prefix_size(file_name_len) + content_size;
 
-  protocol_header_t header = {0};
-  init_header(&header);
-  header.msg_type = opt->msg_type;
-  header.flags = HF_MSG_FLAG_NONE;
-  header.payload_size = payload_size;
-
-  uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
-  uint8_t preamble_buf[HF_PROTOCOL_HEADER_SIZE + sizeof(uint16_t) +
-                       HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
-  proto_res = encode_header(&header, header_buf);
-  if (proto_res != PROTOCOL_OK) {
-    fprintf(stderr, "failed to encode protocol header\n");
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
-  
   uint8_t file_prefix_buf[sizeof(uint16_t) + HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
-  proto_res = encode_file_prefix(file_name, content_size, file_prefix_buf);
+  protocol_result_t proto_res = encode_file_prefix(file_name, content_size,
+                                                   file_prefix_buf);
   if (proto_res != PROTOCOL_OK) {
     fprintf(stderr, "failed to encode file_prefix\n");
     exit_code = 1;
@@ -366,24 +469,15 @@ static int client_send_file_raw(const client_opt_t *opt) {
 
 
   size_t file_prefix_size = proto_file_transfer_prefix_size(file_name_len);
-  memcpy(preamble_buf, header_buf, sizeof(header_buf));
-  memcpy(preamble_buf + sizeof(header_buf), file_prefix_buf, file_prefix_size);
-
-  proto_res = proto_send_payload(sock, preamble_buf,
-                                 sizeof(header_buf) + file_prefix_size);
-  if (proto_res != PROTOCOL_OK) {
-    sock_perror("send(file_preamble)");
+  if (client_send_header_payload(sock, opt->msg_type, payload_size,
+                                 file_prefix_buf, file_prefix_size,
+                                 "send(file_preamble)") != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
 
   res_frame_t r_f = {0};
-  if (client_recv_response(sock, PROTO_PHASE_READY, "transfer", &r_f) != 0) {
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
-
-  if (client_check_response(&r_f, PROTO_PHASE_READY, "transfer") != 0) {
+  if (client_recv_checked_response(sock, PROTO_PHASE_READY, "transfer", &r_f) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
@@ -393,22 +487,8 @@ static int client_send_file_raw(const client_opt_t *opt) {
     goto CLEAN_UP;
   }
 
-#ifdef _WIN32
-  if (shutdown(sock, SD_SEND) == SOCKET_ERROR) {
-    sock_perror("shutdown(SD_SEND)");
-  }
-#else
-  if (shutdown(sock, SHUT_WR) < 0) {
-    sock_perror("shutdown(SHUT_WR)");
-  }
-#endif
-
-  if (client_recv_response(sock, PROTO_PHASE_FINAL, "transfer", &r_f) != 0) {
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
-
-  if (client_check_response(&r_f, PROTO_PHASE_FINAL, "transfer") != 0) {
+  client_shutdown_write(sock);
+  if (client_recv_checked_response(sock, PROTO_PHASE_FINAL, "transfer", &r_f) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
@@ -441,53 +521,16 @@ static int client_send_message(const client_opt_t *opt) {
     goto CLEAN_UP;
   }
 
-  protocol_header_t header = {0};
-  init_header(&header);
-  header.msg_type = HF_MSG_TYPE_TEXT_MESSAGE;
-  header.flags = HF_MSG_FLAG_NONE;
-  header.payload_size = (uint64_t)message_len;
-
-  uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
-  protocol_result_t proto_res = encode_header(&header, header_buf);
-  if (proto_res != PROTOCOL_OK) {
-    fprintf(stderr, "failed to encode protocol header\n");
+  if (client_send_header_payload(sock, HF_MSG_TYPE_TEXT_MESSAGE,
+                                 (uint64_t)message_len,
+                                 (const uint8_t *)message, message_len,
+                                 "send(message)") != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
 
-  proto_res = send_header(sock, header_buf);
-  if (proto_res != PROTOCOL_OK) {
-    sock_perror("send_header");
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
-
-  if (message_len > 0) {
-    ssize_t sent = send_all(sock, message, message_len);
-    if (sent != (ssize_t)message_len) {
-      sock_perror("send(message)");
-      exit_code = 1;
-      goto CLEAN_UP;
-    }
-  }
-
-#ifdef _WIN32
-  if (shutdown(sock, SD_SEND) == SOCKET_ERROR) {
-    sock_perror("shutdown(SD_SEND)");
-  }
-#else
-  if (shutdown(sock, SHUT_WR) < 0) {
-    sock_perror("shutdown(SHUT_WR)");
-  }
-#endif
-
-  res_frame_t response = {0};
-  if (client_recv_response(sock, PROTO_PHASE_FINAL, "message", &response) != 0) {
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
-
-  if (client_check_response(&response, PROTO_PHASE_FINAL, "message") != 0) {
+  client_shutdown_write(sock);
+  if (client_recv_checked_response(sock, PROTO_PHASE_FINAL, "message", NULL) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
@@ -526,24 +569,8 @@ static int client_get_file(const client_opt_t *opt) {
   }
 
   {
-    protocol_header_t header = {0};
-    uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
     uint8_t request_buf[sizeof(uint16_t) + HF_PROTOCOL_MAX_FILE_NAME_LEN];
-    uint8_t preamble_buf[HF_PROTOCOL_HEADER_SIZE + sizeof(uint16_t) +
-                         HF_PROTOCOL_MAX_FILE_NAME_LEN];
     size_t request_size = proto_file_name_only_size(remote_name_len);
-
-    init_header(&header);
-    header.msg_type = HF_MSG_TYPE_GET_FILE;
-    header.flags = HF_MSG_FLAG_NONE;
-    header.payload_size = (uint64_t)proto_file_name_only_size(remote_name_len);
-
-    proto_res = encode_header(&header, header_buf);
-    if (proto_res != PROTOCOL_OK) {
-      fprintf(stderr, "failed to encode protocol header\n");
-      exit_code = 1;
-      goto CLEAN_UP;
-    }
 
     proto_res = encode_file_name_only(remote_path, request_buf);
     if (proto_res != PROTOCOL_OK) {
@@ -552,28 +579,18 @@ static int client_get_file(const client_opt_t *opt) {
       goto CLEAN_UP;
     }
 
-    memcpy(preamble_buf, header_buf, sizeof(header_buf));
-    memcpy(preamble_buf + sizeof(header_buf), request_buf, request_size);
-
-    proto_res = proto_send_payload(sock, preamble_buf,
-                                   sizeof(header_buf) + request_size);
-    if (proto_res != PROTOCOL_OK) {
-      sock_perror("send(get_preamble)");
+    if (client_send_header_payload(sock, HF_MSG_TYPE_GET_FILE,
+                                   (uint64_t)request_size,
+                                   request_buf, request_size,
+                                   "send(get_preamble)") != 0) {
       exit_code = 1;
       goto CLEAN_UP;
     }
   }
 
-  {
-    res_frame_t response = {0};
-    if (client_recv_response(sock, PROTO_PHASE_READY, "get", &response) != 0) {
-      exit_code = 1;
-      goto CLEAN_UP;
-    }
-    if (client_check_response(&response, PROTO_PHASE_READY, "get") != 0) {
-      exit_code = 1;
-      goto CLEAN_UP;
-    }
+  if (client_recv_checked_response(sock, PROTO_PHASE_READY, "get", NULL) != 0) {
+    exit_code = 1;
+    goto CLEAN_UP;
   }
 
   proto_res = proto_recv_file_transfer_prefix(sock, &offered_name, &content_size);
@@ -618,16 +635,9 @@ static int client_get_file(const client_opt_t *opt) {
   }
   out = -1;
 
-  {
-    res_frame_t response = {0};
-    if (client_recv_response(sock, PROTO_PHASE_FINAL, "get", &response) != 0) {
-      exit_code = 1;
-      goto CLEAN_UP;
-    }
-    if (client_check_response(&response, PROTO_PHASE_FINAL, "get") != 0) {
-      exit_code = 1;
-      goto CLEAN_UP;
-    }
+  if (client_recv_checked_response(sock, PROTO_PHASE_FINAL, "get", NULL) != 0) {
+    exit_code = 1;
+    goto CLEAN_UP;
   }
 
   if (fs_finalize_temp_file(tmp_path, output_path, NULL) != 0) {
