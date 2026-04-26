@@ -49,13 +49,6 @@ protocol_result_t app_receive_file(socket_t conn,
                                             content_size, "recv(http_body)",
                                             "http upload ended early",
                                             saved_path_out, saved_path_cap);
-
-    case APP_UPLOAD_HTTP_CHUNKED:
-      return transfer_recv_socket_chunked_file(conn, base_dir, target_path,
-                                               content_size,
-                                               "recv(http_body_chunked)",
-                                               "http chunked upload ended early",
-                                               saved_path_out, saved_path_cap);
   }
 
   return PROTOCOL_ERR_INVALID_ARGUMENT;

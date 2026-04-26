@@ -83,12 +83,13 @@ class TestHTTP(unittest.TestCase):
             finally:
                 e.close()
 
-    def _chunked_request(
+    def _transfer_encoding_request(
         self,
         method: str,
         path: str,
-        chunks: list[bytes],
+        body: bytes,
         *,
+        transfer_encoding: str,
         headers: dict[str, str] | None = None,
     ) -> tuple[int, bytes, object]:
         conn = http.client.HTTPConnection(
@@ -96,17 +97,12 @@ class TestHTTP(unittest.TestCase):
         )
         try:
             conn.putrequest(method, path)
-            conn.putheader("Transfer-Encoding", "chunked")
+            conn.putheader("Transfer-Encoding", transfer_encoding)
             for key, value in (headers or {}).items():
                 conn.putheader(key, value)
             conn.endheaders()
-
-            for chunk in chunks:
-                conn.send(f"{len(chunk):X}\r\n".encode("ascii"))
-                if chunk:
-                    conn.send(chunk)
-                conn.send(b"\r\n")
-            conn.send(b"0\r\n\r\n")
+            if body:
+                conn.send(body)
 
             resp = conn.getresponse()
             try:
@@ -186,30 +182,15 @@ class TestHTTP(unittest.TestCase):
         self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
         self.assertFalse(dst.exists(), f"file not deleted: {dst}")
 
-    def test_chunked_upload_list_and_download(self) -> None:
-        src = self.in_dir / "chunked.txt"
-        src.write_bytes(b"hello from chunked upload\n")
-        dst = self.out_dir / src.name
-        self._reset_output_path(dst)
-
-        status, body, _ = self._chunked_request(
+    def test_upload_rejects_transfer_encoding(self) -> None:
+        status, body, _ = self._transfer_encoding_request(
             "PUT",
-            f"/api/files/{urllib.parse.quote(src.name)}",
-            [b"hello from ", b"chunked upload\n"],
+            "/api/files/transfer-encoding.txt",
+            b"",
+            transfer_encoding="chunked",
             headers={"Content-Type": "application/octet-stream"},
         )
-        self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
-        self.assertTrue(
-            wait_for_file_stable(dst, timeout=5.0),
-            f"file not saved: {dst}; server_log_tail={tail_text_file(self.server.log_path or Path(''))!r}",
-        )
-
-        status, body, _ = self._request(
-            "GET", f"/api/files/{urllib.parse.quote(src.name)}"
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(body, src.read_bytes())
-        assert_files_equal(self, src, dst)
+        self.assertEqual(status, 501, body.decode("utf-8", errors="replace"))
 
     def test_rejects_invalid_file_name(self) -> None:
         invalid_name = urllib.parse.quote("\\bad.txt", safe="")
@@ -320,20 +301,15 @@ class TestHTTP(unittest.TestCase):
             "msg: hello from browser", tail_text_file(self.server.log_path or Path(""))
         )
 
-    def test_message_post_accepts_chunked_body(self) -> None:
-        status, body, _ = self._chunked_request(
+    def test_message_post_rejects_transfer_encoding(self) -> None:
+        status, body, _ = self._transfer_encoding_request(
             "POST",
             "/api/messages",
-            [b'{"message":"hello ', b'from chunked"}'],
+            b"",
+            transfer_encoding="chunked",
             headers={"Content-Type": "application/json"},
         )
-        self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
-
-        status, body, _ = self._request("GET", "/api/messages/latest")
-        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
-        payload = json.loads(body.decode("utf-8"))
-        self.assertEqual(payload["has_message"], True)
-        self.assertEqual(payload["message"], "hello from chunked")
+        self.assertEqual(status, 501, body.decode("utf-8", errors="replace"))
 
     def test_message_post_accepts_unicode_escape_sequences(self) -> None:
         status, body, _ = self._request(

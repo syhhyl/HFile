@@ -37,7 +37,6 @@
 #define HF_HTTP_PATH_MAX 1024u
 #define HF_HTTP_CONTENT_TYPE_MAX 128u
 #define HF_HTTP_UPLOAD_MAX (16ULL * 1024ULL * 1024ULL * 1024ULL)
-#define HF_HTTP_CHUNK_LINE_MAX 128u
 #define HF_HTTP_MESSAGE_BODY_TIMEOUT_MS 30000u
 #define HF_HTTP_UPLOAD_BODY_TIMEOUT_MS 120000u
 
@@ -55,15 +54,7 @@ typedef struct {
   uint64_t content_length;
   int has_content_length;
   int has_transfer_encoding;
-  int transfer_chunked;
 } http_request_t;
-
-typedef enum {
-  HTTP_BODY_OK = 0,
-  HTTP_BODY_INVALID,
-  HTTP_BODY_IO,
-  HTTP_BODY_TOO_LARGE,
-} http_body_result_t;
 
 typedef struct {
   char *name;
@@ -135,46 +126,6 @@ static int http_ascii_starts_with(const char *s, const char *prefix) {
   return 1;
 }
 
-static int http_header_has_token(const char *value, const char *token) {
-  size_t token_len = 0;
-
-  if (value == NULL || token == NULL) {
-    return 0;
-  }
-
-  token_len = strlen(token);
-  while (*value != '\0') {
-    const char *end = value;
-
-    while (*value != '\0' &&
-           (isspace((unsigned char)*value) || *value == ',')) {
-      value++;
-    }
-    end = value;
-    while (*end != '\0' && *end != ',') {
-      end++;
-    }
-    while (end > value && isspace((unsigned char)end[-1])) {
-      end--;
-    }
-    if ((size_t)(end - value) == token_len) {
-      size_t i = 0;
-      for (; i < token_len; i++) {
-        if (tolower((unsigned char)value[i]) !=
-            tolower((unsigned char)token[i])) {
-          break;
-        }
-      }
-      if (i == token_len) {
-        return 1;
-      }
-    }
-    value = end;
-  }
-
-  return 0;
-}
-
 static int http_parse_u64(const char *s, uint64_t *out) {
   uint64_t value = 0;
 
@@ -209,161 +160,6 @@ static int http_set_connection_recv_timeout(socket_t conn, uint32_t timeout_ms) 
   tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
   return setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0 ? 1 : 0;
 #endif
-}
-
-static int http_read_line(socket_t conn, char *out, size_t out_cap) {
-  size_t len = 0;
-
-  if (out == NULL || out_cap < 3u) {
-    return 1;
-  }
-
-  while (len + 1u < out_cap) {
-    char ch = '\0';
-#ifdef _WIN32
-    int n = recv(conn, &ch, 1, 0);
-    if (n == SOCKET_ERROR) {
-      int err = WSAGetLastError();
-      if (err == WSAEINTR) {
-        continue;
-      }
-      return -1;
-    }
-#else
-    ssize_t n = recv(conn, &ch, 1, 0);
-    if (n < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      return -1;
-    }
-#endif
-    if (n == 0) {
-      return 1;
-    }
-
-    out[len++] = ch;
-    out[len] = '\0';
-    if (len >= 2u && out[len - 2u] == '\r' && out[len - 1u] == '\n') {
-      out[len - 2u] = '\0';
-      return 0;
-    }
-  }
-
-  return 2;
-}
-
-static int http_parse_chunk_size(const char *line, uint64_t *out) {
-  uint64_t value = 0;
-  int saw_digit = 0;
-
-  if (line == NULL || out == NULL) {
-    return 1;
-  }
-
-  while (*line != '\0' && *line != ';') {
-    unsigned char ch = (unsigned char)*line;
-    unsigned int digit = 0;
-
-    if (!isxdigit(ch)) {
-      return 1;
-    }
-    if (isdigit(ch)) {
-      digit = (unsigned int)(ch - '0');
-    } else {
-      digit = 10u + (unsigned int)(tolower(ch) - 'a');
-    }
-    if (value > (UINT64_MAX - (uint64_t)digit) / 16u) {
-      return 1;
-    }
-    value = value * 16u + (uint64_t)digit;
-    saw_digit = 1;
-    line++;
-  }
-
-  if (!saw_digit) {
-    return 1;
-  }
-
-  *out = value;
-  return 0;
-}
-
-static http_body_result_t http_expect_crlf(socket_t conn) {
-  char crlf[2];
-  ssize_t n = recv_all(conn, crlf, sizeof(crlf));
-
-  if (n < 0 || (size_t)n != sizeof(crlf)) {
-    return HTTP_BODY_IO;
-  }
-  if (crlf[0] != '\r' || crlf[1] != '\n') {
-    return HTTP_BODY_INVALID;
-  }
-
-  return HTTP_BODY_OK;
-}
-
-static http_body_result_t http_discard_chunked_trailers(socket_t conn) {
-  char line[HF_HTTP_CHUNK_LINE_MAX];
-
-  for (;;) {
-    int line_res = http_read_line(conn, line, sizeof(line));
-    if (line_res == -1) {
-      return HTTP_BODY_IO;
-    }
-    if (line_res != 0) {
-      return HTTP_BODY_INVALID;
-    }
-    if (line[0] == '\0') {
-      return HTTP_BODY_OK;
-    }
-  }
-}
-
-static http_body_result_t http_read_chunked_body(socket_t conn,
-                                                 http_buf_t *buf,
-                                                 uint64_t max_len) {
-  char line[HF_HTTP_CHUNK_LINE_MAX];
-  uint64_t total = 0;
-
-  if (buf == NULL) {
-    return HTTP_BODY_INVALID;
-  }
-
-  for (;;) {
-    uint64_t chunk_size = 0;
-    int line_res = http_read_line(conn, line, sizeof(line));
-    if (line_res == -1) {
-      return HTTP_BODY_IO;
-    }
-    if (line_res != 0 || http_parse_chunk_size(line, &chunk_size) != 0) {
-      return HTTP_BODY_INVALID;
-    }
-
-    if (chunk_size == 0) {
-      return http_discard_chunked_trailers(conn);
-    }
-    if (chunk_size > max_len || total > max_len - chunk_size) {
-      return HTTP_BODY_TOO_LARGE;
-    }
-    if (chunk_size > SIZE_MAX ||
-        http_buf_reserve(buf, buf->len + (size_t)chunk_size + 1u) != 0) {
-      return HTTP_BODY_IO;
-    }
-
-    ssize_t n = recv_all(conn, buf->data + buf->len, (size_t)chunk_size);
-    if (n < 0 || (size_t)n != (size_t)chunk_size) {
-      return HTTP_BODY_IO;
-    }
-    buf->len += (size_t)chunk_size;
-    buf->data[buf->len] = '\0';
-    total += chunk_size;
-
-    http_body_result_t crlf_res = http_expect_crlf(conn);
-    if (crlf_res != HTTP_BODY_OK) {
-      return crlf_res;
-    }
-  }
 }
 
 static int http_discard_body(socket_t conn, uint64_t content_length) {
@@ -669,14 +465,7 @@ static int http_parse_request(char *header_block, http_request_t *req) {
         return 1;
       }
     } else if (http_header_name_equals(header, "Transfer-Encoding")) {
-      if (http_copy_header_value(header_value, sizeof(header_value),
-                                 header->value, header->value_len) != 0) {
-        return 1;
-      }
       req->has_transfer_encoding = 1;
-      if (http_header_has_token(header_value, "chunked")) {
-        req->transfer_chunked = 1;
-      }
     }
   }
 
@@ -1398,21 +1187,19 @@ static int http_handle_messages_post(socket_t conn, const server_opt_t *ser_opt,
   char *message = NULL;
   const char *body_data = NULL;
   http_buf_t response = {0};
-  http_buf_t chunked_body = {0};
   int exit_code = 1;
   ssize_t n = 0;
   size_t body_len = 0;
 
-  if (req->has_transfer_encoding && !req->transfer_chunked) {
+  if (req->has_transfer_encoding) {
     return http_send_json_error(conn, 501, "Not Implemented",
                                 "transfer-encoding not supported");
   }
 
-  if (!req->transfer_chunked && !req->has_content_length) {
+  if (!req->has_content_length) {
     return http_send_json_error(conn, 411, "Length Required", "content-length required");
   }
-  if (!req->transfer_chunked &&
-      req->content_length > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
+  if (req->content_length > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
     return http_send_json_error(conn, 413, "Payload Too Large", "message too large");
   }
   if (!http_ascii_starts_with(req->content_type, "application/json")) {
@@ -1424,40 +1211,23 @@ static int http_handle_messages_post(socket_t conn, const server_opt_t *ser_opt,
     sock_perror("setsockopt(SO_RCVTIMEO)");
   }
 
-  if (req->transfer_chunked) {
-    http_body_result_t body_res = http_read_chunked_body(
-      conn, &chunked_body, HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE);
-    if (body_res == HTTP_BODY_TOO_LARGE) {
-      return http_send_json_error(conn, 413, "Payload Too Large", "message too large");
-    }
-    if (body_res == HTTP_BODY_INVALID) {
-      return http_send_json_error(conn, 400, "Bad Request", "invalid chunked body");
-    }
-    if (body_res == HTTP_BODY_IO) {
-      sock_perror("recv_all(http_message_chunked)");
-      goto CLEANUP;
-    }
-    body_data = chunked_body.data != NULL ? chunked_body.data : "";
-    body_len = chunked_body.len;
-  } else {
-    body_len = (size_t)req->content_length;
-    body = (char *)malloc(body_len + 1u);
-    if (body == NULL) {
-      return http_send_json_error(conn, 500, "Internal Server Error", "allocation failed");
-    }
-
-    n = recv_all(conn, body, body_len);
-    if (n < 0) {
-      sock_perror("recv_all(http_message)");
-      goto CLEANUP;
-    }
-    if ((size_t)n != body_len) {
-      fprintf(stderr, "http error: unexpected EOF while receiving message body\n");
-      goto CLEANUP;
-    }
-    body[body_len] = '\0';
-    body_data = body;
+  body_len = (size_t)req->content_length;
+  body = (char *)malloc(body_len + 1u);
+  if (body == NULL) {
+    return http_send_json_error(conn, 500, "Internal Server Error", "allocation failed");
   }
+
+  n = recv_all(conn, body, body_len);
+  if (n < 0) {
+    sock_perror("recv_all(http_message)");
+    goto CLEANUP;
+  }
+  if ((size_t)n != body_len) {
+    fprintf(stderr, "http error: unexpected EOF while receiving message body\n");
+    goto CLEANUP;
+  }
+  body[body_len] = '\0';
+  body_data = body;
 
   if (http_parse_message_json(body_data, body_len, &message) != 0) {
     (void)http_send_json_error(conn, 400, "Bad Request", "invalid message payload");
@@ -1484,7 +1254,6 @@ static int http_handle_messages_post(socket_t conn, const server_opt_t *ser_opt,
 CLEANUP:
   if (body != NULL) free(body);
   if (message != NULL) free(message);
-  http_buf_free(&chunked_body);
   http_buf_free(&response);
   return exit_code;
 }
@@ -1590,26 +1359,26 @@ static int http_handle_file_put(socket_t conn, const server_opt_t *ser_opt,
   char numbuf[64];
   protocol_result_t recv_result = PROTOCOL_ERR_IO;
 
-  if (req->has_transfer_encoding && !req->transfer_chunked) {
+  if (req->has_transfer_encoding) {
     return http_send_json_error(conn, 501, "Not Implemented",
                                 "transfer-encoding not supported");
   }
 
-  if (!req->transfer_chunked && !req->has_content_length) {
+  if (!req->has_content_length) {
     return http_send_json_error(conn, 411, "Length Required", "content-length required");
   }
-  if (!req->transfer_chunked && req->content_length > HF_HTTP_UPLOAD_MAX) {
+  if (req->content_length > HF_HTTP_UPLOAD_MAX) {
     return http_send_json_error(conn, 413, "Payload Too Large", "upload too large");
   }
   if (!http_ascii_starts_with(req->content_type, "application/octet-stream")) {
-    if (!req->transfer_chunked && req->has_content_length) {
+    if (req->has_content_length) {
       (void)http_discard_body(conn, req->content_length);
     }
     return http_send_json_error(conn, 415, "Unsupported Media Type",
                                 "content-type must be application/octet-stream");
   }
   if (fs_validate_relative_path(relative_path) != 0) {
-    if (!req->transfer_chunked && req->has_content_length) {
+    if (req->has_content_length) {
       (void)http_discard_body(conn, req->content_length);
     }
     return http_send_json_error(conn, 400, "Bad Request", "invalid file path");
@@ -1620,21 +1389,14 @@ static int http_handle_file_put(socket_t conn, const server_opt_t *ser_opt,
   }
 
   char saved_path[4096];
-  if (req->transfer_chunked) {
-    recv_result = app_receive_file(conn, ser_opt->path, relative_path,
-                                   HF_HTTP_UPLOAD_MAX,
-                                   APP_UPLOAD_HTTP_CHUNKED, saved_path,
-                                   sizeof(saved_path));
-  } else {
-    recv_result = app_receive_file(conn, ser_opt->path, relative_path,
-                                   req->content_length, APP_UPLOAD_HTTP,
-                                   saved_path, sizeof(saved_path));
-  }
+  recv_result = app_receive_file(conn, ser_opt->path, relative_path,
+                                 req->content_length, APP_UPLOAD_HTTP,
+                                 saved_path, sizeof(saved_path));
   if (recv_result == PROTOCOL_ERR_MSG_TOO_LARGE) {
     return http_send_json_error(conn, 413, "Payload Too Large", "upload too large");
   }
   if (recv_result == PROTOCOL_ERR_INVALID_ARGUMENT) {
-    return http_send_json_error(conn, 400, "Bad Request", "invalid chunked body");
+    return http_send_json_error(conn, 400, "Bad Request", "invalid file path");
   }
   if (recv_result != PROTOCOL_OK) {
     return http_send_json_error(conn, 500, "Internal Server Error", "failed to save file");
