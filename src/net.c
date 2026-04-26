@@ -228,7 +228,10 @@ int net_primary_ipv4(char *out, size_t out_cap) {
     return 1;
   }
 
-  (void)connect(sock, (struct sockaddr *)&remote, sizeof(remote));
+  if (connect(sock, (struct sockaddr *)&remote, sizeof(remote)) != 0) {
+    socket_close(sock);
+    return 1;
+  }
   if (getsockname(sock, (struct sockaddr *)&local, &local_len) != 0) {
     socket_close(sock);
     return 1;
