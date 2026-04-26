@@ -119,6 +119,24 @@ class TestHTTP(unittest.TestCase):
             else:
                 shutil.rmtree(path, ignore_errors=True)
 
+    def _read_sse_message(self, resp: http.client.HTTPResponse, expected: str) -> None:
+        saw_event = False
+        saw_data = False
+        while True:
+            line = resp.fp.readline()
+            if not line:
+                self.fail(f"sse stream closed before delivering {expected!r}")
+            text = line.decode("utf-8", errors="replace").strip()
+            if text == "event: message":
+                saw_event = True
+            elif text == f"data: {expected}":
+                saw_data = True
+            elif text == "":
+                if saw_event and saw_data:
+                    return
+                saw_event = False
+                saw_data = False
+
     def test_index_serves_html(self) -> None:
         status, body, _ = self._request("GET", "/")
         self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
@@ -471,24 +489,40 @@ class TestHTTP(unittest.TestCase):
             )
             self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
 
-            saw_event = False
-            saw_data = False
-            while True:
-                line = resp.fp.readline()
-                if not line:
-                    self.fail("sse stream closed before delivering message")
-                text = line.decode("utf-8", errors="replace").strip()
-                if text == "event: message":
-                    saw_event = True
-                elif text == "data: hello from sse":
-                    saw_data = True
-                elif text == "":
-                    if saw_event and saw_data:
-                        break
-                    saw_event = False
-                    saw_data = False
+            self._read_sse_message(resp, "hello from sse")
         finally:
             conn.close()
+
+    def test_message_stream_broadcasts_to_multiple_clients(self) -> None:
+        conns = [
+            http.client.HTTPConnection(self.server.host, self.server.port, timeout=5.0),
+            http.client.HTTPConnection(self.server.host, self.server.port, timeout=5.0),
+        ]
+        responses: list[http.client.HTTPResponse] = []
+        try:
+            for conn in conns:
+                conn.request("GET", "/api/messages/stream")
+                resp = conn.getresponse()
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(
+                    resp.getheader("Content-Type"), "text/event-stream; charset=utf-8"
+                )
+                responses.append(resp)
+
+            message = "hello from two sse clients"
+            status, body, _ = self._request(
+                "POST",
+                "/api/messages",
+                data=json.dumps({"message": message}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+            self.assertEqual(status, 201, body.decode("utf-8", errors="replace"))
+
+            for resp in responses:
+                self._read_sse_message(resp, message)
+        finally:
+            for conn in conns:
+                conn.close()
 
     def test_http_server_graceful_shutdown_on_signal(self) -> None:
         shared_server = self.__class__.server
