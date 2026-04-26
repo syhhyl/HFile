@@ -883,7 +883,7 @@ static int http_list_files(const char *dir, const char *relative_dir,
                                        relative_dir, name) != 0) {
       goto CLEANUP;
     }
-    if (fs_get_path_info(full_path, &info) != 0) {
+    if (fs_stat_path(full_path, &info) != 0) {
       continue;
     }
 
@@ -944,7 +944,7 @@ static int http_list_files(const char *dir, const char *relative_dir,
                                        relative_dir, name) != 0) {
       goto CLEANUP;
     }
-    if (fs_get_path_info(full_path, &info) != 0) {
+    if (fs_stat_path(full_path, &info) != 0) {
       continue;
     }
 
@@ -1144,7 +1144,7 @@ static int http_handle_files_list(socket_t conn, const server_opt_t *ser_opt,
   if (fs_join_relative_path(dir_path, sizeof(dir_path), ser_opt->path, relative_dir) != 0) {
     return http_send_json_error(conn, 400, "Bad Request", "invalid path");
   }
-  if (fs_get_path_info(dir_path, &info) != 0) {
+  if (fs_stat_path(dir_path, &info) != 0) {
     return http_send_json_error(conn, 404, "Not Found", "path not found");
   }
   if (info.kind != FS_PATH_KIND_DIR) {
@@ -1402,7 +1402,7 @@ static int http_handle_file_put(socket_t conn, const server_opt_t *ser_opt,
     return http_send_json_error(conn, 500, "Internal Server Error", "failed to save file");
   }
 
-  if (fs_get_path_info(saved_path, &info) != 0 || info.kind != FS_PATH_KIND_FILE) {
+  if (fs_stat_path(saved_path, &info) != 0 || info.kind != FS_PATH_KIND_FILE) {
     return http_send_json_error(conn, 500, "Internal Server Error", "saved file missing");
   }
 

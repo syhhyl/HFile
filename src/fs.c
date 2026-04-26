@@ -163,7 +163,7 @@ int fs_join_relative_path(char *out, size_t out_cap, const char *base_dir,
   return 0;
 }
 
-int fs_get_path_info(const char *path, fs_path_info_t *out) {
+int fs_stat_path(const char *path, fs_path_info_t *out) {
   if (path == NULL || out == NULL) {
     return 1;
   }
@@ -224,7 +224,7 @@ int fs_get_path_info(const char *path, fs_path_info_t *out) {
 #endif
 }
 
-int fs_make_temp_path(
+int fs_build_temp_path(
   char *out,
   size_t out_cap,
   const char *final_path,
@@ -251,7 +251,7 @@ int fs_open_temp_file(const char *tmp_path) {
   return fs_open(tmp_path, flags, 0644);
 }
 
-int fs_finalize_temp_file(
+int fs_commit_temp_file(
   const char *tmp_path,
   const char *final_path,
   unsigned long *win_err) {
@@ -284,7 +284,7 @@ int fs_remove_tree(const char *path) {
   return fs_remove_tree_impl(path);
 }
 
-void fs_remove_quiet(const char *path) {
+void fs_remove_ignore_error(const char *path) {
   if (path == NULL) return;
   (void)remove(path);
 }
@@ -313,7 +313,7 @@ int fs_basename_from_path(const char **file_path, const char **file_name) {
 static int fs_remove_tree_validate(const char *path) {
   fs_path_info_t info = {0};
 
-  if (fs_get_path_info(path, &info) != 0) {
+  if (fs_stat_path(path, &info) != 0) {
     return 1;
   }
   if (info.kind == FS_PATH_KIND_FILE) {
@@ -408,7 +408,7 @@ static int fs_remove_tree_validate(const char *path) {
 static int fs_remove_tree_impl(const char *path) {
   fs_path_info_t info = {0};
 
-  if (fs_get_path_info(path, &info) != 0) {
+  if (fs_stat_path(path, &info) != 0) {
     return 1;
   }
   if (info.kind == FS_PATH_KIND_FILE) {

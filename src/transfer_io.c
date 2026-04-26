@@ -110,7 +110,7 @@ static protocol_result_t transfer_prepare_output(const char *base_dir,
 #endif
 
   for (int attempt = 0; attempt < 3; attempt++) {
-    if (fs_make_temp_path(tmp_path, tmp_path_cap, full_path, pid, attempt) != 0) {
+    if (fs_build_temp_path(tmp_path, tmp_path_cap, full_path, pid, attempt) != 0) {
       fprintf(stderr, "temporary file path is too long\n");
       return PROTOCOL_ERR_INVALID_ARGUMENT;
     }
@@ -148,7 +148,7 @@ static protocol_result_t transfer_finalize_output(int *out_fd,
   }
   *out_fd = -1;
 
-  if (fs_finalize_temp_file(tmp_path, full_path, NULL) != 0) {
+  if (fs_commit_temp_file(tmp_path, full_path, NULL) != 0) {
     perror("rename");
     return PROTOCOL_ERR_IO;
   }
@@ -219,7 +219,7 @@ CLEANUP:
     fs_close(out);
   }
   if (result != PROTOCOL_OK && tmp_path[0] != '\0') {
-    fs_remove_quiet(tmp_path);
+    fs_remove_ignore_error(tmp_path);
   }
   return result;
 }
@@ -268,7 +268,7 @@ CLEANUP:
     fs_close(out);
   }
   if (result != PROTOCOL_OK && tmp_path[0] != '\0') {
-    fs_remove_quiet(tmp_path);
+    fs_remove_ignore_error(tmp_path);
   }
   return result;
 }

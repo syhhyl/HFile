@@ -366,7 +366,7 @@ static int client_open_temp_download(const char *final_path,
 #endif
 
   for (int attempt = 0; attempt < 3; attempt++) {
-    if (fs_make_temp_path(tmp_path, tmp_path_cap, final_path, pid, attempt) != 0) {
+    if (fs_build_temp_path(tmp_path, tmp_path_cap, final_path, pid, attempt) != 0) {
       return 1;
     }
     out = fs_open_temp_file(tmp_path);
@@ -640,7 +640,7 @@ static int client_get_file(const client_opt_t *opt) {
     goto CLEAN_UP;
   }
 
-  if (fs_finalize_temp_file(tmp_path, output_path, NULL) != 0) {
+  if (fs_commit_temp_file(tmp_path, output_path, NULL) != 0) {
     perror("rename(download)");
     exit_code = 1;
     goto CLEAN_UP;
@@ -652,7 +652,7 @@ CLEAN_UP:
     fs_close(out);
   }
   if (tmp_path[0] != '\0') {
-    fs_remove_quiet(tmp_path);
+    fs_remove_ignore_error(tmp_path);
   }
   if (offered_name != NULL) {
     free(offered_name);

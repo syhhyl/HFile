@@ -43,7 +43,7 @@ static int daemon_state_write_text_file(const char *path, const char *text) {
   }
 
   for (int attempt = 0; attempt < 3; attempt++) {
-    if (fs_make_temp_path(tmp_path, sizeof(tmp_path), path,
+    if (fs_build_temp_path(tmp_path, sizeof(tmp_path), path,
                           (int)daemon_state_process_id(), attempt) != 0) {
       return 1;
     }
@@ -62,15 +62,15 @@ static int daemon_state_write_text_file(const char *path, const char *text) {
   len = strlen(text);
   if (fs_write_all(fd, text, len) != (ssize_t)len) {
     (void)fs_close(fd);
-    fs_remove_quiet(tmp_path);
+    fs_remove_ignore_error(tmp_path);
     return 1;
   }
   if (fs_close(fd) != 0) {
-    fs_remove_quiet(tmp_path);
+    fs_remove_ignore_error(tmp_path);
     return 1;
   }
-  if (fs_finalize_temp_file(tmp_path, path, NULL) != 0) {
-    fs_remove_quiet(tmp_path);
+  if (fs_commit_temp_file(tmp_path, path, NULL) != 0) {
+    fs_remove_ignore_error(tmp_path);
     return 1;
   }
 
@@ -231,6 +231,6 @@ void daemon_state_cleanup_files(void) {
   char state_path[4096];
 
   if (daemon_state_default_state_path(state_path, sizeof(state_path)) == 0) {
-    fs_remove_quiet(state_path);
+    fs_remove_ignore_error(state_path);
   }
 }

@@ -58,19 +58,19 @@ int fs_validate_relative_path(const char *path);
 int fs_join_path(char *out, size_t out_cap, const char *dir, const char *file);
 int fs_join_relative_path(char *out, size_t out_cap, const char *base_dir,
                           const char *relative_path);
-int fs_get_path_info(const char *path, fs_path_info_t *out);
-int fs_make_temp_path(
+int fs_stat_path(const char *path, fs_path_info_t *out);
+int fs_build_temp_path(
   char *out,
   size_t out_cap,
   const char *final_path,
   int pid,
   int attempt);
 int fs_open_temp_file(const char *tmp_path);
-int fs_finalize_temp_file(
+int fs_commit_temp_file(
   const char *tmp_path,
   const char *final_path,
   unsigned long *win_err);
 int fs_remove_tree(const char *path);
-void fs_remove_quiet(const char *path);
+void fs_remove_ignore_error(const char *path);
 
 #endif  // HF_FS_H
