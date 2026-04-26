@@ -1436,55 +1436,6 @@ CLEANUP:
   return exit_code;
 }
 
-static int http_handle_file_delete(socket_t conn, const server_opt_t *ser_opt,
-                                   const char *relative_path) {
-  http_buf_t response = {0};
-  char path[4096];
-  fs_path_info_t info = {0};
-  int exit_code = 1;
-
-  if (fs_validate_relative_path(relative_path) != 0) {
-    return http_send_json_error(conn, 400, "Bad Request", "invalid file path");
-  }
-  if (fs_join_relative_path(path, sizeof(path), ser_opt->path, relative_path) != 0) {
-    return http_send_json_error(conn, 400, "Bad Request", "invalid path");
-  }
-  if (fs_get_path_info(path, &info) != 0) {
-    return http_send_json_error(conn, 404, "Not Found", "path not found");
-  }
-  if (info.kind == FS_PATH_KIND_FILE) {
-    if (remove(path) != 0) {
-      if (errno == ENOENT) {
-        return http_send_json_error(conn, 404, "Not Found", "path not found");
-      }
-      perror("remove(http_delete)");
-      return http_send_json_error(conn, 500, "Internal Server Error", "failed to delete path");
-    }
-  } else {
-    if (fs_remove_tree(path) != 0) {
-      if (errno == ENOENT) {
-        return http_send_json_error(conn, 404, "Not Found", "path not found");
-      }
-      perror("remove_tree(http_delete)");
-      return http_send_json_error(conn, 500, "Internal Server Error", "failed to delete path");
-    }
-  }
-
-  if (http_buf_append_str(&response, "{\"ok\":true}") != 0) {
-    goto CLEANUP;
-  }
-  if (http_send_response(conn, 200, "OK", "application/json; charset=utf-8",
-                         response.data, response.len, NULL) != 0) {
-    goto CLEANUP;
-  }
-
-  exit_code = 0;
-
-CLEANUP:
-  http_buf_free(&response);
-  return exit_code;
-}
-
 typedef int (*http_exact_route_handler_t)(socket_t conn,
                                           const server_opt_t *ser_opt,
                                           const http_request_t *req);
@@ -1564,9 +1515,6 @@ static int http_dispatch_file_route(socket_t conn,
   }
   if (strcmp(req->method, "PUT") == 0) {
     return http_handle_file_put(conn, ser_opt, req, route_name);
-  }
-  if (strcmp(req->method, "DELETE") == 0) {
-    return http_handle_file_delete(conn, ser_opt, route_name);
   }
   return http_send_json_error(conn, 405, "Method Not Allowed", "method not allowed");
 }

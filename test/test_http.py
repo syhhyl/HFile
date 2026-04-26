@@ -179,8 +179,8 @@ class TestHTTP(unittest.TestCase):
         status, body, _ = self._request(
             "DELETE", f"/api/files/{urllib.parse.quote(src.name)}"
         )
-        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
-        self.assertFalse(dst.exists(), f"file not deleted: {dst}")
+        self.assertEqual(status, 405, body.decode("utf-8", errors="replace"))
+        self.assertTrue(dst.exists(), f"file should not be deleted: {dst}")
 
     def test_upload_rejects_transfer_encoding(self) -> None:
         status, body, _ = self._transfer_encoding_request(
@@ -245,8 +245,8 @@ class TestHTTP(unittest.TestCase):
         self.assertEqual(body, src.read_bytes())
 
         status, body, _ = self._request("DELETE", "/api/files/docs")
-        self.assertEqual(status, 200, body.decode("utf-8", errors="replace"))
-        self.assertFalse((self.out_dir / "docs").exists())
+        self.assertEqual(status, 405, body.decode("utf-8", errors="replace"))
+        self.assertTrue((self.out_dir / "docs").exists())
 
     def test_root_directory_listing_accepts_symlink_output_dir(self) -> None:
         if os.name == "nt":
