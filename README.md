@@ -1,47 +1,23 @@
 # HFile
+HFile is a LAN file transfer tool with CLI and Web UI, enabling quick file and message sharing between devices via QR codes or IP addresses.
 
-HFile is a native C file transfer tool built for simple deployment, predictable behavior, and low overhead.
+## HFile idea
+This project was inspired by [chfs](https://github.com/amorphobia/chfs)￼. In addition to implementing HTTP-based file serving, I added native client support and accelerated file transfers using platform-specific system functions.
 
-## Quick Start
+## Advantages of HFile
+- Single-binary deployment with no external dependencies and minimal resource usage; frontend HTML is embedded, reducing runtime file dependencies and distribution complexity
+- Supports multi-protocol access (HTTP + custom native protocol) with a unified entry point, covering both browser and CLI client use cases
+- On Linux, leverages zero-copy mechanisms such as sendfile and splice to accelerate transfers, reducing user/kernel data copies and context switches
+- Streaming transfer with segmented disk writes to avoid loading large files entirely into memory, lowering peak memory usage
+- Cross-platform implementation (POSIX / Windows) with consistent core capabilities and interface semantics
 
-Install the latest release on macOS or Linux:
+## Install
+Get the installation script from:
+https://syhhyl.github.io/HFile/
 
-```bash
-curl -fsSL https://syhhyl.github.io/HFile/install.sh | bash
-```
-
-Install on Windows:
-
-```powershell
-irm https://syhhyl.github.io/HFile/install.ps1 | iex
-```
-
-
-Start a server:
-
-```bash
-hf -d ./received -p 8888
-```
-
-Send a file:
-
-```bash
-hf -c ./hello.txt -i 127.0.0.1 -p 8888
-```
-
-Send a message:
-
-```bash
-hf -m "hello from CLI" -i 127.0.0.1 -p 8888
-```
-
-Open the Web UI:
-
-```text
-http://127.0.0.1:8888/
-```
-
+## How to use HFile
+Run the following command to view available options and usage details:
+`hf -h`
 
 ## License
-
 Apache License 2.0. See `LICENSE`.
