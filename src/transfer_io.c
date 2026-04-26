@@ -136,8 +136,16 @@ static protocol_result_t transfer_finalize_output(int *out_fd,
                                                   const char *full_path,
                                                   char *full_path_out,
                                                   size_t full_path_cap) {
+  size_t full_path_len = 0;
+
   if (out_fd == NULL || tmp_path == NULL || full_path == NULL ||
       full_path_out == NULL || full_path_cap == 0) {
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  full_path_len = strlen(full_path);
+  if (full_path_len + 1u > full_path_cap) {
+    fprintf(stderr, "output path is too long\n");
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
 
@@ -153,12 +161,7 @@ static protocol_result_t transfer_finalize_output(int *out_fd,
     return PROTOCOL_ERR_IO;
   }
 
-  if (strlen(full_path) + 1u > full_path_cap) {
-    fprintf(stderr, "output path is too long\n");
-    return PROTOCOL_ERR_INVALID_ARGUMENT;
-  }
-
-  memcpy(full_path_out, full_path, strlen(full_path) + 1u);
+  memcpy(full_path_out, full_path, full_path_len + 1u);
   return PROTOCOL_OK;
 }
 
