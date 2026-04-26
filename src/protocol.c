@@ -17,15 +17,36 @@ static int proto_res_frame_error_code_valid(uint16_t error_code) {
   return error_code <= PROTOCOL_ERR_MSG_TOO_LARGE;
 }
 
+static int proto_res_frame_valid(const res_frame_t *frame) {
+  if (frame == NULL || !proto_res_frame_phase_valid(frame->phase) ||
+      !proto_res_frame_status_valid(frame->status) ||
+      !proto_res_frame_error_code_valid(frame->error_code)) {
+    return 0;
+  }
+
+  if (frame->status == PROTO_STATUS_OK) {
+    if (frame->error_code != PROTOCOL_OK) {
+      return 0;
+    }
+  } else if (frame->error_code == PROTOCOL_OK) {
+    return 0;
+  }
+
+  if (frame->phase == PROTO_PHASE_READY) {
+    return frame->status == PROTO_STATUS_OK ||
+           frame->status == PROTO_STATUS_REJECTED;
+  }
+  return frame->status == PROTO_STATUS_OK ||
+         frame->status == PROTO_STATUS_FAILED;
+}
+
 protocol_result_t encode_res_frame(const res_frame_t *frame, uint8_t *out) {
   uint16_t net_error_code = 0;
 
   if (frame == NULL || out == NULL) {
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
-  if (!proto_res_frame_phase_valid(frame->phase) ||
-      !proto_res_frame_status_valid(frame->status) ||
-      !proto_res_frame_error_code_valid(frame->error_code)) {
+  if (!proto_res_frame_valid(frame)) {
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
 
@@ -48,9 +69,7 @@ protocol_result_t decode_res_frame(res_frame_t *frame, const uint8_t *in) {
   memcpy(&net_error_code, in + 2, sizeof(net_error_code));
   frame->error_code = ntohs(net_error_code);
 
-  if (!proto_res_frame_phase_valid(frame->phase) ||
-      !proto_res_frame_status_valid(frame->status) ||
-      !proto_res_frame_error_code_valid(frame->error_code)) {
+  if (!proto_res_frame_valid(frame)) {
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
 

@@ -445,12 +445,9 @@ static int handle_protocol_connection(socket_t conn,
 
     case HF_MSG_TYPE_GET_FILE:
       return server_handle_get_file(conn, ser_opt, &proto_header) == PROTOCOL_OK ? 0 : 1;
-
-    default:
-      fprintf(stderr, "protocol error: unsupported message type: %u\n",
-              (unsigned)proto_header.msg_type);
-      return 1;
   }
+
+  return 1;
 }
 
 #ifdef _WIN32
@@ -543,12 +540,6 @@ static int server_handle_text_message(socket_t conn,
   if (proto_header == NULL) {
     fprintf(stderr, "invalid text message handler arguments\n");
     return 1;
-  }
-
-  if (proto_header->flags != HF_MSG_FLAG_NONE) {
-    fprintf(stderr, "protocol error: text message has unsupported flags\n");
-    result = PROTOCOL_ERR_HEADER_MSG_FLAG;
-    goto SEND_RESPONSE;
   }
 
   if (proto_header->payload_size > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {

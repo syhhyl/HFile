@@ -43,6 +43,8 @@ class FakeDownloadServer:
         body: bytes,
         final_frame: bytes | None,
         advertised_size: int | None = None,
+        ready_frame: bytes | None = None,
+        send_prefix_after_ready: bool = True,
         host: str = "127.0.0.1",
     ) -> None:
         self.host = host
@@ -51,6 +53,8 @@ class FakeDownloadServer:
         self.body = body
         self.final_frame = final_frame
         self.advertised_size = len(body) if advertised_size is None else advertised_size
+        self.ready_frame = ready_frame or struct.pack("!BBH", 0, 0, 0)
+        self.send_prefix_after_ready = send_prefix_after_ready
         self._listener: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
@@ -99,7 +103,9 @@ class FakeDownloadServer:
                 if payload_size > 0:
                     self._recv_exact(conn, payload_size)
 
-                conn.sendall(struct.pack("!BBH", 0, 0, 0))
+                conn.sendall(self.ready_frame)
+                if not self.send_prefix_after_ready:
+                    return
                 conn.sendall(
                     struct.pack("!H", len(self.offered_name))
                     + self.offered_name
@@ -564,6 +570,51 @@ class TestTransferCLI(TransferTestCase):
             "unexpected temp download files left behind",
         )
 
+    def test_get_rejects_invalid_ready_response_combination(self) -> None:
+        cases = [
+            ("ready_failed", self._make_res_frame(0, 2, 5)),
+            ("ready_ok_with_error", self._make_res_frame(0, 0, 5)),
+        ]
+
+        for name, ready_frame in cases:
+            with self.subTest(name=name):
+                download_dst = self.download_dir / f"{name}.txt"
+                self._reset_output_path(download_dst)
+
+                server = FakeDownloadServer(
+                    offered_name=b"server.txt",
+                    body=b"",
+                    final_frame=None,
+                    ready_frame=ready_frame,
+                    send_prefix_after_ready=False,
+                )
+                server.start()
+                try:
+                    r = run_hf(
+                        self.hf_path,
+                        [
+                            "-g",
+                            "server.txt",
+                            "-o",
+                            download_dst,
+                            "-i",
+                            server.host,
+                            "-p",
+                            str(server.port),
+                        ],
+                        timeout=8.0,
+                    )
+                finally:
+                    server.stop()
+
+                self.assertEqual(
+                    r.returncode,
+                    1,
+                    f"client failed argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+                )
+                self.assertIn("invalid get response frame", r.stderr)
+                self.assertFalse(download_dst.exists())
+
     def test_get_does_not_publish_file_when_final_fails(self) -> None:
         download_dst = self.download_dir / "final-failed.txt"
         self._reset_output_path(download_dst)
@@ -658,6 +709,24 @@ class TestTransferProtocol(TransferTestCase):
             ack,
             b"",
             f"unexpected invalid-version ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self._wait_for_server_log(
+            "protocol error: failed to decode header", offset=log_offset
+        )
+
+    def test_protocol_rejects_invalid_flags(self) -> None:
+        header = self._make_header(
+            msg_type=MSG_TYPE_TEXT_MESSAGE,
+            payload_size=0,
+            flags=0x01,
+        )
+
+        log_offset = self._server_log_offset()
+        ack = self._send_raw_parts([header], allow_empty_ack=True)
+        self.assertEqual(
+            ack,
+            b"",
+            f"unexpected invalid-flags ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
         self._wait_for_server_log(
             "protocol error: failed to decode header", offset=log_offset
@@ -789,6 +858,61 @@ class TestTransferProtocol(TransferTestCase):
             "protocol error: unexpected EOF while receiving get request",
             offset=log_offset,
         )
+
+    def test_get_protocol_rejects_payload_size_mismatch(self) -> None:
+        file_name = b"hello.txt"
+        request = struct.pack("!H", len(file_name)) + file_name
+        header = self._make_header(
+            msg_type=MSG_TYPE_GET_FILE,
+            payload_size=len(request) + 1,
+        )
+
+        log_offset = self._server_log_offset()
+        ack = self._send_raw_parts([header, request])
+        self.assertEqual(
+            ack,
+            self._make_res_frame(0, 1, 8),
+            f"unexpected get payload-mismatch ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
+        )
+        self._wait_for_server_log(
+            "protocol error: get payload size mismatch", offset=log_offset
+        )
+
+    def test_get_rejects_invalid_final_response_combination(self) -> None:
+        download_dst = self.download_dir / "invalid-final.txt"
+        self._reset_output_path(download_dst)
+
+        server = FakeDownloadServer(
+            offered_name=b"server.txt",
+            body=b"body before invalid final\n",
+            final_frame=self._make_res_frame(1, 1, 5),
+        )
+        server.start()
+        try:
+            r = run_hf(
+                self.hf_path,
+                [
+                    "-g",
+                    "server.txt",
+                    "-o",
+                    download_dst,
+                    "-i",
+                    server.host,
+                    "-p",
+                    str(server.port),
+                ],
+                timeout=8.0,
+            )
+        finally:
+            server.stop()
+
+        self.assertEqual(
+            r.returncode,
+            1,
+            f"client failed argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+        self.assertIn("invalid get response frame", r.stderr)
+        self.assertFalse(download_dst.exists())
 
     def test_raw_file_transfer_two_phase_success(self) -> None:
         file_name = b"raw_ok.bin"
