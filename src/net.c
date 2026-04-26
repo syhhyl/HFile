@@ -237,7 +237,11 @@ int net_primary_ipv4(char *out, size_t out_cap) {
     return 1;
   }
 
+#ifdef _WIN32
+  if (inet_ntop(AF_INET, &local.sin_addr, out, (size_t)out_cap) == NULL) {
+#else
   if (inet_ntop(AF_INET, &local.sin_addr, out, (socklen_t)out_cap) == NULL) {
+#endif
     socket_close(sock);
     return 1;
   }
