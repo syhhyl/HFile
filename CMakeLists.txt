@@ -6,6 +6,7 @@ add_executable(hf
   src/hfile.c
   src/app_service.c
   src/server.c
+  src/server_conn_tracker.c
   src/http.c
   src/message_store.c
   src/daemon_state.c
