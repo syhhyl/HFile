@@ -1018,12 +1018,8 @@ static int server_run_process(const server_opt_t *ser_opt,
   socket_init(&sock);
 
   if (create_listener_socket(NULL, ser_opt->port, &sock) != 0) {
-#ifdef _WIN32
-    exit(1);
-#else
     exit_code = 1;
     goto CLOSE_SOCK;
-#endif
   }
 
   if (daemon_mode) {
