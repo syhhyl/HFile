@@ -30,7 +30,7 @@
 
 #endif
 
-
+#define CHUNK_SIZE 1024 * 1024
 
 bool is_socket_invalid(socket_t sock);
 
@@ -58,9 +58,6 @@ ssize_t recv_all(
   socket_t sock,
   void *buf, size_t len);
 
-
-void encode_u64_be(uint64_t v, uint8_t out[8]);
-uint64_t decode_u64_be(const uint8_t in[8]);
 
 void sock_perror(const char *msg);
 

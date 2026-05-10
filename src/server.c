@@ -1,4 +1,3 @@
-#include "cli.h"
 #include "net.h"
 #include "protocol.h"
 #include "shutdown.h"
@@ -31,11 +30,6 @@ typedef struct {
   server_conn_entry_t *entry;
 } server_conn_ctx_t;
 
-typedef enum {
-  SERVER_CONN_KIND_INVALID = 0,
-  SERVER_CONN_KIND_PROTOCOL,
-} server_conn_kind_t;
-
 typedef struct {
 #ifdef _WIN32
   HANDLE handle;
@@ -67,7 +61,6 @@ static int server_set_connection_recv_timeout(socket_t conn, uint32_t timeout_ms
 }
 
 static inline int create_listener_socket(
-  const char *bind_ip,
   uint16_t port,
   socket_t *sock_out) {
   int opt = 1;
@@ -104,13 +97,7 @@ static inline int create_listener_socket(
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
-  if (bind_ip == NULL || bind_ip[0] == '\0') {
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  } else if (inet_pton(AF_INET, bind_ip, &addr.sin_addr) != 1) {
-    fprintf(stderr, "invalid bind address: %s\n", bind_ip);
-    socket_close(sock);
-    return 1;
-  }
+  addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
 #ifdef _WIN32
   if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
@@ -134,40 +121,6 @@ static inline int create_listener_socket(
 
   *sock_out = sock;
   return 0;
-}
-
-static server_conn_kind_t server_detect_connection_kind(socket_t conn) {
-  uint8_t buf[8];
-  ssize_t n = 0;
-
-#ifdef _WIN32
-  n = recv(conn, (char *)buf, (int)sizeof(buf), MSG_PEEK);
-  if (n == SOCKET_ERROR) {
-    int err = WSAGetLastError();
-    if (err == WSAEINTR || err == WSAEWOULDBLOCK) {
-      return SERVER_CONN_KIND_INVALID;
-    }
-    return SERVER_CONN_KIND_INVALID;
-  }
-#else
-  n = recv(conn, buf, sizeof(buf), MSG_PEEK);
-  if (n < 0) {
-    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
-      return SERVER_CONN_KIND_INVALID;
-    }
-    return SERVER_CONN_KIND_INVALID;
-  }
-#endif
-  if (n < 2) {
-    return SERVER_CONN_KIND_INVALID;
-  }
-
-  if (buf[0] == (uint8_t)(HF_PROTOCOL_MAGIC >> 8) &&
-      buf[1] == (uint8_t)(HF_PROTOCOL_MAGIC & 0xFFu)) {
-    return SERVER_CONN_KIND_PROTOCOL;
-  }
-
-  return SERVER_CONN_KIND_PROTOCOL;
 }
 
 static int handle_protocol_connection(socket_t conn,
@@ -227,14 +180,7 @@ static void *server_connection_thread_main(void *arg) {
 #endif
   }
 
-  switch (server_detect_connection_kind(conn)) {
-    case SERVER_CONN_KIND_PROTOCOL:
-      (void)handle_protocol_connection(conn, &opt);
-      break;
-    default:
-      fprintf(stderr, "we don't support this mode\n");
-      break;
-  }
+  (void)handle_protocol_connection(conn, &opt);
 
   socket_close(conn);
   server_conn_tracker_end(entry);
@@ -504,7 +450,7 @@ static int server_run_process(const server_opt_t *ser_opt) {
   socket_t sock;
   socket_init(&sock);
 
-  if (create_listener_socket(NULL, ser_opt->port, &sock) != 0) {
+  if (create_listener_socket(ser_opt->port, &sock) != 0) {
     exit_code = 1;
     goto CLOSE_SOCK;
   }

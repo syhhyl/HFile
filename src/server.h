@@ -1,7 +1,12 @@
 #ifndef HF_SERVER_H
 #define HF_SERVER_H
 
-#include "cli.h"
+#include <stdint.h>
+
+typedef struct {
+  const char *path;
+  uint16_t port;
+} server_opt_t;
 
 int server(const server_opt_t *ser_opt);
 

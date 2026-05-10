@@ -21,18 +21,6 @@ typedef struct {
   uint16_t port;
 } Opt;
 
-typedef struct {
-  const char *path;
-  const char *ip;
-  uint16_t port;
-} client_opt_t;
-
-
-typedef struct {
-  const char *path;
-  uint16_t port;
-} server_opt_t;
-
 
 void usage(const char *argv0);
 parse_result_t parse_args(int argc, char **argv, Opt *opt);

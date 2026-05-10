@@ -64,6 +64,9 @@ typedef struct {
 
 void init_header(protocol_header_t *header);
 
+void encode_u64_be(uint64_t v, uint8_t out[8]);
+uint64_t decode_u64_be(const uint8_t in[8]);
+
 protocol_result_t encode_header(const protocol_header_t *header, uint8_t *out);
 protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in);
 protocol_result_t recv_header(socket_t sock, uint8_t *out);

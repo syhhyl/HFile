@@ -7,17 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static inline void init_server_opt(const Opt *opt, server_opt_t *server_opt) {
-  server_opt->path = opt->path;
-  server_opt->port = opt->port;
-}
-
-static inline void init_client_opt(const Opt *opt, client_opt_t *client_opt) {
-  client_opt->path = opt->path;
-  client_opt->ip = opt->ip;
-  client_opt->port = opt->port;
-}
-
 int main(int argc, char **argv) {
   int ret = 1;
 
@@ -54,12 +43,10 @@ int main(int argc, char **argv) {
   }
 
   if (opt.mode == server_mode) {
-    server_opt_t server_opt = {0};
-    init_server_opt(&opt, &server_opt);
+    server_opt_t server_opt = { .path = opt.path, .port = opt.port };
     ret = server(&server_opt);
   } else if (opt.mode == client_mode) {
-    client_opt_t client_opt = {0};
-    init_client_opt(&opt, &client_opt);
+    client_opt_t client_opt = { .path = opt.path, .ip = opt.ip, .port = opt.port };
     ret = client(&client_opt);
   } else usage(argv[0]);
 

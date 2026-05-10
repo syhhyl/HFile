@@ -28,8 +28,6 @@
   #include <sys/types.h>
 #endif
 
-#define CHUNK_SIZE 1024 * 1024
-
 int fs_basename_from_path(const char **file_path, const char **file_name);
 
 int fs_open(const char *path, int flags, int mode);

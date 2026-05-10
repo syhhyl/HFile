@@ -167,18 +167,6 @@ static int client_recv_checked_response(socket_t sock,
   return 0;
 }
 
-static void client_shutdown_write(socket_t sock) {
-#ifdef _WIN32
-  if (shutdown(sock, SD_SEND) == SOCKET_ERROR) {
-    sock_perror("shutdown(SD_SEND)");
-  }
-#else
-  if (shutdown(sock, SHUT_WR) < 0) {
-    sock_perror("shutdown(SHUT_WR)");
-  }
-#endif
-}
-
 static int client_set_socket_timeouts(socket_t sock, uint32_t timeout_ms) {
 #ifdef _WIN32
   DWORD timeout = (DWORD)timeout_ms;
@@ -454,7 +442,15 @@ static int client_send_file_raw(const client_opt_t *opt) {
     goto CLEAN_UP;
   }
 
-  client_shutdown_write(sock);
+#ifdef _WIN32
+  if (shutdown(sock, SD_SEND) == SOCKET_ERROR) {
+    sock_perror("shutdown(SD_SEND)");
+  }
+#else
+  if (shutdown(sock, SHUT_WR) < 0) {
+    sock_perror("shutdown(SHUT_WR)");
+  }
+#endif
   if (client_recv_checked_response(sock, PROTO_PHASE_FINAL, "transfer", &r_f) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
