@@ -133,12 +133,8 @@ int proto_get_file_name_len(const char *file_name, uint16_t *out_len) {
   return 0;
 }
 
-size_t proto_file_name_only_size(uint16_t file_name_len) {
-  return sizeof(uint16_t) + (size_t)file_name_len;
-}
-
 size_t proto_file_transfer_prefix_size(uint16_t file_name_len) {
-  return proto_file_name_only_size(file_name_len) + sizeof(uint64_t);
+  return sizeof(uint16_t) + (size_t)file_name_len + sizeof(uint64_t);
 }
 
 protocol_result_t encode_file_prefix(const char *file_name,
