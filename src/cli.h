@@ -12,36 +12,25 @@ typedef enum {
 typedef enum {
   server_mode,
   client_mode,
-  status_mode,
-  stop_mode,
 } Mode;
 
 typedef struct {
   Mode mode;
   const char *path;
-  const char *remote_path;
-  const char *output_path;
-  const char *message;
   const char *ip;
   uint16_t port;
-  uint8_t msg_type;
 } Opt;
 
 typedef struct {
   const char *path;
-  const char *remote_path;
-  const char *output_path;
-  const char *message;
   const char *ip;
   uint16_t port;
-  uint8_t msg_type;
 } client_opt_t;
 
 
 typedef struct {
   const char *path;
   uint16_t port;
-  long pid;
 } server_opt_t;
 
 

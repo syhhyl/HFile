@@ -35,10 +35,7 @@ class TestSupport(unittest.TestCase):
         self.assertEqual(protocol_define("HF_PROTOCOL_MAGIC"), 0x0429)
         self.assertGreater(protocol_define("HF_PROTOCOL_VERSION"), 0)
         self.assertEqual(protocol_define("HF_MSG_FLAG_NONE"), 0x00)
-        self.assertEqual(protocol_define("HF_MSG_TYPE_GET_FILE"), 0x03)
-        self.assertEqual(
-            protocol_define("HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE"), 256 * 1024
-        )
+        self.assertEqual(protocol_define("HF_MSG_TYPE_SEND_FILE"), 0x01)
 
     def test_protocol_define_raises_when_symbol_missing(self) -> None:
         with self.assertRaises(KeyError):

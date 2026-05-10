@@ -14,7 +14,7 @@ static int proto_res_frame_status_valid(uint8_t status) {
 }
 
 static int proto_res_frame_error_code_valid(uint16_t error_code) {
-  return error_code <= PROTOCOL_ERR_MSG_TOO_LARGE;
+  return error_code <= PROTOCOL_ERR_EOF;
 }
 
 static int proto_res_frame_valid(const res_frame_t *frame) {
@@ -141,24 +141,6 @@ size_t proto_file_transfer_prefix_size(uint16_t file_name_len) {
   return proto_file_name_only_size(file_name_len) + sizeof(uint64_t);
 }
 
-protocol_result_t encode_file_name_only(const char *file_name, uint8_t *out) {
-  uint16_t file_name_len = 0;
-  uint16_t net_len = 0;
-
-  if (out == NULL) {
-    return PROTOCOL_ERR_INVALID_ARGUMENT;
-  }
-  if (proto_get_file_name_len(file_name, &file_name_len) != 0) {
-    return PROTOCOL_ERR_FILE_NAME_LEN;
-  }
-
-  net_len = htons(file_name_len);
-  memcpy(out, &net_len, sizeof(net_len));
-  out += sizeof(net_len);
-  memcpy(out, file_name, (size_t)file_name_len);
-  return PROTOCOL_OK;
-}
-
 protocol_result_t encode_file_prefix(const char *file_name,
                                      uint64_t content_size,
                                      uint8_t *out) {
@@ -199,7 +181,7 @@ protocol_result_t proto_send_payload(socket_t sock, const uint8_t *in, size_t le
   return PROTOCOL_OK;
 }
 
-protocol_result_t proto_recv_file_name_only(socket_t sock, char **file_name_out) {
+static protocol_result_t proto_recv_file_name_only(socket_t sock, char **file_name_out) {
   uint16_t net_len = 0;
   uint16_t file_name_len = 0;
   char *file_name = NULL;
@@ -323,9 +305,7 @@ protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in) {
   }
   
   header->msg_type = *base++;
-  if (header->msg_type != HF_MSG_TYPE_TEXT_MESSAGE &&
-      header->msg_type != HF_MSG_TYPE_SEND_FILE &&
-      header->msg_type != HF_MSG_TYPE_GET_FILE) {
+  if (header->msg_type != HF_MSG_TYPE_SEND_FILE) {
     return PROTOCOL_ERR_HEADER_MSG_TYPE;
   }
   

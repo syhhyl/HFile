@@ -3,7 +3,6 @@
 #include "shutdown.h"
 #include "server.h"
 #include "client.h"
-#include "control.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,12 +14,8 @@ static inline void init_server_opt(const Opt *opt, server_opt_t *server_opt) {
 
 static inline void init_client_opt(const Opt *opt, client_opt_t *client_opt) {
   client_opt->path = opt->path;
-  client_opt->remote_path = opt->remote_path;
-  client_opt->output_path = opt->output_path;
-  client_opt->message = opt->message;
   client_opt->ip = opt->ip;
   client_opt->port = opt->port;
-  client_opt->msg_type = opt->msg_type;
 }
 
 int main(int argc, char **argv) {
@@ -66,10 +61,6 @@ int main(int argc, char **argv) {
     client_opt_t client_opt = {0};
     init_client_opt(&opt, &client_opt);
     ret = client(&client_opt);
-  } else if (opt.mode == status_mode) {
-    ret = control_status();
-  } else if (opt.mode == stop_mode) {
-    ret = control_stop();
   } else usage(argv[0]);
 
   if (shutdown_signal_number() != 0) {

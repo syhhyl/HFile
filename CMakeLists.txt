@@ -4,12 +4,8 @@ project(HFile VERSION 0.0.1 LANGUAGES C)
 
 add_executable(hf
   src/hfile.c
-  src/app_service.c
   src/server.c
   src/server_conn_tracker.c
-  src/message_store.c
-  src/daemon_state.c
-  src/control.c
   src/transfer_io.c
   src/client.c
   src/protocol.c

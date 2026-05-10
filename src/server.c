@@ -1,13 +1,10 @@
-#include "app_service.h"
 #include "cli.h"
-#include "control.h"
-#include "daemon_state.h"
-#include "message_store.h"
 #include "net.h"
 #include "protocol.h"
 #include "shutdown.h"
 #include "server.h"
 #include "server_conn_tracker.h"
+#include "transfer_io.h"
 
 #include <stddef.h>
 #include <fcntl.h>
@@ -24,7 +21,6 @@
   #include <process.h>
 #else
   #include <pthread.h>
-  #include <sys/wait.h>
   #include <unistd.h>
 #endif
 
@@ -47,13 +43,7 @@ typedef struct {
 #endif
 } server_thread_t;
 
-static int server_handle_text_message(socket_t conn,
-                                       const protocol_header_t *proto_header);
 static protocol_result_t server_handle_file_transfer(
-  socket_t conn,
-  const server_opt_t *ser_opt,
-  const protocol_header_t *proto_header);
-static protocol_result_t server_handle_get_file(
   socket_t conn,
   const server_opt_t *ser_opt,
   const protocol_header_t *proto_header);
@@ -61,9 +51,6 @@ static protocol_result_t server_send_response(socket_t conn,
                                               uint8_t phase,
                                               uint8_t status,
                                               protocol_result_t error_code);
-static int server_persist_daemon_state(const server_opt_t *ser_opt,
-                                        const char *log_path,
-                                        int daemon_mode);
 
 static int server_set_connection_recv_timeout(socket_t conn, uint32_t timeout_ms) {
 #ifdef _WIN32
@@ -204,14 +191,8 @@ static int handle_protocol_connection(socket_t conn,
   }
 
   switch (proto_header.msg_type) {
-    case HF_MSG_TYPE_TEXT_MESSAGE:
-      return server_handle_text_message(conn, &proto_header);
-
     case HF_MSG_TYPE_SEND_FILE:
       return server_handle_file_transfer(conn, ser_opt, &proto_header) == PROTOCOL_OK ? 0 : 1;
-
-    case HF_MSG_TYPE_GET_FILE:
-      return server_handle_get_file(conn, ser_opt, &proto_header) == PROTOCOL_OK ? 0 : 1;
   }
 
   return 1;
@@ -295,63 +276,6 @@ static int server_start_connection_thread(socket_t conn,
   return 0;
 }
 
-static int server_handle_text_message(socket_t conn,
-                                      const protocol_header_t *proto_header) {
-  char *message = NULL;
-  protocol_result_t result = PROTOCOL_ERR_INVALID_ARGUMENT;
-  uint8_t status = PROTO_STATUS_FAILED;
-
-  if (proto_header == NULL) {
-    fprintf(stderr, "invalid text message handler arguments\n");
-    return 1;
-  }
-
-  if (proto_header->payload_size > HF_PROTOCOL_MAX_TEXT_MESSAGE_SIZE) {
-    fprintf(stderr, "protocol error: text message too large\n");
-    result = PROTOCOL_ERR_MSG_TOO_LARGE;
-    goto SEND_RESPONSE;
-  }
-
-  size_t message_len = (size_t)proto_header->payload_size;
-  message = (char *)malloc(message_len + 1u);
-  if (message == NULL) {
-    perror("malloc(message)");
-    result = PROTOCOL_ERR_ALLOC;
-    goto SEND_RESPONSE;
-  }
-
-  if (message_len > 0) {
-    ssize_t n = recv_all(conn, message, message_len);
-    if (n != (ssize_t)message_len) {
-      if (n < 0) {
-        sock_perror("recv_all(message)");
-        result = PROTOCOL_ERR_IO;
-      } else {
-        fprintf(stderr,
-                "protocol error: unexpected EOF while receiving message\n");
-        result = PROTOCOL_ERR_EOF;
-      }
-      goto SEND_RESPONSE;
-    }
-  }
-
-  message[message_len] = '\0';
-  result = app_submit_message(message);
-  if (result != PROTOCOL_OK) {
-    goto SEND_RESPONSE;
-  }
-
-  status = PROTO_STATUS_OK;
-  result = PROTOCOL_OK;
-
-SEND_RESPONSE:
-  if (server_send_response(conn, PROTO_PHASE_FINAL, status, result) != PROTOCOL_OK) {
-    sock_perror("send_res_frame(text_message_final)");
-  }
-  if (message != NULL) free(message);
-  return result == PROTOCOL_OK ? 0 : 1;
-}
-
 static protocol_result_t server_send_response(
   socket_t conn,
   uint8_t phase,
@@ -423,9 +347,10 @@ static protocol_result_t server_handle_file_transfer(
     goto CLEANUP;
   }
 
-  result = app_receive_file(conn, ser_opt->path, file_name, content_size,
-                            APP_UPLOAD_PROTOCOL, saved_path,
-                            sizeof(saved_path));
+  result = transfer_recv_socket_file(conn, ser_opt->path, file_name, content_size,
+                                     "recv(file_body)",
+                                     "protocol error: unexpected EOF while receiving file",
+                                     saved_path, sizeof(saved_path));
   if (result != PROTOCOL_OK) {
     if (server_send_response(
           conn, PROTO_PHASE_FINAL, PROTO_STATUS_FAILED, result) != PROTOCOL_OK) {
@@ -452,132 +377,6 @@ SEND_READY_REJECT:
 
 CLEANUP:
   if (file_name != NULL) free(file_name);
-  return result;
-}
-
-static protocol_result_t server_handle_get_file(
-  socket_t conn,
-  const server_opt_t *ser_opt,
-  const protocol_header_t *proto_header) {
-  char *file_name = NULL;
-  app_download_t download = {.fd = -1};
-  protocol_result_t result = PROTOCOL_ERR_IO;
-
-  if (ser_opt == NULL) {
-    fprintf(stderr, "invalid get handler arguments\n");
-    return PROTOCOL_ERR_INVALID_ARGUMENT;
-  }
-
-  if (proto_header->payload_size < (uint64_t)proto_file_name_only_size(1)) {
-    fprintf(stderr, "protocol error: get payload size too small\n");
-    (void)server_send_response(
-      conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED, PROTOCOL_ERR_INVALID_ARGUMENT);
-    return PROTOCOL_ERR_INVALID_ARGUMENT;
-  }
-
-  result = proto_recv_file_name_only(conn, &file_name);
-  if (result != PROTOCOL_OK) {
-    if (result == PROTOCOL_ERR_FILE_NAME_LEN) {
-      fprintf(stderr, "protocol error: invalid get file name length\n");
-    } else if (result == PROTOCOL_ERR_ALLOC) {
-      perror("malloc(file_name)");
-    } else if (result == PROTOCOL_ERR_EOF) {
-      fprintf(stderr, "protocol error: unexpected EOF while receiving get request\n");
-    } else {
-      sock_perror("proto_recv_file_name_only");
-    }
-    goto SEND_READY_REJECT;
-  }
-
-  if (fs_validate_file_name(file_name) != 0) {
-    fprintf(stderr, "invalid get file name: %s\n", file_name);
-    result = PROTOCOL_ERR_INVALID_FILE_NAME;
-    goto SEND_READY_REJECT;
-  }
-
-  if (proto_header->payload_size !=
-      (uint64_t)proto_file_name_only_size((uint16_t)strlen(file_name))) {
-    fprintf(stderr, "protocol error: get payload size mismatch\n");
-    result = PROTOCOL_ERR_PAYLOAD_SIZE_MISMATCH;
-    goto SEND_READY_REJECT;
-  }
-
-  result = app_prepare_download(ser_opt->path, file_name, &download);
-  if (result != PROTOCOL_OK) {
-    if (result == PROTOCOL_ERR_IO) {
-      result = PROTOCOL_ERR_INVALID_ARGUMENT;
-    }
-    goto SEND_READY_REJECT;
-  }
-
-  {
-    uint8_t ready_prefix_buf[HF_PROTOCOL_RES_FRAME_SIZE + sizeof(uint16_t) +
-                             HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
-    res_frame_t ready_frame = {0};
-    uint8_t prefix_buf[sizeof(uint16_t) + HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
-    size_t prefix_size = proto_file_transfer_prefix_size((uint16_t)strlen(file_name));
-
-    ready_frame.phase = PROTO_PHASE_READY;
-    ready_frame.status = PROTO_STATUS_OK;
-    ready_frame.error_code = PROTOCOL_OK;
-    result = encode_res_frame(&ready_frame, ready_prefix_buf);
-    if (result != PROTOCOL_OK) {
-      goto CLEANUP;
-    }
-
-    result = encode_file_prefix(file_name, download.info.size, prefix_buf);
-    if (result != PROTOCOL_OK) {
-      goto SEND_FINAL_FAILED;
-    }
-
-    memcpy(ready_prefix_buf + HF_PROTOCOL_RES_FRAME_SIZE, prefix_buf, prefix_size);
-    result = proto_send_payload(
-      conn,
-      ready_prefix_buf,
-      HF_PROTOCOL_RES_FRAME_SIZE + prefix_size);
-    if (result != PROTOCOL_OK) {
-      sock_perror("send(get_ready_prefix)");
-      goto CLEANUP;
-    }
-  }
-
-  {
-    net_send_file_result_t send_res = net_send_file_best_effort(conn, download.fd,
-                                                                download.info.size);
-    if (send_res != NET_SEND_FILE_OK) {
-      result = PROTOCOL_ERR_IO;
-      goto SEND_FINAL_FAILED;
-    }
-  }
-
-  result = server_send_response(
-    conn, PROTO_PHASE_FINAL, PROTO_STATUS_OK, PROTOCOL_OK);
-  if (result != PROTOCOL_OK) {
-    sock_perror("send_res_frame(get_final_ok)");
-    goto CLEANUP;
-  }
-
-  result = PROTOCOL_OK;
-  goto CLEANUP;
-
-SEND_FINAL_FAILED:
-  if (server_send_response(
-        conn, PROTO_PHASE_FINAL, PROTO_STATUS_FAILED, result) != PROTOCOL_OK) {
-    sock_perror("send_res_frame(get_final_failed)");
-  }
-  goto CLEANUP;
-
-SEND_READY_REJECT:
-  if (server_send_response(
-        conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED, result) != PROTOCOL_OK) {
-    sock_perror("send_res_frame(get_ready_rejected)");
-  }
-
-CLEANUP:
-  app_download_cleanup(&download);
-  if (file_name != NULL) {
-    free(file_name);
-  }
   return result;
 }
 
@@ -641,32 +440,16 @@ static long server_current_pid_long(void) {
 #endif
 }
 
-static int server_persist_daemon_state(const server_opt_t *ser_opt,
-                                        const char *log_path,
-                                        int daemon_mode) {
-  daemon_state_t state = {0};
-
-  if (ser_opt == NULL || ser_opt->path == NULL || ser_opt->path[0] == '\0' ||
-      ser_opt->port == 0 || ser_opt->pid <= 0) {
-    return 1;
+static void server_print_access_details(const server_opt_t *ser_opt, long pid) {
+  if (ser_opt == NULL || ser_opt->path == NULL) {
+    return;
   }
 
-  state.pid = ser_opt->pid;
-  (void)snprintf(state.receive_dir, sizeof(state.receive_dir), "%s", ser_opt->path);
-  (void)snprintf(state.log_path, sizeof(state.log_path), "%s",
-                 log_path != NULL ? log_path : "");
-  state.port = ser_opt->port;
-  state.daemon_mode = daemon_mode ? 1 : 0;
-
-  return daemon_state_write(&state);
-}
-
-static void server_print_access_details(const server_opt_t *ser_opt,
-                                        const char *log_path,
-                                        long pid,
-                                        int daemon_mode) {
-  control_print_server_access_details(stdout, ser_opt->path, ser_opt->port,
-                                      log_path, pid, daemon_mode);
+  fprintf(stdout, "HFile server ready\n");
+  fprintf(stdout, "  Receive Dir  %s\n", ser_opt->path);
+  fprintf(stdout, "  Port         %u\n", (unsigned)ser_opt->port);
+  fprintf(stdout, "  PID          %ld\n", pid);
+  fflush(stdout);
 }
 
 static void server_print_shutdown_notice(void) {
@@ -687,120 +470,14 @@ static void server_print_shutdown_notice(void) {
   }
 }
 
-static int server_notify_parent(int *ready_fd, uint8_t status) {
-#ifdef _WIN32
-  (void)ready_fd;
-  (void)status;
-  return 0;
-#else
-  if (ready_fd == NULL || *ready_fd < 0) {
-    return 0;
-  }
-
-  ssize_t n = write(*ready_fd, &status, sizeof(status));
-  int saved_errno = errno;
-  (void)close(*ready_fd);
-  *ready_fd = -1;
-  errno = saved_errno;
-  return n == (ssize_t)sizeof(status) ? 0 : 1;
-#endif
-}
-
-#ifndef _WIN32
-
-static int server_pid_is_running_long(long pid) {
-  if (pid <= 0) {
-    return 0;
-  }
-  if (kill((pid_t)pid, 0) == 0) {
-    return 1;
-  }
-  return errno == EPERM ? 1 : 0;
-}
-
-static int server_prepare_daemon_state(void) {
-  daemon_state_t state = {0};
-
-  if (daemon_state_read(&state) == 0) {
-    if (server_pid_is_running_long(state.pid)) {
-      fprintf(stderr, "HFile is already running\nrun 'hf status' or 'hf stop'\n");
-      return 1;
-    }
-    daemon_state_cleanup_files();
-  }
-
-  return 0;
-}
-
-static int server_redirect_stdio(const char *log_path) {
-  int err_fd = -1;
-  int null_fd = -1;
-
-  err_fd = open(log_path, O_CREAT | O_WRONLY | O_APPEND, 0644);
-  if (err_fd < 0) {
-    perror("open(error_log)");
-    return 1;
-  }
-
-  null_fd = open("/dev/null", O_RDONLY);
-  if (null_fd < 0) {
-    perror("open(/dev/null)");
-    (void)close(err_fd);
-    return 1;
-  }
-
-  if (dup2(null_fd, STDIN_FILENO) < 0 || dup2(null_fd, STDOUT_FILENO) < 0 ||
-      dup2(err_fd, STDERR_FILENO) < 0) {
-    perror("dup2(stdio)");
-    (void)close(null_fd);
-    (void)close(err_fd);
-    return 1;
-  }
-
-  (void)close(null_fd);
-  (void)close(err_fd);
-  return 0;
-}
-
-static int server_wait_for_daemon_ready(int ready_fd, pid_t child_pid) {
-  uint8_t status = 0;
-  ssize_t n = read(ready_fd, &status, sizeof(status));
-  int saved_errno = errno;
-  int wait_status = 0;
-
-  (void)close(ready_fd);
-
-  if (n == (ssize_t)sizeof(status) && status == 1u) {
-    return 0;
-  }
-
-  if (n < 0) {
-    errno = saved_errno;
-    perror("read(daemon_ready)");
-  }
-
-  (void)waitpid(child_pid, &wait_status, 0);
-  return 1;
-}
-#endif
-
-static int server_run_process(const server_opt_t *ser_opt,
-                              int ready_fd,
-                              const char *log_path,
-                              int daemon_mode) {
+static int server_run_process(const server_opt_t *ser_opt) {
   int exit_code = 0;
-  int ready_notified = 0;
 
   if (ser_opt->path == NULL || strlen(ser_opt->path) == 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
 
-  if (message_store_init() != 0) {
-    fprintf(stderr, "failed to initialize message store\n");
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
   if (server_conn_tracker_init() != 0) {
     fprintf(stderr, "failed to initialize connection tracker\n");
     exit_code = 1;
@@ -815,24 +492,7 @@ static int server_run_process(const server_opt_t *ser_opt,
     goto CLOSE_SOCK;
   }
 
-  if (daemon_mode) {
-    if (server_persist_daemon_state(ser_opt, log_path, daemon_mode) != 0) {
-      fprintf(stderr, "failed to persist daemon state\n");
-      exit_code = 1;
-      goto CLOSE_SOCK;
-    }
-  }
-
-  if (ready_fd >= 0) {
-    if (server_notify_parent(&ready_fd, 1u) != 0) {
-      exit_code = 1;
-      goto CLOSE_SOCK;
-    }
-    ready_notified = 1;
-  }
-
-  server_print_access_details(ser_opt, log_path, server_current_pid_long(),
-                              daemon_mode);
+  server_print_access_details(ser_opt, server_current_pid_long());
 
   exit_code = server_run_listener(sock, ser_opt);
   if (shutdown_requested()) {
@@ -841,87 +501,20 @@ static int server_run_process(const server_opt_t *ser_opt,
 
 CLOSE_SOCK:
   shutdown_request();
-  message_store_shutdown();
 
   socket_close(sock);
   server_conn_tracker_shutdown_all();
   server_conn_tracker_wait_idle();
 
 CLEAN_UP:
-  if (ready_fd >= 0 && !ready_notified) {
-    (void)server_notify_parent(&ready_fd, 0u);
-  }
-  if (daemon_mode) {
-    daemon_state_cleanup_files();
-  }
-  message_store_cleanup();
   server_conn_tracker_cleanup();
   return exit_code;
 }
 
 int server(const server_opt_t *ser_opt) {
-#ifdef _WIN32
   if (ser_opt == NULL) {
     fprintf(stderr, "invalid server options\n");
     return 1;
   }
-  fprintf(stderr,
-          "daemon mode is not supported on Windows; running attached server instead\n");
-  return server_run_process(ser_opt, -1, NULL, 0);
-#else
-  char log_path[4096];
-  if (ser_opt == NULL) {
-    fprintf(stderr, "invalid server options\n");
-    return 1;
-  }
-
-  if (daemon_state_default_log_path(log_path, sizeof(log_path)) != 0) {
-    fprintf(stderr, "invalid log file path\n");
-    return 1;
-  }
-  if (server_prepare_daemon_state() != 0) {
-    return 1;
-  }
-
-  int ready_pipe[2] = {-1, -1};
-  if (pipe(ready_pipe) != 0) {
-    perror("pipe(daemon_ready)");
-    return 1;
-  }
-
-  pid_t child_pid = fork();
-  if (child_pid < 0) {
-    perror("fork");
-    (void)close(ready_pipe[0]);
-    (void)close(ready_pipe[1]);
-    return 1;
-  }
-
-  if (child_pid > 0) {
-    (void)close(ready_pipe[1]);
-    if (server_wait_for_daemon_ready(ready_pipe[0], child_pid) != 0) {
-      fprintf(stderr, "failed to start daemon, see %s\n", log_path);
-      return 1;
-    }
-
-    server_print_access_details(ser_opt, log_path, (long)child_pid, 1);
-    return 0;
-  }
-
-  (void)close(ready_pipe[0]);
-  if (setsid() < 0) {
-    perror("setsid");
-    (void)server_notify_parent(&ready_pipe[1], 0u);
-    return 1;
-  }
-  if (server_redirect_stdio(log_path) != 0) {
-    (void)server_notify_parent(&ready_pipe[1], 0u);
-    return 1;
-  }
-
-  server_opt_t child_opt = *ser_opt;
-  child_opt.pid = server_current_pid_long();
-  int exit_code = server_run_process(&child_opt, ready_pipe[1], log_path, 1);
-  return exit_code;
-#endif
+  return server_run_process(ser_opt);
 }

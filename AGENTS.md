@@ -15,8 +15,7 @@
 - `src/hfile.c` is the only executable entrypoint. `src/cli.c` parses args, dispatches to client/server/control.
 - One server port handles the native protocol. Top-level dispatch lives in `src/server.c`.
 - Native file receive goes through `src/transfer_io.c`; keep receive-to-temp-file and atomic finalize there.
-- `src/message_store.c` stores messages submitted through TCP `-m`.
-- `src/net.c` is the zero-copy/socket layer: `sendfile` (downloads, Linux) and `splice` (uploads, Linux). Cross-platform I/O goes through buffered `fs.c` fallback. Do NOT move receive-to-disk logic into `net.c`.
+- `src/net.c` is the zero-copy/socket layer: `splice` (uploads, Linux). Cross-platform I/O goes through buffered `fs.c` fallback. Do NOT move receive-to-disk logic into `net.c`.
 
 ## Shutdown And Exit Codes
 
@@ -30,18 +29,17 @@
 - File transfer stays two-phase: validate header/prefix, send `READY`, stream body, then send `FINAL`.
 - Large uploads are streaming. Do not replace file-body receive paths with whole-body `recv_all` logic.
 - Filename validation is intentionally strict across CLI paths; update the matching tests if behavior changes.
-- `hf -d <path>` is the only server start command. Only one HFile server may run at a time.
-- POSIX `-d` daemonizes; Windows keeps running attached but still writes control state so `status`, `stop`, and `-q` work.
+- `hf -d <path>` is the only server start command.
+- `hf -d <path>` runs a foreground server. Stop it with the process signal or Ctrl-C.
 
 ## Test Quirks
 
-- `test/support/hf.py` always starts servers with `-d` and waits for exact startup markers: `HFile daemon ready` on POSIX, `HFile server ready` on Windows. If you change startup logging, update the helper too.
-- Helper-managed tests assume global single-server state. Parallel test runs will collide unless daemon-state files are isolated.
-- The helper captures subprocess output as UTF-8; keep that in mind when changing non-ASCII output such as message paths.
+- `test/support/hf.py` starts foreground servers with `-d` and waits until the TCP port accepts connections.
+- The helper captures subprocess output as UTF-8; keep that in mind when changing non-ASCII output such as paths.
 - `test/test_hf.py` is the full-suite entry point referenced by CI; all other suites (`test_cli`, `test_transfer`, etc.) can be run independently.
 
 ## Editing Guidance
 
 - Follow existing C style: 2-space indent, same-line braces, explicit `#ifdef _WIN32` branches.
-- When changing CLI parsing, protocol framing, control state, or filesystem rules, update the corresponding unittest module and run the smallest relevant suite.
+- When changing CLI parsing, protocol framing, or filesystem rules, update the corresponding unittest module and run the smallest relevant suite.
 - Minimum verification for non-trivial C changes: `cmake --build build` plus the most relevant `python3 -m unittest ...` target.

@@ -135,33 +135,6 @@ def restore_cleanup_handlers(previous_int: object, previous_term: object) -> Non
     signal.signal(signal.SIGTERM, previous_term)
 
 
-def stop_running_server_if_needed(hf_path: Path) -> None:
-    status = run_hf(hf_path, ["status"], timeout=5.0)
-    if status.returncode != 0:
-        return
-
-    if "status: running" not in status.stdout:
-        raise RuntimeError(
-            "unexpected status output while checking running server: "
-            f"stdout={status.stdout!r} stderr={status.stderr!r}"
-        )
-
-    print("detected running HFile server, stopping before perf run")
-    stop = run_hf(hf_path, ["stop"], timeout=10.0)
-    if stop.returncode != 0:
-        raise RuntimeError(
-            "failed to stop running HFile server before perf run: "
-            f"stdout={stop.stdout!r} stderr={stop.stderr!r}"
-        )
-
-    verify = run_hf(hf_path, ["status"], timeout=5.0)
-    if verify.returncode == 0:
-        raise RuntimeError(
-            "running HFile server still present after stop: "
-            f"stdout={verify.stdout!r} stderr={verify.stderr!r}"
-        )
-
-
 def resolve_local_perf_host(preferred_host: str | None) -> tuple[str, bool]:
     if preferred_host is not None and preferred_host.strip():
         return preferred_host.strip(), False
@@ -313,7 +286,6 @@ def handle_server_batch(
 
 def run_server(args: argparse.Namespace) -> int:
     hf_path = resolve_hf_path()
-    stop_running_server_if_needed(hf_path)
     sizes = parse_sizes(args.sizes)
     labels = [human_size(size) for size in sizes]
     size_by_label = dict(zip(labels, sizes, strict=True))
@@ -514,7 +486,6 @@ def run_client(args: argparse.Namespace) -> int:
 
 def run_local(args: argparse.Namespace) -> int:
     hf_path = resolve_hf_path()
-    stop_running_server_if_needed(hf_path)
     local_host, used_loopback_fallback = resolve_local_perf_host(args.control_host)
 
     if used_loopback_fallback:
