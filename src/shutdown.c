@@ -1,5 +1,6 @@
 #include "shutdown.h"
 
+#include <stdatomic.h>
 #include <stddef.h>
 #include <signal.h>
 
@@ -7,13 +8,13 @@
   #include <windows.h>
 #endif
 
-static volatile sig_atomic_t g_shutdown_requested = 0;
-static volatile sig_atomic_t g_shutdown_signal = 0;
+static _Atomic int g_shutdown_requested = 0;
+static _Atomic int g_shutdown_signal = 0;
 
 static void shutdown_set_requested(int sig) {
-  g_shutdown_requested = 1;
+  atomic_store(&g_shutdown_requested, 1);
   if (sig != 0) {
-    g_shutdown_signal = sig;
+    atomic_store(&g_shutdown_signal, sig);
   }
 }
 
@@ -37,8 +38,8 @@ static void shutdown_signal_handler(int sig) {
 #endif
 
 int shutdown_init(void) {
-  g_shutdown_requested = 0;
-  g_shutdown_signal = 0;
+  atomic_store(&g_shutdown_requested, 0);
+  atomic_store(&g_shutdown_signal, 0);
 
 #ifdef _WIN32
   if (SetConsoleCtrlHandler(shutdown_console_handler, TRUE) == 0) {
@@ -78,11 +79,11 @@ void shutdown_request(void) {
 }
 
 int shutdown_requested(void) {
-  return g_shutdown_requested ? 1 : 0;
+  return atomic_load(&g_shutdown_requested) ? 1 : 0;
 }
 
 int shutdown_signal_number(void) {
-  return (int)g_shutdown_signal;
+  return atomic_load(&g_shutdown_signal);
 }
 
 int shutdown_exit_code(void) {

@@ -16,11 +16,13 @@
 #ifdef _WIN32
   #include <process.h>
 #else
+  #include <netinet/tcp.h>
   #include <sys/time.h>
   #include <unistd.h>
 #endif
 
 #define CLIENT_SOCKET_TIMEOUT_MS 30000u
+#define CLIENT_SNDBUF_SIZE (256 * 1024)
 
 static const char *client_protocol_result_name(protocol_result_t res) {
   switch (res) {
@@ -290,6 +292,22 @@ static int client_connect(const char *ip, uint16_t port, socket_t *sock_out) {
     sock_perror("setsockopt(client_timeout)");
     socket_close(sock);
     return 1;
+  }
+
+  {
+    int flag = 1;
+    int sndbuf = CLIENT_SNDBUF_SIZE;
+#ifdef _WIN32
+    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
+               (const char *)&flag, sizeof(flag));
+    setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
+               (const char *)&sndbuf, sizeof(sndbuf));
+#else
+    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
+               &flag, sizeof(flag));
+    setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
+               &sndbuf, sizeof(sndbuf));
+#endif
   }
 
   *sock_out = sock;

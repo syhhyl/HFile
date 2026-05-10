@@ -20,6 +20,7 @@
   #include <io.h>
   #include <process.h>
 #else
+  #include <netinet/tcp.h>
   #include <pthread.h>
   #include <unistd.h>
 #endif
@@ -210,6 +211,22 @@ static void *server_connection_thread_main(void *arg) {
 
   free(ctx);
 
+  {
+    int flag = 1;
+    int rcvbuf = 256 * 1024;
+#ifdef _WIN32
+    setsockopt(conn, IPPROTO_TCP, TCP_NODELAY,
+               (const char *)&flag, sizeof(flag));
+    setsockopt(conn, SOL_SOCKET, SO_RCVBUF,
+               (const char *)&rcvbuf, sizeof(rcvbuf));
+#else
+    setsockopt(conn, IPPROTO_TCP, TCP_NODELAY,
+               &flag, sizeof(flag));
+    setsockopt(conn, SOL_SOCKET, SO_RCVBUF,
+               &rcvbuf, sizeof(rcvbuf));
+#endif
+  }
+
   switch (server_detect_connection_kind(conn)) {
     case SERVER_CONN_KIND_PROTOCOL:
       (void)handle_protocol_connection(conn, &opt);
@@ -390,7 +407,7 @@ static int server_run_listener(socket_t sock, const server_opt_t *ser_opt) {
       break;
     }
 
-    if (net_wait_readable(sock, 250u, &ready) != 0) {
+    if (net_wait_readable(sock, 50u, &ready) != 0) {
       if (shutdown_requested()) {
         exit_code = shutdown_exit_code();
         break;
