@@ -159,13 +159,11 @@ int daemon_state_write(const daemon_state_t *state) {
                "pid=%ld\n"
                "receive_dir=%s\n"
                "port=%u\n"
-               "web_url=%s\n"
                "log_path=%s\n"
                "daemon_mode=%d\n",
                state->pid,
                state->receive_dir,
                (unsigned)state->port,
-               state->web_url,
                state->log_path,
                state->daemon_mode);
   if (n < 0 || (size_t)n >= sizeof(text)) {
@@ -211,8 +209,6 @@ int daemon_state_read(daemon_state_t *state) {
         daemon_state_copy_str(state->receive_dir, sizeof(state->receive_dir), value) == 0;
     } else if (strcmp(line, "port") == 0) {
       have_port = daemon_state_parse_u16(value, &state->port) == 0 && state->port != 0;
-    } else if (strcmp(line, "web_url") == 0) {
-      (void)daemon_state_copy_str(state->web_url, sizeof(state->web_url), value);
     } else if (strcmp(line, "log_path") == 0) {
       (void)daemon_state_copy_str(state->log_path, sizeof(state->log_path), value);
     } else if (strcmp(line, "daemon_mode") == 0) {

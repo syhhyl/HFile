@@ -43,12 +43,6 @@ protocol_result_t app_receive_file(socket_t conn,
                                        "recv(file_body)",
                                        "protocol error: unexpected EOF while receiving file",
                                        saved_path_out, saved_path_cap);
-
-    case APP_UPLOAD_HTTP:
-      return transfer_recv_socket_http_file(conn, base_dir, target_path,
-                                            content_size, "recv(http_body)",
-                                            "http upload ended early",
-                                            saved_path_out, saved_path_cap);
   }
 
   return PROTOCOL_ERR_INVALID_ARGUMENT;

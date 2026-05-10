@@ -455,7 +455,3 @@ class HFileServer:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.stop()
-
-    @property
-    def http_url(self) -> str:
-        return f"http://{self.host}:{self.port}"

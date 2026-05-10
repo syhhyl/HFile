@@ -1055,7 +1055,6 @@ class TestTransferProtocol(TransferTestCase):
                 log_text = tail_text_file(server.log_path or Path(""))
                 if os.name != "nt":
                     self.assertIn("shutdown requested, stopping server", log_text)
-                self.assertNotIn("http server stopped unexpectedly", log_text)
 
                 leftovers = [p.name for p in out_dir.iterdir() if ".tmp." in p.name]
                 self.assertFalse(

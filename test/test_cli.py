@@ -266,7 +266,6 @@ class TestCLI(unittest.TestCase):
                 f"pid={stale_pid}\n"
                 f"receive_dir=/tmp\n"
                 f"port=8888\n"
-                f"web_url=http://127.0.0.1:8888/\n"
                 f"log_path=/tmp/hf-daemon.log\n"
                 f"daemon_mode=1\n",
                 encoding="utf-8",

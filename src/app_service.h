@@ -10,7 +10,6 @@
 
 typedef enum {
   APP_UPLOAD_PROTOCOL = 0,
-  APP_UPLOAD_HTTP,
 } app_upload_kind_t;
 
 typedef struct {

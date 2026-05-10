@@ -13,76 +13,6 @@
   #include <unistd.h>
 #endif
 
-static protocol_result_t transfer_recv_socket_http_file_buffered(
-  socket_t conn,
-  int out,
-  uint64_t content_size,
-  const char *recv_ctx,
-  const char *short_read_message) {
-  char stack_buf[STACK_BUF_SIZE];
-  char *heap_buf = NULL;
-  char *buf = stack_buf;
-  size_t buf_cap = STACK_BUF_SIZE;
-  uint64_t remaining = content_size;
-
-  if (content_size > HEAP_THRESHOLD) {
-    heap_buf = (char *)malloc(HEAP_BUF_SIZE);
-    if (heap_buf == NULL) {
-      fprintf(stderr, "heap buf malloc failed\n");
-      return PROTOCOL_ERR_ALLOC;
-    }
-    buf = heap_buf;
-    buf_cap = HEAP_BUF_SIZE;
-  }
-
-  while (remaining > 0) {
-    size_t want = buf_cap;
-    if ((uint64_t)want > remaining) {
-      want = (size_t)remaining;
-    }
-
-#ifdef _WIN32
-    int tmp = recv(conn, buf, (int)want, 0);
-    if (tmp == SOCKET_ERROR) {
-      int err = WSAGetLastError();
-      if (err == WSAEINTR) {
-        continue;
-      }
-      sock_perror(recv_ctx);
-      free(heap_buf);
-      return PROTOCOL_ERR_IO;
-    }
-    ssize_t n = (ssize_t)tmp;
-#else
-    ssize_t n = recv(conn, buf, want, 0);
-    if (n < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      sock_perror(recv_ctx);
-      free(heap_buf);
-      return PROTOCOL_ERR_IO;
-    }
-#endif
-    if (n == 0) {
-      fprintf(stderr, "%s\n", short_read_message);
-      free(heap_buf);
-      return PROTOCOL_ERR_EOF;
-    }
-
-    if (fs_write_all(out, buf, (size_t)n) != n) {
-      perror("write_all");
-      free(heap_buf);
-      return PROTOCOL_ERR_IO;
-    }
-
-    remaining -= (uint64_t)n;
-  }
-
-  free(heap_buf);
-  return PROTOCOL_OK;
-}
-
 static protocol_result_t transfer_prepare_output(const char *base_dir,
                                                  const char *file_name,
                                                  char *full_path,
@@ -205,55 +135,6 @@ protocol_result_t transfer_recv_socket_file(socket_t conn,
   } else {
     result = PROTOCOL_ERR_IO;
   }
-  if (result != PROTOCOL_OK) {
-    goto CLEANUP;
-  }
-
-  result = transfer_finalize_output(&out, tmp_path, full_path, full_path_out,
-                                    full_path_cap);
-  if (result != PROTOCOL_OK) {
-    goto CLEANUP;
-  }
-
-  result = PROTOCOL_OK;
-
-CLEANUP:
-  if (out != -1) {
-    fs_close(out);
-  }
-  if (result != PROTOCOL_OK && tmp_path[0] != '\0') {
-    fs_remove_ignore_error(tmp_path);
-  }
-  return result;
-}
-
-protocol_result_t transfer_recv_socket_http_file(socket_t conn,
-                                                 const char *base_dir,
-                                                 const char *file_name,
-                                                 uint64_t content_size,
-                                                 const char *recv_ctx,
-                                                 const char *short_read_message,
-                                                 char *full_path_out,
-                                                 size_t full_path_cap) {
-  char full_path[4096];
-  char tmp_path[4096];
-  int out = -1;
-  protocol_result_t result = PROTOCOL_ERR_IO;
-
-  if (base_dir == NULL || file_name == NULL || recv_ctx == NULL ||
-      short_read_message == NULL || full_path_out == NULL || full_path_cap == 0) {
-    return PROTOCOL_ERR_INVALID_ARGUMENT;
-  }
-
-  tmp_path[0] = '\0';
-  result = transfer_prepare_output(base_dir, file_name, full_path, sizeof(full_path),
-                                   tmp_path, sizeof(tmp_path), &out);
-  if (result != PROTOCOL_OK) {
-    return result;
-  }
-
-  result = transfer_recv_socket_http_file_buffered(
-    conn, out, content_size, recv_ctx, short_read_message);
   if (result != PROTOCOL_OK) {
     goto CLEANUP;
   }

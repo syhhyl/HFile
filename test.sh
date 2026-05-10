@@ -10,7 +10,6 @@ Short suites:
   full      Run the full documented test suite
   support   Run shared test helper tests
   cli       Run CLI tests
-  http      Run HTTP tests
   transfer  Run transfer tests
   perf      Run local benchmark end-to-end (prefer LAN IPv4, fallback localhost)
   perf-server  Run benchmark receive server
@@ -46,10 +45,6 @@ case "$1" in
   cli)
     shift
     exec python3 -m unittest -v test.test_cli "$@"
-    ;;
-  http)
-    shift
-    exec python3 -m unittest -v test.test_http "$@"
     ;;
   transfer)
     shift

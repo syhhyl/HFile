@@ -7,7 +7,6 @@
 typedef struct {
   long pid;
   char receive_dir[4096];
-  char web_url[256];
   char log_path[4096];
   uint16_t port;
   int daemon_mode;
