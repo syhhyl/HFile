@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import os
-import socket
-import subprocess
 import unittest
 from pathlib import Path
 
@@ -124,57 +121,7 @@ class TestCLI(unittest.TestCase):
         )
         self.assertIn("open", r.stderr)
 
-    @unittest.skipIf(
-        os.name != "nt", "POSIX port reuse behavior differs by platform"
-    )
-    def test_server_start_failure_is_not_reported_as_signal_exit(self) -> None:
-        with make_temp_dir(prefix="hf_cli_bind_") as tmp_dir:
-            out_dir = Path(tmp_dir) / "out"
-            out_dir.mkdir()
-
-            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-                listener.bind(("127.0.0.1", 0))
-                listener.listen(1)
-                port = listener.getsockname()[1]
-
-                r = run_hf(
-                    self.hf_path, ["-d", out_dir, "-p", str(port)], timeout=10.0
-                )
-            except subprocess.TimeoutExpired:
-                try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(1.0)
-                    sock.connect(("127.0.0.1", port))
-                    sock.close()
-                    self.fail(
-                        f"server is running on port {port} - "
-                        "SO_EXCLUSIVEADDRUSE failed to prevent rebind; "
-                        "test scenario requires Windows exclusive port binding"
-                    )
-                except ConnectionRefusedError:
-                    self.fail(
-                        "server process timed out but port is not accepting connections; "
-                        "bind may have failed but process did not exit properly"
-                    )
-                except OSError:
-                    self.fail(
-                        "server process did not exit within 10s after bind failure"
-                    )
-            finally:
-                listener.close()
-
-        self.assertEqual(
-            r.returncode,
-            1,
-            f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
-        )
-
     def test_client_rejects_directory_source(self) -> None:
-        if os.name == "nt":
-            self.skipTest("directory open behavior differs on Windows")
         with make_temp_dir(prefix="hf_cli_") as tmp_dir:
             src_dir = Path(tmp_dir) / "source-dir"
             src_dir.mkdir()

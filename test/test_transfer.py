@@ -595,17 +595,11 @@ class TestTransferProtocol(TransferTestCase):
             )
             server.start(startup_timeout=5.0)
             try:
-                if os.name == "nt":
-                    proc = server.proc
-                    proc.terminate()
-                    proc.wait(timeout=5.0)
-                else:
-                    os.kill(server.pid, signal.SIGINT)
-                    server.proc.wait(timeout=5.0)
+                os.kill(server.pid, signal.SIGINT)
+                server.proc.wait(timeout=5.0)
 
                 log_text = tail_text_file(server.log_path or Path(""))
-                if os.name != "nt":
-                    self.assertIn("shutdown requested, stopping server", log_text)
+                self.assertIn("shutdown requested, stopping server", log_text)
 
                 leftovers = [p.name for p in out_dir.iterdir() if ".tmp." in p.name]
                 self.assertFalse(

@@ -1,3 +1,4 @@
+#include "discovery.h"
 #include "net.h"
 #include "protocol.h"
 #include "shutdown.h"
@@ -15,28 +16,15 @@
 
 #include "fs.h"
 
-#ifdef _WIN32
-  #include <io.h>
-  #include <process.h>
-#else
-  #include <netinet/tcp.h>
-  #include <pthread.h>
-  #include <unistd.h>
-#endif
+#include <netinet/tcp.h>
+#include <pthread.h>
+#include <unistd.h>
 
 typedef struct {
   socket_t conn;
   server_opt_t opt;
   server_conn_entry_t *entry;
 } server_conn_ctx_t;
-
-typedef struct {
-#ifdef _WIN32
-  HANDLE handle;
-#else
-  pthread_t tid;
-#endif
-} server_thread_t;
 
 static protocol_result_t server_handle_file_transfer(
   socket_t conn,
@@ -48,16 +36,10 @@ static protocol_result_t server_send_response(socket_t conn,
                                               protocol_result_t error_code);
 
 static int server_set_connection_recv_timeout(socket_t conn, uint32_t timeout_ms) {
-#ifdef _WIN32
-  DWORD timeout = (DWORD)timeout_ms;
-  return setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO,
-                    (const char *)&timeout, sizeof(timeout)) == SOCKET_ERROR ? 1 : 0;
-#else
   struct timeval tv;
   tv.tv_sec = (time_t)(timeout_ms / 1000u);
   tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
   return setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0 ? 1 : 0;
-#endif
 }
 
 static inline int create_listener_socket(
@@ -79,17 +61,8 @@ static inline int create_listener_socket(
     return 1;
   }
 
-#ifdef _WIN32
-  if (setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&opt,
-                 sizeof(opt)) == SOCKET_ERROR) {
-#else
   if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-#endif
-#ifdef _WIN32
-    sock_perror("setsockopt(SO_EXCLUSIVEADDRUSE)");
-#else
     sock_perror("setsockopt(SO_REUSEADDR)");
-#endif
     socket_close(sock);
     return 1;
   }
@@ -99,21 +72,13 @@ static inline int create_listener_socket(
   addr.sin_port = htons(port);
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-#ifdef _WIN32
-  if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
-#else
   if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-#endif
     sock_perror("bind");
     socket_close(sock);
     return 1;
   }
 
-#ifdef _WIN32
-  if (listen(sock, 4) == SOCKET_ERROR) {
-#else
   if (listen(sock, 4) == -1) {
-#endif
     sock_perror("listen");
     socket_close(sock);
     return 1;
@@ -152,11 +117,7 @@ static int handle_protocol_connection(socket_t conn,
   return 1;
 }
 
-#ifdef _WIN32
-static unsigned __stdcall server_connection_thread_main(void *arg) {
-#else
 static void *server_connection_thread_main(void *arg) {
-#endif
   server_conn_ctx_t *ctx = (server_conn_ctx_t *)arg;
   socket_t conn = ctx->conn;
   server_opt_t opt = ctx->opt;
@@ -167,17 +128,10 @@ static void *server_connection_thread_main(void *arg) {
   {
     int flag = 1;
     int rcvbuf = 256 * 1024;
-#ifdef _WIN32
-    setsockopt(conn, IPPROTO_TCP, TCP_NODELAY,
-               (const char *)&flag, sizeof(flag));
-    setsockopt(conn, SOL_SOCKET, SO_RCVBUF,
-               (const char *)&rcvbuf, sizeof(rcvbuf));
-#else
     setsockopt(conn, IPPROTO_TCP, TCP_NODELAY,
                &flag, sizeof(flag));
     setsockopt(conn, SOL_SOCKET, SO_RCVBUF,
                &rcvbuf, sizeof(rcvbuf));
-#endif
   }
 
   (void)handle_protocol_connection(conn, &opt);
@@ -185,11 +139,7 @@ static void *server_connection_thread_main(void *arg) {
   socket_close(conn);
   server_conn_tracker_end(entry);
 
-#ifdef _WIN32
-  return 0;
-#else
   return NULL;
-#endif
 }
 
 static int server_start_connection_thread(socket_t conn,
@@ -215,26 +165,15 @@ static int server_start_connection_thread(socket_t conn,
   ctx->opt = *ser_opt;
   ctx->entry = entry;
 
-#ifdef _WIN32
-  uintptr_t handle = _beginthreadex(NULL, 0, server_connection_thread_main, ctx, 0, NULL);
-  if (handle == 0) {
-    fprintf(stderr, "_beginthreadex(server_conn) failed\n");
-    server_conn_tracker_end(entry);
-    free(ctx);
-    return 1;
-  }
-  CloseHandle((HANDLE)handle);
-#else
-  server_thread_t thread = {0};
-  int err = pthread_create(&thread.tid, NULL, server_connection_thread_main, ctx);
+  pthread_t tid;
+  int err = pthread_create(&tid, NULL, server_connection_thread_main, ctx);
   if (err != 0) {
     fprintf(stderr, "pthread_create(server_conn): %s\n", strerror(err));
     server_conn_tracker_end(entry);
     free(ctx);
     return 1;
   }
-  (void)pthread_detach(thread.tid);
-#endif
+  (void)pthread_detach(tid);
 
   return 0;
 }
@@ -329,6 +268,10 @@ static protocol_result_t server_handle_file_transfer(
     goto CLEANUP;
   }
 
+  fprintf(stdout, "received  %s  %llu bytes\n",
+          file_name, (unsigned long long)content_size);
+  fflush(stdout);
+
   result = PROTOCOL_OK;
   goto CLEANUP;
 
@@ -343,45 +286,65 @@ CLEANUP:
   return result;
 }
 
-static int server_run_listener(socket_t sock, const server_opt_t *ser_opt) {
+static int server_run_listener(socket_t tcp_sock, socket_t discovery_sock,
+                                const server_opt_t *ser_opt) {
   int exit_code = 0;
+  int has_discovery = is_socket_invalid(discovery_sock) ? 0 : 1;
 
   for (;;) {
-    int ready = 0;
     if (shutdown_requested()) {
       exit_code = shutdown_exit_code();
       break;
     }
 
-    if (net_wait_readable(sock, 50u, &ready) != 0) {
+    fd_set readfds;
+    FD_ZERO(&readfds);
+
+    FD_SET(tcp_sock, &readfds);
+    if (has_discovery) {
+      FD_SET(discovery_sock, &readfds);
+    }
+
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 50000;
+
+    int maxfd = (int)tcp_sock;
+    if (has_discovery) {
+      if (discovery_sock > maxfd) maxfd = discovery_sock;
+    }
+
+    int rc = select(maxfd + 1, &readfds, NULL, NULL, &tv);
+    if (rc < 0) {
+      if (errno == EINTR) continue;
       if (shutdown_requested()) {
         exit_code = shutdown_exit_code();
         break;
       }
-      sock_perror("select(accept)");
+      sock_perror("select");
       exit_code = 1;
       continue;
     }
-    if (!ready) {
-      continue;
+
+    if (rc == 0) continue;
+
+    if (has_discovery) {
+      int disc_ready = FD_ISSET(discovery_sock, &readfds) ? 1 : 0;
+      if (disc_ready) {
+        discovery_server_handle(discovery_sock, ser_opt->port);
+      }
     }
 
-    socket_t conn = accept(sock, NULL, NULL);
-#ifdef _WIN32
-    if (is_socket_invalid(conn)) {
-      if (WSAGetLastError() == WSAEINTR) continue;
-      if (shutdown_requested()) {
-        exit_code = shutdown_exit_code();
-        break;
-      }
-#else
+    int tcp_ready = FD_ISSET(tcp_sock, &readfds) ? 1 : 0;
+    if (!tcp_ready) continue;
+
+    socket_t conn = accept(tcp_sock, NULL, NULL);
     if (is_socket_invalid(conn)) {
       if (errno == EINTR) continue;
       if (shutdown_requested()) {
         exit_code = shutdown_exit_code();
         break;
       }
-#endif
       sock_perror("accept");
       continue;
     }
@@ -396,14 +359,11 @@ static int server_run_listener(socket_t sock, const server_opt_t *ser_opt) {
 }
 
 static long server_current_pid_long(void) {
-#ifdef _WIN32
-  return (long)_getpid();
-#else
   return (long)getpid();
-#endif
 }
 
-static void server_print_access_details(const server_opt_t *ser_opt, long pid) {
+static void server_print_access_details(const server_opt_t *ser_opt, long pid,
+                                         int discovery_ok) {
   if (ser_opt == NULL || ser_opt->path == NULL) {
     return;
   }
@@ -412,6 +372,10 @@ static void server_print_access_details(const server_opt_t *ser_opt, long pid) {
   fprintf(stdout, "  Receive Dir  %s\n", ser_opt->path);
   fprintf(stdout, "  Port         %u\n", (unsigned)ser_opt->port);
   fprintf(stdout, "  PID          %ld\n", pid);
+  if (discovery_ok) {
+    fprintf(stdout, "  Discovery    on (port %u)\n",
+            (unsigned)(ser_opt->port + 1));
+  }
   fflush(stdout);
 }
 
@@ -419,11 +383,7 @@ static void server_print_shutdown_notice(void) {
   int add_leading_newline = 0;
 
   if (shutdown_signal_number() == SIGINT) {
-#ifdef _WIN32
-    add_leading_newline = _isatty(_fileno(stderr)) ? 1 : 0;
-#else
     add_leading_newline = isatty(fileno(stderr)) ? 1 : 0;
-#endif
   }
 
   if (add_leading_newline) {
@@ -435,6 +395,7 @@ static void server_print_shutdown_notice(void) {
 
 static int server_run_process(const server_opt_t *ser_opt) {
   int exit_code = 0;
+  int discovery_ok = 0;
 
   if (ser_opt->path == NULL || strlen(ser_opt->path) == 0) {
     exit_code = 1;
@@ -447,17 +408,26 @@ static int server_run_process(const server_opt_t *ser_opt) {
     goto CLEAN_UP;
   }
 
-  socket_t sock;
-  socket_init(&sock);
+  socket_t tcp_sock;
+  socket_init(&tcp_sock);
 
-  if (create_listener_socket(ser_opt->port, &sock) != 0) {
+  socket_t discovery_sock;
+  socket_init(&discovery_sock);
+
+  if (create_listener_socket(ser_opt->port, &tcp_sock) != 0) {
     exit_code = 1;
     goto CLOSE_SOCK;
   }
 
-  server_print_access_details(ser_opt, server_current_pid_long());
+  if (ser_opt->port < 65535u) {
+    if (discovery_server_open(&discovery_sock, (uint16_t)(ser_opt->port + 1u)) == 0) {
+      discovery_ok = 1;
+    }
+  }
 
-  exit_code = server_run_listener(sock, ser_opt);
+  server_print_access_details(ser_opt, server_current_pid_long(), discovery_ok);
+
+  exit_code = server_run_listener(tcp_sock, discovery_sock, ser_opt);
   if (shutdown_requested()) {
     server_print_shutdown_notice();
   }
@@ -465,7 +435,10 @@ static int server_run_process(const server_opt_t *ser_opt) {
 CLOSE_SOCK:
   shutdown_request();
 
-  socket_close(sock);
+  socket_close(tcp_sock);
+  if (discovery_ok) {
+    discovery_server_close(discovery_sock);
+  }
   server_conn_tracker_shutdown_all();
   server_conn_tracker_wait_idle();
 

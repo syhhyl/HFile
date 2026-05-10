@@ -10,24 +10,6 @@
 int main(int argc, char **argv) {
   int ret = 1;
 
-#ifdef _WIN32
-  int win_argc = 0;
-  char **win_argv = NULL;
-  if (load_windows_utf8_argv(&win_argc, &win_argv) != 0) {
-    fprintf(stderr, "failed to read command line arguments\n");
-    return 1;
-  }
-  argc = win_argc;
-  argv = win_argv;
-  
-  WSADATA wsa;
-  if (WSAStartup(MAKELANGID(2, 2), &wsa) != 0) { 
-    fprintf(stderr, "WSAStartup failed\n");
-    goto CLEAN_UP;
-  }
-  
-#endif
-
   if (shutdown_init() != 0) {
     fprintf(stderr, "failed to initialize shutdown handler\n");
     goto CLEAN_UP;
@@ -56,11 +38,6 @@ int main(int argc, char **argv) {
 
 CLEAN_UP:
   shutdown_cleanup();
-
-#ifdef _WIN32
-  WSACleanup();
-  free_windows_argv(win_argv, win_argc);
-#endif
 
   return ret;
 }

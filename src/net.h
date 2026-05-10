@@ -6,29 +6,12 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#ifdef _WIN32
-  #include <winsock2.h>
-  #include <ws2tcpip.h>
-  typedef SOCKET socket_t;
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
-  // ssize_t is POSIX; provide it on Windows toolchains that lack it.
-  #if defined(__MINGW32__) || defined(__MINGW64__)
-    #include <sys/types.h>
-  #else
-    #include <BaseTsd.h>
-    typedef SSIZE_T ssize_t;
-  #endif
-
-   
-#else
-  #include <sys/socket.h>
-  #include <netinet/in.h>
-  #include <arpa/inet.h>
-  #include <sys/types.h>
-  typedef int socket_t;
-
-
-#endif
+typedef int socket_t;
 
 #define CHUNK_SIZE 1024 * 1024
 

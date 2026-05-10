@@ -16,28 +16,11 @@ from typing import Sequence
 
 def resolve_hf_path(
     root: os.PathLike[str] | str | None = None,
-    *,
-    target_os: str | None = None,
 ) -> Path:
-    """Resolve the hf binary path.
-
-    Prefer the runnable repo-local binary for the requested target OS.
-    """
+    """Resolve the hf binary path."""
 
     search_root = Path(root) if root is not None else Path.cwd()
-    resolved_target = target_os
-    if resolved_target is None:
-        resolved_target = "windows" if os.name == "nt" else "posix"
-
-    if resolved_target == "windows":
-        candidates = [
-            search_root / "build" / "hf.exe",
-            search_root / "build" / "hf",
-        ]
-    elif resolved_target == "posix":
-        candidates = [search_root / "build" / "hf"]
-    else:
-        raise ValueError(f"unsupported target_os: {resolved_target}")
+    candidates = [search_root / "build" / "hf"]
 
     for candidate in candidates:
         if candidate.is_file():

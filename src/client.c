@@ -1,5 +1,6 @@
 #include "client.h"
 
+#include "discovery.h"
 #include "fs.h"
 #include "net.h"
 #include "protocol.h"
@@ -12,14 +13,9 @@
 #include <string.h>
 
 #include <sys/stat.h>
-
-#ifdef _WIN32
-  #include <process.h>
-#else
-  #include <netinet/tcp.h>
-  #include <sys/time.h>
-  #include <unistd.h>
-#endif
+#include <netinet/tcp.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #define CLIENT_SOCKET_TIMEOUT_MS 30000u
 #define CLIENT_SNDBUF_SIZE (256 * 1024)
@@ -168,17 +164,6 @@ static int client_recv_checked_response(socket_t sock,
 }
 
 static int client_set_socket_timeouts(socket_t sock, uint32_t timeout_ms) {
-#ifdef _WIN32
-  DWORD timeout = (DWORD)timeout_ms;
-  if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout,
-                 sizeof(timeout)) == SOCKET_ERROR) {
-    return 1;
-  }
-  if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout,
-                 sizeof(timeout)) == SOCKET_ERROR) {
-    return 1;
-  }
-#else
   struct timeval tv;
   tv.tv_sec = (time_t)(timeout_ms / 1000u);
   tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
@@ -188,7 +173,6 @@ static int client_set_socket_timeouts(socket_t sock, uint32_t timeout_ms) {
   if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
     return 1;
   }
-#endif
   return 0;
 }
 
@@ -266,11 +250,7 @@ static int client_connect(const char *ip, uint16_t port, socket_t *sock_out) {
     return 1;
   }
 
-#ifdef _WIN32
-  if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
-#else
   if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-#endif
     sock_perror("connect");
     socket_close(sock);
     return 1;
@@ -285,17 +265,10 @@ static int client_connect(const char *ip, uint16_t port, socket_t *sock_out) {
   {
     int flag = 1;
     int sndbuf = CLIENT_SNDBUF_SIZE;
-#ifdef _WIN32
-    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
-               (const char *)&flag, sizeof(flag));
-    setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
-               (const char *)&sndbuf, sizeof(sndbuf));
-#else
     setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
                &flag, sizeof(flag));
     setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
                &sndbuf, sizeof(sndbuf));
-#endif
   }
 
   *sock_out = sock;
@@ -303,32 +276,19 @@ static int client_connect(const char *ip, uint16_t port, socket_t *sock_out) {
 }
 
 static int client_get_file_size(int in, uint64_t *content_size_out) {
-#ifdef _WIN32
-  struct _stat64 st;
-#else
   struct stat st;
-#endif
 
   if (content_size_out == NULL) {
     fprintf(stderr, "invalid file size output\n");
     return 1;
   }
 
-#ifdef _WIN32
-  if (_fstat64(in, &st) != 0) {
-    perror("_fstat64");
-#else
   if (fstat(in, &st) != 0) {
     perror("fstat");
-#endif
     return 1;
   }
 
-#ifdef _WIN32
-  if ((st.st_mode & _S_IFMT) != _S_IFREG || st.st_size < 0) {
-#else
   if (!S_ISREG(st.st_mode) || st.st_size < 0) {
-#endif
     fprintf(stderr, "invalid source file\n");
     return 1;
   }
@@ -377,11 +337,7 @@ static int client_send_file_raw(const client_opt_t *opt) {
     goto CLEAN_UP;
   }
 
-#ifdef _WIN32
-  in = fs_open(path, O_RDONLY | O_BINARY, 0);
-#else
   in = fs_open(path, O_RDONLY, 0);
-#endif
   if (in == -1) {
     perror("open");
     exit_code = 1;
@@ -405,7 +361,24 @@ static int client_send_file_raw(const client_opt_t *opt) {
     goto CLEAN_UP;
   }
 
-  if (client_connect(opt->ip, opt->port, &sock) != 0) {
+  char discovered_ip[64];
+  const char *connect_ip = opt->ip;
+  uint16_t connect_port = opt->port;
+
+  if (connect_ip == NULL) {
+    uint16_t discovery_port = (opt->port < 65535u) ? (uint16_t)(opt->port + 1u) : opt->port;
+    if (discovery_client_find(discovery_port, discovered_ip,
+                               sizeof(discovered_ip), &connect_port) != 0) {
+      fprintf(stderr, "no HFile server found on LAN\n");
+      exit_code = 1;
+      goto CLEAN_UP;
+    }
+    connect_ip = discovered_ip;
+    fprintf(stdout, "discovered server at %s:%u\n", connect_ip,
+            (unsigned)connect_port);
+  }
+
+  if (client_connect(connect_ip, connect_port, &sock) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
@@ -415,7 +388,7 @@ static int client_send_file_raw(const client_opt_t *opt) {
 
   uint8_t file_prefix_buf[sizeof(uint16_t) + HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
   protocol_result_t proto_res = encode_file_prefix(file_name, content_size,
-                                                   file_prefix_buf);
+                                                    file_prefix_buf);
   if (proto_res != PROTOCOL_OK) {
     fprintf(stderr, "failed to encode file_prefix\n");
     exit_code = 1;
@@ -442,15 +415,9 @@ static int client_send_file_raw(const client_opt_t *opt) {
     goto CLEAN_UP;
   }
 
-#ifdef _WIN32
-  if (shutdown(sock, SD_SEND) == SOCKET_ERROR) {
-    sock_perror("shutdown(SD_SEND)");
-  }
-#else
   if (shutdown(sock, SHUT_WR) < 0) {
     sock_perror("shutdown(SHUT_WR)");
   }
-#endif
   if (client_recv_checked_response(sock, PROTO_PHASE_FINAL, "transfer", &r_f) != 0) {
     exit_code = 1;
     goto CLEAN_UP;

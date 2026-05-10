@@ -8,6 +8,7 @@ add_executable(hf
   src/server_conn_tracker.c
   src/transfer_io.c
   src/client.c
+  src/discovery.c
   src/protocol.c
   src/cli.c
   src/net.c
@@ -20,18 +21,10 @@ target_include_directories(hf PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 )
 
-if (MSVC)
-  target_compile_options(hf PRIVATE /W4)
-else()
-  target_compile_options(hf PRIVATE -Wall -Wextra)
-endif()
+target_compile_options(hf PRIVATE -Wall -Wextra)
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-  target_link_libraries(hf PRIVATE ws2_32 shell32)
-else()
-  find_package(Threads REQUIRED)
-  target_link_libraries(hf PRIVATE Threads::Threads)
-endif()
+find_package(Threads REQUIRED)
+target_link_libraries(hf PRIVATE Threads::Threads)
 
 target_compile_definitions(hf PRIVATE
   $<$<CONFIG:Debug>:DEBUG>

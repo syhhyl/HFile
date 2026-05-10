@@ -4,75 +4,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#include <shellapi.h>
-
-void free_windows_argv(char **argv, int argc) {
-  if (argv == NULL) {
-    return;
-  }
-
-  for (int i = 0; i < argc; i++) {
-    free(argv[i]);
-  }
-  free(argv);
-}
-
-int load_windows_utf8_argv(int *argc_out, char ***argv_out) {
-  int argc = 0;
-  wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
-  if (wargv == NULL) {
-    return 1;
-  }
-
-  char **argv = (char **)calloc((size_t)argc + 1, sizeof(*argv));
-  if (argv == NULL) {
-    LocalFree(wargv);
-    return 1;
-  }
-
-  for (int i = 0; i < argc; i++) {
-    int size = WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, NULL, 0, NULL, NULL);
-    if (size <= 0) {
-      free_windows_argv(argv, argc);
-      LocalFree(wargv);
-      return 1;
-    }
-
-    argv[i] = (char *)malloc((size_t)size);
-    if (argv[i] == NULL) {
-      free_windows_argv(argv, argc);
-      LocalFree(wargv);
-      return 1;
-    }
-
-    if (WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, argv[i], size, NULL, NULL) <= 0) {
-      free_windows_argv(argv, argc);
-      LocalFree(wargv);
-      return 1;
-    }
-  }
-
-  LocalFree(wargv);
-  *argc_out = argc;
-  *argv_out = argv;
-  return 0;
-}
-#endif
-
 void usage(const char *argv0) {
   fprintf(stderr,
     "HFile — fast file transfer over LAN\n"
     "\n"
     "usage:\n"
-    "  %s -d <dir>  [-p <port>]     start receive server\n"
-    "  %s -c <file> [-i <ip>] [-p <port>]  upload a file\n"
+    "  %s -d <dir>  [-p <port>]    start receive server\n"
+    "  %s -c <file> [-p <port>]    upload a file\n"
     "\n"
     "options:\n"
     "  -d <dir>   receive directory (foreground server)\n"
     "  -c <file>  file to upload\n"
-    "  -i <ip>    server address (default 127.0.0.1)\n"
     "  -p <port>  port number (default 8888)\n"
     "  -h         show this help\n"
     "\n"
@@ -114,7 +56,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   if (opt == NULL) return PARSE_ERR;
 
   opt->path = NULL;
-  opt->ip = "127.0.0.1";
+  opt->ip = NULL;
   opt->port = 8888;
 
   int server_selected = 0;

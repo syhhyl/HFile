@@ -12,24 +12,18 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
-#ifndef _WIN32
-  #include <unistd.h>
-  #if defined(__linux__)
-    #include <sys/sendfile.h>
-  #elif defined(__APPLE__)
-    #include <sys/socket.h>
-    #include <sys/uio.h>
-  #endif
+#if defined(__linux__)
+  #include <sys/sendfile.h>
+#elif defined(__APPLE__)
+  #include <sys/socket.h>
+  #include <sys/uio.h>
 #endif
 
 
 bool is_socket_invalid(socket_t sock) {
-#ifdef _WIN32
-  if (sock == INVALID_SOCKET) return true;
-#else
   if (sock < 0) return true;
-#endif
   return false;
 }
 ssize_t send_all(
@@ -38,28 +32,17 @@ ssize_t send_all(
   size_t total = 0;
   const char *p = data;
 
-#ifndef _WIN32
   int flags = 0;
   #ifdef MSG_NOSIGNAL
     flags = MSG_NOSIGNAL;
   #endif
-#endif
 
   while (total < len) {
-#ifdef _WIN32
-    int n = send(sock, p+total, (int)(len-total), 0);
-    if (n == SOCKET_ERROR) {
-      int err = WSAGetLastError();
-      if (err == WSAEINTR) continue;
-      return -1;
-    }
-#else
     ssize_t n = send(sock, p+total, len-total, flags);
     if (n < 0) {
       if (errno == EINTR) continue;
       return -1;
     }
-#endif
     if (n == 0) return (ssize_t)total;
     total += (size_t)n;
   }
@@ -74,20 +57,11 @@ ssize_t recv_all(
   size_t total = 0;
 
   while (total < len) {
-#ifdef _WIN32
-    int n = recv(sock, (char *)p + total, (int)(len - total), 0);
-    if (n == SOCKET_ERROR) {
-      int err = WSAGetLastError();
-      if (err == WSAEINTR) continue;
-      return -1;
-    }
-#else
     ssize_t n = recv(sock, p + total, len - total, 0);
     if (n < 0) {
       if (errno == EINTR) continue;
       return -1;
     }
-#endif
     if (n == 0) return (ssize_t)total;
     total += (size_t)n;
   }
@@ -97,47 +71,17 @@ ssize_t recv_all(
 
 
 
-
 void sock_perror(const char *msg) {
-#ifdef _WIN32
-  int err = WSAGetLastError();
-  char *sys = NULL;
-  DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                FORMAT_MESSAGE_IGNORE_INSERTS;
-  DWORD n = FormatMessageA(flags, NULL, (DWORD)err,
-                           MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                           (LPSTR)&sys, 0, NULL);
-  if (n != 0 && sys != NULL) {
-    while (n > 0 && (sys[n - 1] == '\r' || sys[n - 1] == '\n')) {
-      sys[n - 1] = '\0';
-      n--;
-    }
-    fprintf(stderr, "%s: %s (WSA=%d)\n", msg, sys, err);
-    LocalFree(sys);
-  } else {
-    fprintf(stderr, "%s: WSA error %d\n", msg, err);
-  }
-#else
   perror(msg);
-#endif
 }
 
 void socket_init(socket_t *s) {
-#ifdef _WIN32
-  *s = INVALID_SOCKET;
-#else
   *s = -1;
-#endif
 }
 
 int socket_close(socket_t s) {
   if (is_socket_invalid(s)) return 0;
-
-#ifdef _WIN32
-  return closesocket(s);
-#else
   return close(s);
-#endif
 }
 
 int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out) {
@@ -159,16 +103,6 @@ int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out) {
   tv.tv_sec = (long)(timeout_ms / 1000u);
   tv.tv_usec = (long)((timeout_ms % 1000u) * 1000u);
 
-#ifdef _WIN32
-  int rc = select(0, &readfds, NULL, NULL, &tv);
-  if (rc == SOCKET_ERROR) {
-    int err = WSAGetLastError();
-    if (err == WSAEINTR) {
-      return 0;
-    }
-    return 1;
-  }
-#else
   int rc = select(sock + 1, &readfds, NULL, NULL, &tv);
   if (rc < 0) {
     if (errno == EINTR) {
@@ -176,7 +110,6 @@ int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out) {
     }
     return 1;
   }
-#endif
 
   if (rc == 0) {
     return 0;
@@ -193,12 +126,6 @@ static net_send_file_result_t net_send_file_all(socket_t sock,
     return NET_SEND_FILE_OK;
   }
 
-#ifdef _WIN32
-  (void)sock;
-  (void)in_fd;
-  (void)content_size;
-  return NET_SEND_FILE_UNSUPPORTED;
-#else
   if (is_socket_invalid(sock) || in_fd < 0) {
     return NET_SEND_FILE_INVALID_ARGUMENT;
   }
@@ -267,7 +194,6 @@ static net_send_file_result_t net_send_file_all(socket_t sock,
     (void)content_size;
     return NET_SEND_FILE_UNSUPPORTED;
   #endif
-#endif
 }
 
 static net_send_file_result_t net_send_file_buffered(socket_t sock,
@@ -336,7 +262,7 @@ static net_recv_file_result_t net_recv_file_all(socket_t sock,
     return NET_RECV_FILE_OK;
   }
 
-#if defined(__linux__) && !defined(_WIN32)
+#if defined(__linux__)
   if (is_socket_invalid(sock) || out_fd < 0) {
     return NET_RECV_FILE_INVALID_ARGUMENT;
   }
@@ -470,18 +396,6 @@ static net_recv_file_result_t net_recv_file_buffered(socket_t sock,
       want = (size_t)remaining;
     }
 
-#ifdef _WIN32
-    int tmp = recv(sock, buf, (int)want, 0);
-    if (tmp == SOCKET_ERROR) {
-      int err = WSAGetLastError();
-      if (err == WSAEINTR) {
-        continue;
-      }
-      free(heap_buf);
-      return NET_RECV_FILE_IO;
-    }
-    ssize_t n = (ssize_t)tmp;
-#else
     ssize_t n = recv(sock, buf, want, 0);
     if (n < 0) {
       if (errno == EINTR) {
@@ -490,7 +404,6 @@ static net_recv_file_result_t net_recv_file_buffered(socket_t sock,
       free(heap_buf);
       return NET_RECV_FILE_IO;
     }
-#endif
     if (n == 0) {
       free(heap_buf);
       return NET_RECV_FILE_EOF;
@@ -509,8 +422,8 @@ static net_recv_file_result_t net_recv_file_buffered(socket_t sock,
 }
 
 net_recv_file_result_t net_recv_file_best_effort(socket_t sock,
-                                                 int out_fd,
-                                                 uint64_t content_size) {
+                                                  int out_fd,
+                                                  uint64_t content_size) {
   net_recv_file_result_t res = net_recv_file_all(sock, out_fd, content_size);
   if (res != NET_RECV_FILE_UNSUPPORTED) {
     return res;

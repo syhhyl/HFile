@@ -24,7 +24,5 @@ typedef struct {
 
 void usage(const char *argv0);
 parse_result_t parse_args(int argc, char **argv, Opt *opt);
-int load_windows_utf8_argv(int *argc_out, char ***argv_out);
-void free_windows_argv(char **argv, int argc);
 
 #endif  // HF_CLI_H
