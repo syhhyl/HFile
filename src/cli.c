@@ -63,10 +63,24 @@ int load_windows_utf8_argv(int *argc_out, char ***argv_out) {
 
 void usage(const char *argv0) {
   fprintf(stderr,
-          "usage:\n"
-          "  %s -d <server_path> [-p <port>]\n"
-          "  %s -c <file_path> [-i <ip>] [-p <port>]\n",
-          argv0, argv0);
+    "HFile — fast file transfer over LAN\n"
+    "\n"
+    "usage:\n"
+    "  %s -d <dir>  [-p <port>]     start receive server\n"
+    "  %s -c <file> [-i <ip>] [-p <port>]  upload a file\n"
+    "\n"
+    "options:\n"
+    "  -d <dir>   receive directory (foreground server)\n"
+    "  -c <file>  file to upload\n"
+    "  -i <ip>    server address (default 127.0.0.1)\n"
+    "  -p <port>  port number (default 8888)\n"
+    "  -h         show this help\n"
+    "\n"
+    "examples:\n"
+    "  %s -d /tmp/receive\n"
+    "  %s -c ./foo.txt\n"
+    "  %s -c ./bar.bin -p 7777\n",
+    argv0, argv0, argv0, argv0, argv0);
 }
 
 static int parse_port(const char *s, uint16_t *out) {

@@ -12,7 +12,7 @@
 
 ## Architecture
 
-- `src/hfile.c` is the only executable entrypoint. `src/cli.c` parses args, dispatches to client/server/control.
+- `src/hfile.c` is the only executable entrypoint. `src/cli.c` parses args, dispatches to client/server.
 - One server port handles the native protocol. Top-level dispatch lives in `src/server.c`.
 - Native file receive goes through `src/transfer_io.c`; keep receive-to-temp-file and atomic finalize there.
 - `src/net.c` is the zero-copy/socket layer: `splice` (uploads, Linux). Cross-platform I/O goes through buffered `fs.c` fallback. Do NOT move receive-to-disk logic into `net.c`.
