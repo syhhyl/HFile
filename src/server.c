@@ -27,6 +27,11 @@ typedef struct {
   server_conn_entry_t *entry;
 } server_conn_ctx_t;
 
+typedef struct {
+  char *file_name;
+  uint64_t content_size;
+} server_file_request_t;
+
 static protocol_result_t server_handle_file_transfer(
   socket_t conn,
   const server_opt_t *ser_opt,
@@ -35,6 +40,7 @@ static protocol_result_t server_send_response(socket_t conn,
                                               uint8_t phase,
                                               uint8_t status,
                                               protocol_result_t error_code);
+static void server_file_request_cleanup(server_file_request_t *request);
 
 static inline int create_listener_socket(
   uint16_t port,
@@ -176,30 +182,37 @@ static protocol_result_t server_send_response(
   return send_res_frame(conn, &frame);
 }
 
-static protocol_result_t server_handle_file_transfer(
+static void server_file_request_cleanup(server_file_request_t *request) {
+  if (request == NULL) {
+    return;
+  }
+  free(request->file_name);
+  request->file_name = NULL;
+  request->content_size = 0;
+}
+
+static protocol_result_t server_read_file_request(
   socket_t conn,
-  const server_opt_t *ser_opt,
-  const protocol_header_t *proto_header) {
-  char *file_name = NULL;
-  char saved_path[4096];
-  uint64_t content_size = 0;
+  const protocol_header_t *proto_header,
+  server_file_request_t *request) {
   uint64_t prefix_size = 0;
   protocol_result_t result = PROTOCOL_ERR_IO;
 
-  if (ser_opt == NULL) {
-    fprintf(stderr, "invalid file transfer handler arguments\n");
+  if (proto_header == NULL || request == NULL) {
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
+
+  request->file_name = NULL;
+  request->content_size = 0;
 
   if (proto_header->payload_size <
       (uint64_t)proto_file_transfer_prefix_size(1)) {
     fprintf(stderr, "protocol error: payload size too small\n");
-    (void)server_send_response(
-      conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED, PROTOCOL_ERR_INVALID_ARGUMENT);
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
 
-  result = proto_recv_file_transfer_prefix(conn, &file_name, &content_size);
+  result = proto_recv_file_transfer_prefix(
+    conn, &request->file_name, &request->content_size);
   if (result != PROTOCOL_OK) {
     if (result == PROTOCOL_ERR_FILE_NAME_LEN) {
       fprintf(stderr, "protocol error: invalid file name length\n");
@@ -211,20 +224,45 @@ static protocol_result_t server_handle_file_transfer(
     } else {
       sock_perror("protocol_recv_file_transfer_prefix");
     }
-    goto CLEANUP;
+    return result;
   }
 
-  if (fs_validate_file_name(file_name) != 0) {
-    fprintf(stderr, "invalid file name: %s\n", file_name);
-    result = PROTOCOL_ERR_INVALID_FILE_NAME;
-    goto SEND_READY_REJECT;
+  if (fs_validate_file_name(request->file_name) != 0) {
+    fprintf(stderr, "invalid file name: %s\n", request->file_name);
+    return PROTOCOL_ERR_INVALID_FILE_NAME;
   }
 
-  prefix_size = (uint64_t)proto_file_transfer_prefix_size((uint16_t)strlen(file_name));
-  if (proto_header->payload_size != prefix_size + content_size) {
+  prefix_size = (uint64_t)proto_file_transfer_prefix_size(
+    (uint16_t)strlen(request->file_name));
+  if (proto_header->payload_size != prefix_size + request->content_size) {
     fprintf(stderr, "protocol error: payload size mismatch\n");
-    result = PROTOCOL_ERR_PAYLOAD_SIZE_MISMATCH;
-    goto SEND_READY_REJECT;
+    return PROTOCOL_ERR_PAYLOAD_SIZE_MISMATCH;
+  }
+
+  return PROTOCOL_OK;
+}
+
+static protocol_result_t server_handle_file_transfer(
+  socket_t conn,
+  const server_opt_t *ser_opt,
+  const protocol_header_t *proto_header) {
+  server_file_request_t request = {0};
+  char saved_path[4096];
+  protocol_result_t result = PROTOCOL_ERR_IO;
+
+  if (ser_opt == NULL) {
+    fprintf(stderr, "invalid file transfer handler arguments\n");
+    return PROTOCOL_ERR_INVALID_ARGUMENT;
+  }
+
+  result = server_read_file_request(conn, proto_header, &request);
+  if (result != PROTOCOL_OK) {
+    if (result != PROTOCOL_ERR_EOF && result != PROTOCOL_ERR_IO &&
+        result != PROTOCOL_ERR_ALLOC) {
+      (void)server_send_response(
+        conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED, result);
+    }
+    goto CLEANUP;
   }
 
   result = server_send_response(
@@ -235,13 +273,14 @@ static protocol_result_t server_handle_file_transfer(
   }
 
   if (net_set_recv_timeout(
-        conn, net_transfer_timeout_ms(content_size)) != 0) {
+        conn, net_transfer_timeout_ms(request.content_size)) != 0) {
     sock_perror("setsockopt(SO_RCVTIMEO)");
     result = PROTOCOL_ERR_IO;
     goto CLEANUP;
   }
 
-  result = transfer_recv_socket_file(conn, ser_opt->path, file_name, content_size,
+  result = transfer_recv_socket_file(conn, ser_opt->path, request.file_name,
+                                     request.content_size,
                                      "recv(file_body)",
                                      "protocol error: unexpected EOF while receiving file",
                                      saved_path, sizeof(saved_path));
@@ -261,20 +300,14 @@ static protocol_result_t server_handle_file_transfer(
   }
 
   fprintf(stdout, "received  %s  %llu bytes\n",
-          file_name, (unsigned long long)content_size);
+          request.file_name, (unsigned long long)request.content_size);
   fflush(stdout);
 
   result = PROTOCOL_OK;
   goto CLEANUP;
 
-SEND_READY_REJECT:
-  if (server_send_response(
-        conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED, result) != PROTOCOL_OK) {
-    sock_perror("send_res_frame(file_transfer_ready_rejected)");
-  }
-
 CLEANUP:
-  if (file_name != NULL) free(file_name);
+  server_file_request_cleanup(&request);
   return result;
 }
 
