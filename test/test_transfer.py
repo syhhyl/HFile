@@ -96,7 +96,7 @@ class TransferTestCase(unittest.TestCase):
         r = run_hf(
             self.hf_path,
             [
-                "-c",
+                "-s",
                 src,
                 "-i",
                 self.server.host,

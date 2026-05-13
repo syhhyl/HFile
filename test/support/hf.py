@@ -319,7 +319,6 @@ class HFileServer:
         )
         argv = [
             str(self.hf_path),
-            "-d",
             str(self.out_dir),
             "-p",
             str(self.port),

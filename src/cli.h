@@ -10,8 +10,8 @@ typedef enum {
 } parse_result_t;
 
 typedef enum {
-  server_mode,
-  client_mode,
+  MODE_SERVER,
+  MODE_CLIENT,
 } Mode;
 
 typedef struct {

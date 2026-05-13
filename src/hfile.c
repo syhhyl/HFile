@@ -24,13 +24,16 @@ int main(int argc, char **argv) {
     goto CLEAN_UP;
   }
 
-  if (opt.mode == server_mode) {
+  if (opt.mode == MODE_SERVER) {
     server_opt_t server_opt = { .path = opt.path, .port = opt.port };
     ret = server(&server_opt);
-  } else if (opt.mode == client_mode) {
+  } else if (opt.mode == MODE_CLIENT) {
     client_opt_t client_opt = { .path = opt.path, .ip = opt.ip, .port = opt.port };
     ret = client(&client_opt);
-  } else usage(argv[0]);
+  } else {
+    usage(argv[0]);
+    ret = 1;
+  }
 
   if (shutdown_signal_number() != 0) {
     ret = shutdown_exit_code();

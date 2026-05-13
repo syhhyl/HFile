@@ -27,49 +27,37 @@ class TestCLI(unittest.TestCase):
     def test_invalid_cli_args(self) -> None:
         cases = [
             {
-                "name": "no_args",
-                "args": [],
+                "name": "duplicate_s",
+                "args": ["-s", "f1", "-s", "f2"],
                 "rc": 1,
-                "stderr_contains": ["usage:"],
-            },
-            {
-                "name": "invalid_token",
-                "args": ["daemon"],
-                "rc": 1,
-                "stderr_contains": ["invalid argument", "usage:"],
-            },
-            {
-                "name": "duplicate_d",
-                "args": ["-d", "out1", "-d", "out2"],
-                "rc": 1,
-                "stderr_contains": ["duplicate -d", "usage:"],
+                "stderr_contains": ["duplicate -s", "usage:"],
             },
             {
                 "name": "server_and_client",
-                "args": ["-d", "out", "-c", "in"],
+                "args": ["/tmp", "-s", "in"],
                 "rc": 1,
                 "stderr_contains": [
-                    "cannot use server and client modes together",
+                    "cannot use server path with -s",
                     "usage:",
                 ],
             },
             {
-                "name": "stop_is_not_a_command",
-                "args": ["stop", "-p", "9999"],
+                "name": "extra_positional",
+                "args": ["/tmp", "/tmp2"],
                 "rc": 1,
-                "stderr_contains": ["invalid argument", "usage:"],
+                "stderr_contains": ["unexpected extra argument", "usage:"],
             },
             {"name": "g_removed", "args": ["-g", "out"], "rc": 1, "stderr_contains": ["invalid argument", "usage:"]},
             {"name": "m_removed", "args": ["-m", "hello"], "rc": 1, "stderr_contains": ["invalid argument", "usage:"]},
             {
                 "name": "server_has_i",
-                "args": ["-d", "out", "-i", "127.0.0.1"],
+                "args": ["/tmp", "-i", "127.0.0.1"],
                 "rc": 1,
                 "stderr_contains": ["server mode does not accept -i", "usage:"],
             },
             {
                 "name": "invalid_port",
-                "args": ["-d", "out", "-p", "nope"],
+                "args": ["/tmp", "-p", "nope"],
                 "rc": 1,
                 "stderr_contains": ["invalid port", "usage:"],
             },
@@ -98,7 +86,7 @@ class TestCLI(unittest.TestCase):
 
             r = run_hf(
                 self.hf_path,
-                ["-c", src, "-i", "not_an_ip"],
+                ["-s", src, "-i", "not_an_ip"],
                 timeout=5.0,
             )
 
@@ -112,7 +100,7 @@ class TestCLI(unittest.TestCase):
     def test_client_rejects_missing_source_file(self) -> None:
         with make_temp_dir(prefix="hf_cli_") as tmp_dir:
             missing = Path(tmp_dir) / "missing.txt"
-            r = run_hf(self.hf_path, ["-c", missing], timeout=5.0)
+            r = run_hf(self.hf_path, ["-s", missing], timeout=5.0)
 
         self.assertEqual(
             r.returncode,
@@ -125,7 +113,7 @@ class TestCLI(unittest.TestCase):
         with make_temp_dir(prefix="hf_cli_") as tmp_dir:
             src_dir = Path(tmp_dir) / "source-dir"
             src_dir.mkdir()
-            r = run_hf(self.hf_path, ["-c", src_dir], timeout=5.0)
+            r = run_hf(self.hf_path, ["-s", src_dir], timeout=5.0)
 
         self.assertEqual(
             r.returncode,

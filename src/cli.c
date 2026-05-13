@@ -9,19 +9,20 @@ void usage(const char *argv0) {
     "HFile — fast file transfer over LAN\n"
     "\n"
     "usage:\n"
-    "  %s -d <dir>  [-p <port>]    start receive server\n"
-    "  %s -c <file> [-p <port>]    upload a file\n"
+    "  %s [<path>]  [-p <port>]    start receive server\n"
+    "  %s -s <file> [-i <ip>] [-p <port>]  send a file\n"
     "\n"
     "options:\n"
-    "  -d <dir>   receive directory (foreground server)\n"
-    "  -c <file>  file to upload\n"
+    "  <path>     receive directory (default .)\n"
+    "  -s <file>  file to send\n"
+    "  -i <ip>    server address\n"
     "  -p <port>  port number (default 8888)\n"
     "  -h         show this help\n"
     "\n"
     "examples:\n"
-    "  %s -d /tmp/receive\n"
-    "  %s -c ./foo.txt\n"
-    "  %s -c ./bar.bin -p 7777\n",
+    "  %s /tmp/receive\n"
+    "  %s -s ./foo.txt\n"
+    "  %s -s ./bar.bin -p 7777\n",
     argv0, argv0, argv0, argv0, argv0);
 }
 
@@ -58,16 +59,31 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->path = NULL;
   opt->ip = NULL;
   opt->port = 8888;
+  opt->mode = MODE_SERVER;
 
-  int server_selected = 0;
-  int client_actions = 0;
-  char client_action = '\0';
+  int send_seen = 0;
   int ip_seen = 0;
+  int positional_seen = 0;
+
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
-    if (a == NULL || a[0] != '-' || a[1] == '\0') {
+    if (a == NULL) {
       fprintf(stderr, "invalid argument\n");
       return PARSE_ERR;
+    }
+
+    if (a[0] != '-' || a[1] == '\0') {
+      if (send_seen) {
+        fprintf(stderr, "unexpected positional argument\n");
+        return PARSE_ERR;
+      }
+      if (positional_seen) {
+        fprintf(stderr, "unexpected extra argument\n");
+        return PARSE_ERR;
+      }
+      opt->path = a;
+      positional_seen = 1;
+      continue;
     }
 
     if (a[1] == '-') {
@@ -84,42 +100,29 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
       case 'h':
         return PARSE_HELP;
 
-      case 'd': {
+      case 's': {
         const char *v = NULL;
-        if (server_selected) {
-          fprintf(stderr, "duplicate -d\n");
+        if (send_seen) {
+          fprintf(stderr, "duplicate -s\n");
           return PARSE_ERR;
         }
-        if (take_value(argc, argv, &i, "invalid server path", &v) != 0) {
+        if (positional_seen) {
+          fprintf(stderr, "cannot use server path with -s\n");
+          return PARSE_ERR;
+        }
+        if (take_value(argc, argv, &i, "invalid file path", &v) != 0) {
           return PARSE_ERR;
         }
 
+        opt->mode = MODE_CLIENT;
         opt->path = v;
-        opt->mode = server_mode;
-        server_selected = 1;
-        break;
-      }
-
-      case 'c': {
-        const char *v = NULL;
-        if (client_action == 'c') {
-          fprintf(stderr, "duplicate -c\n");
-          return PARSE_ERR;
-        }
-        if (take_value(argc, argv, &i, "invalid client path", &v) != 0) {
-          return PARSE_ERR;
-        }
-
-        opt->mode = client_mode;
-        opt->path = v;
-        client_action = 'c';
-        client_actions++;
+        send_seen = 1;
         break;
       }
 
       case 'i': {
         const char *v = NULL;
-        if (take_value(argc, argv, &i, "invalid argument", &v) != 0) {
+        if (take_value(argc, argv, &i, "invalid address", &v) != 0) {
           return PARSE_ERR;
         }
 
@@ -146,26 +149,17 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
   }
 
-  if (!server_selected && client_actions == 0) {
+  if (opt->mode == MODE_SERVER && opt->path == NULL) {
+    opt->path = ".";
+  }
+
+  if (opt->mode == MODE_CLIENT && opt->path == NULL) {
+    fprintf(stderr, "missing file to send\n");
     return PARSE_ERR;
   }
 
-  if (server_selected && client_actions > 0) {
-    fprintf(stderr, "cannot use server and client modes together\n");
-    return PARSE_ERR;
-  }
-
-  if (client_actions > 1) {
-    fprintf(stderr, "must choose exactly one client action: -c\n");
-    return PARSE_ERR;
-  }
-
-  opt->mode = server_selected ? server_mode : client_mode;
-  if (opt->mode == server_mode && opt->path == NULL) return PARSE_ERR;
-  if (opt->mode == client_mode && client_action == 'c' && opt->path == NULL) return PARSE_ERR;
-  if (ip_seen && opt->mode != client_mode) {
-    fprintf(stderr, "%s mode does not accept -i\n",
-            opt->mode == server_mode ? "server" : "client");
+  if (ip_seen && opt->mode != MODE_CLIENT) {
+    fprintf(stderr, "server mode does not accept -i\n");
     return PARSE_ERR;
   }
 
