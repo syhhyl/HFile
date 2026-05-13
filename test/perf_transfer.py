@@ -29,9 +29,9 @@ GIB = 1024 * MIB
 DEFAULT_SIZES = [256 * KIB, 512 * MIB, 1 * GIB, 2 * GIB]
 DEFAULT_RUNS = 5
 FILE_CHUNK_SIZE = 1 * MIB
-SCAN_INTERVAL = 0.05
-TRANSFER_TIMEOUT_SCALE = 30.0
-TRANSFER_TIMEOUT_MIN = 30.0
+SCAN_INTERVAL = 0.01
+TRANSFER_TIMEOUT_SCALE = 10.0
+TRANSFER_TIMEOUT_MIN = 60.0
 
 
 CURRENT_BATCH_DIR: Path | None = None
@@ -178,7 +178,7 @@ def print_summary(metrics_by_batch: list[BatchMetrics]) -> None:
 
 
 def format_summary(metrics_by_batch: list[BatchMetrics]) -> str:
-    lines = ["", "batch     runs  total(s)  avg(s)    median(s)  best(s)  avg(MiB/s)"]
+    lines = ["", "batch     runs  total(s)  avg(s)    median(s)  best(s)  e2e(MiB/s)"]
     for metrics in metrics_by_batch:
         intervals = metrics.intervals
         total = sum(intervals)
@@ -229,7 +229,6 @@ def wait_for_completed_file(
 ) -> float:
     target = out_dir / file_name
     start = time.monotonic()
-    previous_size: int | None = None
     deadline = start + timeout + 10.0
 
     while time.monotonic() < deadline:
@@ -238,14 +237,12 @@ def wait_for_completed_file(
         try:
             size = target.stat().st_size
         except FileNotFoundError:
-            previous_size = None
             time.sleep(SCAN_INTERVAL)
             continue
 
-        if size == expected_size and previous_size == size:
+        if size == expected_size:
             return time.monotonic() - start
 
-        previous_size = size
         time.sleep(SCAN_INTERVAL)
 
     raise RuntimeError(
@@ -449,7 +446,7 @@ def run_client(args: argparse.Namespace) -> int:
                                 result = run_hf(
                                     hf_path,
                                     [
-                                        "-c",
+                                        "-s",
                                         src,
                                         "-i",
                                         args.server_host,

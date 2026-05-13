@@ -14,6 +14,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#define NET_MIN_TRANSFER_TIMEOUT_MS 60000u
+#define NET_MAX_TRANSFER_TIMEOUT_MS 300000u
+#define NET_TIMEOUT_BYTES_PER_MS (10u * 1024u)
+
 #if defined(__linux__)
   #include <sys/sendfile.h>
 #elif defined(__APPLE__)
@@ -82,6 +86,49 @@ void socket_init(socket_t *s) {
 int socket_close(socket_t s) {
   if (is_socket_invalid(s)) return 0;
   return close(s);
+}
+
+uint32_t net_transfer_timeout_ms(uint64_t content_size) {
+  uint64_t scaled = content_size / NET_TIMEOUT_BYTES_PER_MS;
+
+  if (scaled < NET_MIN_TRANSFER_TIMEOUT_MS) {
+    return NET_MIN_TRANSFER_TIMEOUT_MS;
+  }
+  if (scaled > NET_MAX_TRANSFER_TIMEOUT_MS) {
+    return NET_MAX_TRANSFER_TIMEOUT_MS;
+  }
+  return (uint32_t)scaled;
+}
+
+int net_set_recv_timeout(socket_t sock, uint32_t timeout_ms) {
+  struct timeval tv;
+
+  if (is_socket_invalid(sock)) {
+    return 1;
+  }
+
+  tv.tv_sec = (time_t)(timeout_ms / 1000u);
+  tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
+  return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0 ? 1 : 0;
+}
+
+int net_set_send_timeout(socket_t sock, uint32_t timeout_ms) {
+  struct timeval tv;
+
+  if (is_socket_invalid(sock)) {
+    return 1;
+  }
+
+  tv.tv_sec = (time_t)(timeout_ms / 1000u);
+  tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
+  return setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0 ? 1 : 0;
+}
+
+int net_set_socket_timeouts(socket_t sock, uint32_t timeout_ms) {
+  if (net_set_recv_timeout(sock, timeout_ms) != 0) {
+    return 1;
+  }
+  return net_set_send_timeout(sock, timeout_ms);
 }
 
 int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out) {
@@ -255,6 +302,22 @@ net_send_file_result_t net_send_file_best_effort(socket_t sock,
   return net_send_file_buffered(sock, in_fd, content_size);
 }
 
+#if defined(__linux__)
+static void net_close_pair(int fds[2]) {
+  if (fds == NULL) {
+    return;
+  }
+  if (fds[0] >= 0) {
+    close(fds[0]);
+    fds[0] = -1;
+  }
+  if (fds[1] >= 0) {
+    close(fds[1]);
+    fds[1] = -1;
+  }
+}
+#endif
+
 static net_recv_file_result_t net_recv_file_all(socket_t sock,
                                                 int out_fd,
                                                 uint64_t content_size) {
@@ -270,8 +333,14 @@ static net_recv_file_result_t net_recv_file_all(socket_t sock,
   int pipefd[2] = {-1, -1};
   uint64_t remaining = content_size;
   uint64_t moved = 0;
-  int use_pipe_fallback = 0;
-  off_t file_offset = 0;
+  net_recv_file_result_t result = NET_RECV_FILE_OK;
+
+  if (pipe(pipefd) != 0) {
+    if (errno == EMFILE || errno == ENFILE) {
+      return NET_RECV_FILE_IO;
+    }
+    return NET_RECV_FILE_UNSUPPORTED;
+  }
 
   while (remaining > 0) {
     size_t want = CHUNK_SIZE;
@@ -279,83 +348,52 @@ static net_recv_file_result_t net_recv_file_all(socket_t sock,
       want = (size_t)remaining;
     }
 
-    ssize_t n;
-    if (!use_pipe_fallback) {
-      n = splice(sock, NULL, out_fd, &file_offset, want,
-                 SPLICE_F_MOVE | SPLICE_F_MORE);
-      if (n < 0) {
-        if ((errno == EINVAL || errno == ENOSYS || errno == ENOTSUP) && moved == 0) {
-          if (pipe(pipefd) != 0) {
-            if (errno == EMFILE || errno == ENFILE) {
-              return NET_RECV_FILE_IO;
-            }
-            return NET_RECV_FILE_UNSUPPORTED;
-          }
-          use_pipe_fallback = 1;
-          continue;
-        }
-        if (errno == EINTR) {
-          continue;
-        }
-        return NET_RECV_FILE_IO;
+    ssize_t n = splice(sock, NULL, pipefd[1], NULL, want,
+                       SPLICE_F_MOVE | SPLICE_F_MORE);
+    if (n < 0) {
+      if (errno == EINVAL || errno == ENOSYS || errno == ENOTSUP) {
+        result = moved == 0 ? NET_RECV_FILE_UNSUPPORTED : NET_RECV_FILE_IO;
+        goto CLEANUP;
       }
-      if (n == 0) {
-        return NET_RECV_FILE_EOF;
+      if (errno == EINTR) {
+        continue;
       }
-      file_offset += n;
-      remaining -= (uint64_t)n;
-      moved += (uint64_t)n;
-    } else {
-      n = splice(sock, NULL, pipefd[1], NULL, want,
-                 SPLICE_F_MOVE | SPLICE_F_MORE);
-      if (n < 0) {
-        if ((errno == EINVAL || errno == ENOSYS || errno == ENOTSUP) && moved == 0) {
-          close(pipefd[0]);
-          close(pipefd[1]);
-          return NET_RECV_FILE_UNSUPPORTED;
-        }
-        if (errno == EINTR) {
-          continue;
-        }
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return NET_RECV_FILE_IO;
-      }
-      if (n == 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return NET_RECV_FILE_EOF;
-      }
+      result = NET_RECV_FILE_IO;
+      goto CLEANUP;
+    }
+    if (n == 0) {
+      result = NET_RECV_FILE_EOF;
+      goto CLEANUP;
+    }
 
-      ssize_t pipe_remaining = n;
-      while (pipe_remaining > 0) {
-        ssize_t written = splice(pipefd[0], NULL, out_fd, NULL, (size_t)pipe_remaining,
-                                 SPLICE_F_MOVE | SPLICE_F_MORE);
-        if (written < 0) {
-          if (errno == EINTR) {
-            continue;
-          }
-          close(pipefd[0]);
-          close(pipefd[1]);
-          return NET_RECV_FILE_IO;
+    ssize_t pipe_remaining = n;
+    while (pipe_remaining > 0) {
+      ssize_t written = splice(pipefd[0], NULL, out_fd, NULL, (size_t)pipe_remaining,
+                               SPLICE_F_MOVE | SPLICE_F_MORE);
+      if (written < 0) {
+        if (errno == EINVAL || errno == ENOSYS || errno == ENOTSUP) {
+          result = NET_RECV_FILE_IO;
+          goto CLEANUP;
         }
-        if (written == 0) {
-          close(pipefd[0]);
-          close(pipefd[1]);
-          return NET_RECV_FILE_IO;
+        if (errno == EINTR) {
+          continue;
         }
-        pipe_remaining -= written;
-        remaining -= (uint64_t)written;
-        moved += (uint64_t)written;
+        result = NET_RECV_FILE_IO;
+        goto CLEANUP;
       }
+      if (written == 0) {
+        result = NET_RECV_FILE_IO;
+        goto CLEANUP;
+      }
+      pipe_remaining -= written;
+      remaining -= (uint64_t)written;
+      moved += (uint64_t)written;
     }
   }
 
-  if (use_pipe_fallback) {
-    close(pipefd[0]);
-    close(pipefd[1]);
-  }
-  return NET_RECV_FILE_OK;
+CLEANUP:
+  net_close_pair(pipefd);
+  return result;
 #else
   (void)sock;
   (void)out_fd;

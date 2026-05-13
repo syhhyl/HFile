@@ -47,6 +47,10 @@ void sock_perror(const char *msg);
 void socket_init(socket_t *s);
 int socket_close(socket_t s);
 
+uint32_t net_transfer_timeout_ms(uint64_t content_size);
+int net_set_recv_timeout(socket_t sock, uint32_t timeout_ms);
+int net_set_send_timeout(socket_t sock, uint32_t timeout_ms);
+int net_set_socket_timeouts(socket_t sock, uint32_t timeout_ms);
 int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out);
 
 net_send_file_result_t net_send_file_best_effort(socket_t sock,

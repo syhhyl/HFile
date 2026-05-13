@@ -16,9 +16,10 @@
 
 #include "fs.h"
 
-#include <netinet/tcp.h>
 #include <pthread.h>
 #include <unistd.h>
+
+#define SERVER_CONTROL_RECV_TIMEOUT_MS 15000u
 
 typedef struct {
   socket_t conn;
@@ -34,13 +35,6 @@ static protocol_result_t server_send_response(socket_t conn,
                                               uint8_t phase,
                                               uint8_t status,
                                               protocol_result_t error_code);
-
-static int server_set_connection_recv_timeout(socket_t conn, uint32_t timeout_ms) {
-  struct timeval tv;
-  tv.tv_sec = (time_t)(timeout_ms / 1000u);
-  tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
-  return setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0 ? 1 : 0;
-}
 
 static inline int create_listener_socket(
   uint16_t port,
@@ -125,15 +119,6 @@ static void *server_connection_thread_main(void *arg) {
 
   free(ctx);
 
-  {
-    int flag = 1;
-    int rcvbuf = 256 * 1024;
-    setsockopt(conn, IPPROTO_TCP, TCP_NODELAY,
-               &flag, sizeof(flag));
-    setsockopt(conn, SOL_SOCKET, SO_RCVBUF,
-               &rcvbuf, sizeof(rcvbuf));
-  }
-
   (void)handle_protocol_connection(conn, &opt);
 
   socket_close(conn);
@@ -151,7 +136,7 @@ static int server_start_connection_thread(socket_t conn,
     return 1;
   }
 
-  if (server_set_connection_recv_timeout(conn, 15000u) != 0) {
+  if (net_set_recv_timeout(conn, SERVER_CONTROL_RECV_TIMEOUT_MS) != 0) {
     sock_perror("setsockopt(SO_RCVTIMEO)");
   }
 
@@ -246,6 +231,13 @@ static protocol_result_t server_handle_file_transfer(
     conn, PROTO_PHASE_READY, PROTO_STATUS_OK, PROTOCOL_OK);
   if (result != PROTOCOL_OK) {
     sock_perror("send_res_frame(file_transfer_ready)");
+    goto CLEANUP;
+  }
+
+  if (net_set_recv_timeout(
+        conn, net_transfer_timeout_ms(content_size)) != 0) {
+    sock_perror("setsockopt(SO_RCVTIMEO)");
+    result = PROTOCOL_ERR_IO;
     goto CLEANUP;
   }
 

@@ -13,12 +13,9 @@
 #include <string.h>
 
 #include <sys/stat.h>
-#include <netinet/tcp.h>
-#include <sys/time.h>
 #include <unistd.h>
 
-#define CLIENT_SOCKET_TIMEOUT_MS 30000u
-#define CLIENT_SNDBUF_SIZE (256 * 1024)
+#define CLIENT_CONTROL_SOCKET_TIMEOUT_MS 30000u
 
 static const char *client_protocol_result_name(protocol_result_t res) {
   switch (res) {
@@ -163,19 +160,6 @@ static int client_recv_checked_response(socket_t sock,
   return 0;
 }
 
-static int client_set_socket_timeouts(socket_t sock, uint32_t timeout_ms) {
-  struct timeval tv;
-  tv.tv_sec = (time_t)(timeout_ms / 1000u);
-  tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
-  if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-    return 1;
-  }
-  if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
-    return 1;
-  }
-  return 0;
-}
-
 static int client_send_header_payload(socket_t sock,
                                       uint8_t msg_type,
                                       uint64_t payload_size,
@@ -256,19 +240,10 @@ static int client_connect(const char *ip, uint16_t port, socket_t *sock_out) {
     return 1;
   }
 
-  if (client_set_socket_timeouts(sock, CLIENT_SOCKET_TIMEOUT_MS) != 0) {
+  if (net_set_socket_timeouts(sock, CLIENT_CONTROL_SOCKET_TIMEOUT_MS) != 0) {
     sock_perror("setsockopt(client_timeout)");
     socket_close(sock);
     return 1;
-  }
-
-  {
-    int flag = 1;
-    int sndbuf = CLIENT_SNDBUF_SIZE;
-    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
-               &flag, sizeof(flag));
-    setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
-               &sndbuf, sizeof(sndbuf));
   }
 
   *sock_out = sock;
@@ -406,6 +381,13 @@ static int client_send_file_raw(const client_opt_t *opt) {
 
   res_frame_t r_f = {0};
   if (client_recv_checked_response(sock, PROTO_PHASE_READY, "transfer", &r_f) != 0) {
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+
+  if (net_set_socket_timeouts(
+        sock, net_transfer_timeout_ms(content_size)) != 0) {
+    sock_perror("setsockopt(client_transfer_timeout)");
     exit_code = 1;
     goto CLEAN_UP;
   }
