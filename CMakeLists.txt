@@ -7,7 +7,6 @@ add_executable(hf
   src/node.c
   src/discovery.c
   src/net.c
-  src/fs.c
 )
 
 target_include_directories(hf PRIVATE

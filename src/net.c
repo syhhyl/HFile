@@ -52,10 +52,6 @@ ssize_t recv_all(socket_t sock, void *buf, size_t len) {
   return (ssize_t)total;
 }
 
-void sock_perror(const char *msg) {
-  perror(msg);
-}
-
 int socket_close(socket_t s) {
   if (s < 0) return 0;
   return close(s);

@@ -14,19 +14,19 @@ int discovery_open(socket_t *sock_out, uint16_t tcp_port) {
 
   socket_t sock = socket(AF_INET, SOCK_DGRAM, 0);
   if (is_socket_invalid(sock)) {
-    sock_perror("discovery socket");
+    perror("discovery socket");
     return 1;
   }
 
   {
     int opt = 1;
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-      sock_perror("discovery setsockopt(SO_REUSEADDR)");
+      perror("discovery setsockopt(SO_REUSEADDR)");
       socket_close(sock);
       return 1;
     }
     if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt)) < 0) {
-      sock_perror("discovery setsockopt(SO_BROADCAST)");
+      perror("discovery setsockopt(SO_BROADCAST)");
       socket_close(sock);
       return 1;
     }
@@ -41,7 +41,7 @@ int discovery_open(socket_t *sock_out, uint16_t tcp_port) {
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
   if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    sock_perror("discovery bind");
+    perror("discovery bind");
     socket_close(sock);
     return 1;
   }
@@ -63,7 +63,7 @@ int discovery_handle_query(socket_t sock, uint16_t tcp_port) {
                        (struct sockaddr *)&from, &from_len);
   if (n < 0) {
     if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-    sock_perror("discovery recvfrom");
+    perror("discovery recvfrom");
     return 1;
   }
 
@@ -87,7 +87,7 @@ int discovery_handle_query(socket_t sock, uint16_t tcp_port) {
                       (struct sockaddr *)&from, from_len);
   if (ns < 0) {
     if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-    sock_perror("discovery sendto");
+    perror("discovery sendto");
     return 1;
   }
 
@@ -100,7 +100,7 @@ int discovery_find_node(uint16_t port, char *ip_out, size_t ip_out_len,
 
   socket_t sock = socket(AF_INET, SOCK_DGRAM, 0);
   if (is_socket_invalid(sock)) {
-    sock_perror("discovery socket");
+    perror("discovery socket");
     return 1;
   }
 
@@ -123,7 +123,7 @@ int discovery_find_node(uint16_t port, char *ip_out, size_t ip_out_len,
   if (sendto(sock, req, sizeof(req), 0,
              (struct sockaddr *)&broadcast_addr,
              sizeof(broadcast_addr)) < 0) {
-    sock_perror("discovery broadcast sendto");
+    perror("discovery broadcast sendto");
     socket_close(sock);
     return 1;
   }
@@ -142,7 +142,7 @@ int discovery_find_node(uint16_t port, char *ip_out, size_t ip_out_len,
       socket_close(sock);
       return 1;
     }
-    sock_perror("discovery select");
+    perror("discovery select");
     socket_close(sock);
     return 1;
   }
@@ -159,7 +159,7 @@ int discovery_find_node(uint16_t port, char *ip_out, size_t ip_out_len,
   ssize_t n = recvfrom(sock, resp, sizeof(resp), 0,
                        (struct sockaddr *)&from, &from_len);
   if (n < 0) {
-    sock_perror("discovery recvfrom");
+    perror("discovery recvfrom");
     socket_close(sock);
     return 1;
   }
