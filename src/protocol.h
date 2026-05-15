@@ -27,7 +27,6 @@ typedef struct {
   uint64_t payload_size;
 } protocol_header_t;
 
-
 typedef enum {
   PROTOCOL_OK = 0,
   PROTOCOL_ERR_HEADER_MAGIC,
@@ -61,22 +60,14 @@ typedef struct {
   uint16_t error_code;
 } res_frame_t;
 
-
 void init_header(protocol_header_t *header);
-
-void encode_u64_be(uint64_t v, uint8_t out[8]);
-uint64_t decode_u64_be(const uint8_t in[8]);
 
 protocol_result_t encode_header(const protocol_header_t *header, uint8_t *out);
 protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in);
 protocol_result_t recv_header(socket_t sock, uint8_t *out);
 
-protocol_result_t encode_res_frame(const res_frame_t *frame, uint8_t *out);
-protocol_result_t decode_res_frame(res_frame_t *frame, const uint8_t *in);
 protocol_result_t send_res_frame(socket_t sock, const res_frame_t *frame);
 protocol_result_t recv_res_frame(socket_t sock, res_frame_t *frame);
-
-
 
 int proto_get_file_name_len(const char *file_name, uint16_t *out_len);
 size_t proto_file_transfer_prefix_size(uint16_t file_name_len);
