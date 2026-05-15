@@ -18,7 +18,6 @@ bool is_socket_invalid(socket_t sock);
 
 typedef enum {
   NET_SEND_FILE_OK = 0,
-  NET_SEND_FILE_UNSUPPORTED,
   NET_SEND_FILE_SOURCE_CHANGED,
   NET_SEND_FILE_IO,
   NET_SEND_FILE_INVALID_ARGUMENT
@@ -26,7 +25,6 @@ typedef enum {
 
 typedef enum {
   NET_RECV_FILE_OK = 0,
-  NET_RECV_FILE_UNSUPPORTED,
   NET_RECV_FILE_EOF,
   NET_RECV_FILE_IO,
   NET_RECV_FILE_INVALID_ARGUMENT
@@ -45,11 +43,11 @@ void sock_perror(const char *msg);
 void socket_init(socket_t *s);
 int socket_close(socket_t s);
 
-net_send_file_result_t net_send_file_best_effort(socket_t sock,
-                                                  int in_fd,
-                                                  uint64_t content_size);
-net_recv_file_result_t net_recv_file_best_effort(socket_t sock,
-                                                  int out_fd,
-                                                   uint64_t content_size);
+net_send_file_result_t net_send_file(socket_t sock,
+                                    int in_fd,
+                                    uint64_t content_size);
+net_recv_file_result_t net_recv_file(socket_t sock,
+                                      int out_fd,
+                                      uint64_t content_size);
 
 #endif  // HF_NET_H

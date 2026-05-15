@@ -139,7 +139,7 @@ static protocol_result_t node_recv_socket_file(socket_t conn,
     return PROTOCOL_ERR_IO;
   }
 
-  net_recv_file_result_t recv_res = net_recv_file_best_effort(conn, fd, content_size);
+  net_recv_file_result_t recv_res = net_recv_file(conn, fd, content_size);
   if (recv_res == NET_RECV_FILE_OK) {
     if (fs_close(fd) != 0) {
       perror("close temp file");
@@ -555,7 +555,7 @@ int node_send(const char *file_path, const char *ip, uint16_t port) {
   }
 
   net_send_file_result_t send_file_res =
-    net_send_file_best_effort(sock, in, content_size);
+    net_send_file(sock, in, content_size);
   if (send_file_res != NET_SEND_FILE_OK) {
     if (send_file_res == NET_SEND_FILE_SOURCE_CHANGED) {
       fprintf(stderr, "source file changed during transfer\n");

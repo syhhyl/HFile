@@ -20,7 +20,7 @@
 ## Behavior That Tests Depend On
 
 - File transfer stays two-phase: validate header/prefix, send `READY`, stream body, then send `FINAL`.
-- Large uploads are streaming. Do not replace file-body receive paths with whole-body `recv_all` logic.
+- Large uploads are streaming. Do not replace file-body receive paths with whole-body buffered recv logic.
 - Filename validation is intentionally strict across CLI paths; update the matching tests if behavior changes.
 - `hf recv [<dir>] [-p <port>]` runs a foreground receive node and loops waiting for connections. Stop it manually with the process signal or Ctrl-C.
 
