@@ -3,11 +3,8 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 
 #include <arpa/inet.h>
-#include <ifaddrs.h>
-#include <net/if.h>
 #include <sys/select.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -118,45 +115,23 @@ int discovery_client_find(uint16_t port, char *ip_out, size_t ip_out_len,
     setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
   }
 
-  struct sockaddr_in broadcast_addr;
-
   uint8_t req[3];
   req[0] = (uint8_t)(HF_DISCOVERY_MAGIC >> 8);
   req[1] = (uint8_t)(HF_DISCOVERY_MAGIC);
   req[2] = HF_DISCOVERY_VERSION;
 
-  {
-    struct ifaddrs *ifap = NULL;
-    int sent_any = 0;
+  struct sockaddr_in broadcast_addr;
+  memset(&broadcast_addr, 0, sizeof(broadcast_addr));
+  broadcast_addr.sin_family = AF_INET;
+  broadcast_addr.sin_port = htons(port);
+  broadcast_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 
-    if (getifaddrs(&ifap) == 0) {
-      for (struct ifaddrs *ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
-        if (ifa->ifa_addr == NULL) continue;
-        if (ifa->ifa_addr->sa_family != AF_INET) continue;
-        if ((ifa->ifa_flags & IFF_UP) == 0) continue;
-        if ((ifa->ifa_flags & IFF_BROADCAST) == 0) continue;
-        if (ifa->ifa_broadaddr == NULL) continue;
-
-        struct sockaddr_in *baddr = (struct sockaddr_in *)ifa->ifa_broadaddr;
-        if (baddr->sin_addr.s_addr == 0) continue;
-
-        memcpy(&broadcast_addr, baddr, sizeof(broadcast_addr));
-        broadcast_addr.sin_port = htons(port);
-
-        if (sendto(sock, req, sizeof(req), 0,
-                   (struct sockaddr *)&broadcast_addr,
-                   sizeof(broadcast_addr)) >= 0) {
-          sent_any = 1;
-        }
-      }
-      freeifaddrs(ifap);
-    }
-
-    if (!sent_any) {
-      sock_perror("discovery broadcast sendto");
-      socket_close(sock);
-      return 1;
-    }
+  if (sendto(sock, req, sizeof(req), 0,
+             (struct sockaddr *)&broadcast_addr,
+             sizeof(broadcast_addr)) < 0) {
+    sock_perror("discovery broadcast sendto");
+    socket_close(sock);
+    return 1;
   }
 
   struct timeval tv;
