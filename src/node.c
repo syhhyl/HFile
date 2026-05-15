@@ -2,7 +2,6 @@
 #include "fs.h"
 #include "net.h"
 #include "node.h"
-#include "node_conn_tracker.h"
 #include "protocol.h"
 #include "shutdown.h"
 #include "transfer_io.h"
@@ -15,18 +14,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #define SERVER_CONTROL_RECV_TIMEOUT_MS 15000u
 #define NODE_CONTROL_SOCKET_TIMEOUT_MS 30000u
-
-typedef struct {
-  socket_t conn;
-  const char *path;
-  node_conn_entry_t *entry;
-} node_recv_conn_ctx_t;
 
 typedef struct {
   char *file_name;
@@ -79,7 +71,7 @@ static inline int create_listener_socket(
     return 1;
   }
 
-  if (listen(sock, 4) == -1) {
+  if (listen(sock, 1) == -1) {
     sock_perror("listen");
     socket_close(sock);
     return 1;
@@ -117,55 +109,12 @@ static int node_handle_connection(socket_t conn, const char *path) {
   return 1;
 }
 
-static void *node_connection_thread_main(void *arg) {
-  node_recv_conn_ctx_t *ctx = (node_recv_conn_ctx_t *)arg;
-  socket_t conn = ctx->conn;
-  const char *path = ctx->path;
-  node_conn_entry_t *entry = ctx->entry;
-
-  free(ctx);
-
-  (void)node_handle_connection(conn, path);
-
-  socket_close(conn);
-  node_conn_tracker_end(entry);
-
-  return NULL;
-}
-
-static int node_start_connection_thread(socket_t conn, const char *path) {
-  node_recv_conn_ctx_t *ctx = (node_recv_conn_ctx_t *)malloc(sizeof(*ctx));
-  node_conn_entry_t *entry = NULL;
-  if (ctx == NULL) {
-    perror("malloc(node_recv_conn_ctx)");
-    return 1;
-  }
-
+static int node_handle_single_connection(socket_t conn, const char *path) {
   if (net_set_recv_timeout(conn, SERVER_CONTROL_RECV_TIMEOUT_MS) != 0) {
     sock_perror("setsockopt(SO_RCVTIMEO)");
   }
 
-  entry = node_conn_tracker_begin(conn);
-  if (entry == NULL) {
-    free(ctx);
-    return 1;
-  }
-
-  ctx->conn = conn;
-  ctx->path = path;
-  ctx->entry = entry;
-
-  pthread_t tid;
-  int err = pthread_create(&tid, NULL, node_connection_thread_main, ctx);
-  if (err != 0) {
-    fprintf(stderr, "pthread_create(node_conn): %s\n", strerror(err));
-    node_conn_tracker_end(entry);
-    free(ctx);
-    return 1;
-  }
-  (void)pthread_detach(tid);
-
-  return 0;
+  return node_handle_connection(conn, path);
 }
 
 static protocol_result_t node_send_response(
@@ -310,7 +259,7 @@ CLEANUP:
   return result;
 }
 
-static int node_recv_loop(socket_t tcp_sock, socket_t discovery_sock,
+static int node_recv_once(socket_t tcp_sock, socket_t discovery_sock,
                           const char *path, uint16_t port) {
   int exit_code = 0;
   int has_discovery = is_socket_invalid(discovery_sock) ? 0 : 1;
@@ -373,10 +322,9 @@ static int node_recv_loop(socket_t tcp_sock, socket_t discovery_sock,
       continue;
     }
 
-    if (node_start_connection_thread(conn, path) != 0) {
-      socket_close(conn);
-      exit_code = 1;
-    }
+    exit_code = node_handle_single_connection(conn, path);
+    socket_close(conn);
+    break;
   }
 
   return exit_code;
@@ -426,12 +374,6 @@ int node_recv(const char *path, uint16_t port) {
     goto CLEAN_UP;
   }
 
-  if (node_conn_tracker_init() != 0) {
-    fprintf(stderr, "failed to initialize connection tracker\n");
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
-
   socket_t tcp_sock;
   socket_init(&tcp_sock);
 
@@ -451,23 +393,18 @@ int node_recv(const char *path, uint16_t port) {
 
   node_print_access_details(path, port, node_current_pid_long(), discovery_ok);
 
-  exit_code = node_recv_loop(tcp_sock, discovery_sock, path, port);
+  exit_code = node_recv_once(tcp_sock, discovery_sock, path, port);
   if (shutdown_requested()) {
     node_print_shutdown_notice();
   }
 
 CLOSE_SOCK:
-  shutdown_request();
-
   socket_close(tcp_sock);
   if (discovery_ok) {
     discovery_close(discovery_sock);
   }
-  node_conn_tracker_shutdown_all();
-  node_conn_tracker_wait_idle();
 
 CLEAN_UP:
-  node_conn_tracker_cleanup();
   return exit_code;
 }
 

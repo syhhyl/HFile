@@ -5,7 +5,6 @@ project(HFile VERSION 0.0.1 LANGUAGES C)
 add_executable(hf
   src/hfile.c
   src/node.c
-  src/node_conn_tracker.c
   src/transfer_io.c
   src/discovery.c
   src/protocol.c
@@ -20,9 +19,6 @@ target_include_directories(hf PRIVATE
 )
 
 target_compile_options(hf PRIVATE -Wall -Wextra)
-
-find_package(Threads REQUIRED)
-target_link_libraries(hf PRIVATE Threads::Threads)
 
 target_compile_definitions(hf PRIVATE
   $<$<CONFIG:Debug>:DEBUG>

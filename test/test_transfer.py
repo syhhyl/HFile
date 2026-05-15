@@ -56,6 +56,7 @@ class TransferTestCase(unittest.TestCase):
             cls._tmp.cleanup()
 
     def _server_log_offset(self) -> int:
+        self._ensure_server_running()
         if self.server.log_path is None:
             return 0
         try:
@@ -66,13 +67,44 @@ class TransferTestCase(unittest.TestCase):
     def _server_log_tail(self) -> str:
         return tail_text_file(self.server.log_path or Path(""))
 
+    def _ensure_server_running(self) -> None:
+        if self.server.proc.poll() is not None:
+            self.server.start(startup_timeout=5.0)
+
+    def _connect_to_server(self, *, timeout: float = 8.0) -> socket.socket:
+        deadline = time.monotonic() + timeout
+        last_error: OSError | None = None
+
+        while time.monotonic() < deadline:
+            self._ensure_server_running()
+            try:
+                return socket.create_connection(
+                    (self.server.host, self.server.port), timeout=0.2
+                )
+            except OSError as e:
+                last_error = e
+                time.sleep(0.05)
+
+        if last_error is not None:
+            raise last_error
+        raise TimeoutError("timed out connecting to receive node")
+
     def _wait_for_server_log(
         self, needle: str, *, offset: int = 0, timeout: float = 5.0
     ) -> str:
         log_path = self.server.log_path or Path("")
+        try:
+            if offset > log_path.stat().st_size:
+                offset = 0
+        except FileNotFoundError:
+            offset = 0
         log_text = wait_for_text_in_file(
             log_path, needle, offset=offset, timeout=timeout
         )
+        if log_text is None and offset > 0:
+            log_text = wait_for_text_in_file(
+                log_path, needle, offset=0, timeout=0.1
+            )
         if log_text is None:
             self.fail(f"missing {needle!r} in server log: {self._server_log_tail()!r}")
         return log_text
@@ -91,6 +123,7 @@ class TransferTestCase(unittest.TestCase):
         extra_args: tuple[str, ...] = (),
         timeout: float = 8.0,
     ):
+        self._ensure_server_running()
         dst = self.out_dir / src.name
         self._reset_output_path(dst)
         r = run_hf(
@@ -211,9 +244,7 @@ class TransferTestCase(unittest.TestCase):
         timeout: float = 8.0,
         allow_empty_ack: bool = False,
     ) -> bytes:
-        with socket.create_connection(
-            (self.server.host, self.server.port), timeout=timeout
-        ) as s:
+        with self._connect_to_server(timeout=timeout) as s:
             s.settimeout(timeout)
             for idx, part in enumerate(parts):
                 self._sendall_or_fail(s, part, phase=f"raw part {idx}")
@@ -231,9 +262,7 @@ class TransferTestCase(unittest.TestCase):
         *,
         timeout: float = 8.0,
     ) -> bytes:
-        with socket.create_connection(
-            (self.server.host, self.server.port), timeout=timeout
-        ) as s:
+        with self._connect_to_server(timeout=timeout) as s:
             s.settimeout(timeout)
             self._sendall_or_fail(s, header, phase="file header")
             self._sendall_or_fail(s, prefix, phase="file prefix")
@@ -247,9 +276,7 @@ class TransferTestCase(unittest.TestCase):
         *,
         timeout: float = 8.0,
     ) -> tuple[bytes, bytes]:
-        with socket.create_connection(
-            (self.server.host, self.server.port), timeout=timeout
-        ) as s:
+        with self._connect_to_server(timeout=timeout) as s:
             s.settimeout(timeout)
             self._sendall_or_fail(s, header, phase="file header")
             self._sendall_or_fail(s, prefix, phase="file prefix")
@@ -485,9 +512,7 @@ class TestTransferProtocol(TransferTestCase):
         dst = self.out_dir / file_name.decode("ascii")
         self._reset_output_path(dst)
 
-        with socket.create_connection(
-            (self.server.host, self.server.port), timeout=8.0
-        ) as s:
+        with self._connect_to_server(timeout=8.0) as s:
             s.settimeout(8.0)
             self._sendall_or_fail(s, header, phase="file header")
             self._sendall_or_fail(s, prefix, phase="file prefix")
