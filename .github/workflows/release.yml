@@ -20,21 +20,13 @@ jobs:
             os: ubuntu-24.04
             archive: hf-linux-amd64.tar.gz
           - target: darwin-arm64
-            os: macos-14
+            os: macos-latest
             archive: hf-darwin-arm64.tar.gz
             cmake_osx_architectures: arm64
-          - target: windows-amd64
-            os: windows-latest
-            archive: hf-windows-amd64.zip
-            exe_name: hf.exe
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v5
-
-      - name: Set up MSVC
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Configure CMake
         shell: bash
@@ -61,14 +53,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            exe_name="${{ matrix.exe_name }}"
-            cp "build/${exe_name}" "dist/${exe_name}"
-            powershell -Command "Compress-Archive -Path 'dist/${exe_name}' -DestinationPath 'dist/${{ matrix.archive }}'"
-            rm -f "dist/${exe_name}"
-          else
-            tar -czf "dist/${{ matrix.archive }}" -C build hf
-          fi
+          tar -czf "dist/${{ matrix.archive }}" -C build hf
 
       - name: Upload archive artifact
         uses: actions/upload-artifact@v4
@@ -102,5 +87,4 @@ jobs:
           files: |
             dist/hf-darwin-arm64.tar.gz
             dist/hf-linux-amd64.tar.gz
-            dist/hf-windows-amd64.zip
             dist/checksums.txt
