@@ -25,7 +25,11 @@ int main(int argc, char **argv) {
   }
 
   if (opt.mode == MODE_SERVER) {
-    server_opt_t server_opt = { .path = opt.path, .port = opt.port };
+    server_opt_t server_opt = {
+      .path = opt.path,
+      .port = opt.port,
+      .print_qr = opt.print_qr
+    };
     ret = server(&server_opt);
   } else if (opt.mode == MODE_CLIENT) {
     client_opt_t client_opt = { .path = opt.path, .ip = opt.ip, .port = opt.port };

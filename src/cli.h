@@ -19,6 +19,7 @@ typedef struct {
   const char *path;
   const char *ip;
   uint16_t port;
+  int print_qr;
 } Opt;
 
 

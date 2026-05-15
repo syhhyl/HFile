@@ -8,6 +8,7 @@ from test.support.hf import (
     make_temp_dir,
     resolve_hf_path,
     run_hf,
+    wait_for_text_in_file,
 )
 
 
@@ -62,6 +63,7 @@ class TestCLI(unittest.TestCase):
                 "stderr_contains": ["invalid port", "usage:"],
             },
             {"name": "o_removed", "args": ["-o", "out.txt"], "rc": 1, "stderr_contains": ["invalid argument", "usage:"]},
+            {"name": "client_q", "args": ["-s", "in", "-q"], "rc": 1, "stderr_contains": ["client mode does not accept -q", "usage:"]},
         ]
 
         for c in cases:
@@ -121,6 +123,27 @@ class TestCLI(unittest.TestCase):
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
         self.assertIn("invalid source file", r.stderr)
+
+    def test_server_q_prints_connect_url_and_qr(self) -> None:
+        with make_temp_dir(prefix="hf_cli_") as tmp_dir:
+            out_dir = Path(tmp_dir) / "recv"
+            log_path = Path(tmp_dir) / "server.log"
+            server = HFileServer(
+                hf_path=self.hf_path,
+                out_dir=out_dir,
+                log_path=log_path,
+                extra_args=["-q"],
+            )
+            try:
+                server.start()
+                text = wait_for_text_in_file(log_path, "Connect URL", timeout=5.0)
+                self.assertIsNotNone(text)
+                assert text is not None
+                self.assertIn(f"hfile://", text)
+                self.assertIn(f":{server.port}/", text)
+                self.assertTrue(any(ch in text for ch in "█▀▄"))
+            finally:
+                server.stop()
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

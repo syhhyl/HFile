@@ -1,6 +1,7 @@
 #include "discovery.h"
 #include "net.h"
 #include "protocol.h"
+#include "qr.h"
 #include "shutdown.h"
 #include "server.h"
 #include "server_conn_tracker.h"
@@ -388,7 +389,7 @@ static long server_current_pid_long(void) {
 }
 
 static void server_print_access_details(const server_opt_t *ser_opt, long pid,
-                                         int discovery_ok) {
+                                          int discovery_ok) {
   if (ser_opt == NULL || ser_opt->path == NULL) {
     return;
   }
@@ -401,6 +402,56 @@ static void server_print_access_details(const server_opt_t *ser_opt, long pid,
     fprintf(stdout, "  Discovery    on (port %u)\n",
             (unsigned)(ser_opt->port + 1));
   }
+  fflush(stdout);
+}
+
+static int server_get_connect_host(char *buf, size_t buf_len) {
+  if (buf == NULL || buf_len == 0) return 1;
+
+  socket_t sock;
+  socket_init(&sock);
+  sock = socket(AF_INET, SOCK_DGRAM, 0);
+  if (is_socket_invalid(sock)) {
+    snprintf(buf, buf_len, "127.0.0.1");
+    return 1;
+  }
+
+  struct sockaddr_in remote;
+  memset(&remote, 0, sizeof(remote));
+  remote.sin_family = AF_INET;
+  remote.sin_port = htons(80);
+  inet_pton(AF_INET, "8.8.8.8", &remote.sin_addr);
+
+  if (connect(sock, (struct sockaddr *)&remote, sizeof(remote)) != 0) {
+    socket_close(sock);
+    snprintf(buf, buf_len, "127.0.0.1");
+    return 1;
+  }
+
+  struct sockaddr_in local;
+  socklen_t local_len = sizeof(local);
+  if (getsockname(sock, (struct sockaddr *)&local, &local_len) != 0 ||
+      inet_ntop(AF_INET, &local.sin_addr, buf, (socklen_t)buf_len) == NULL) {
+    socket_close(sock);
+    snprintf(buf, buf_len, "127.0.0.1");
+    return 1;
+  }
+
+  socket_close(sock);
+  return 0;
+}
+
+static void server_print_qr(const server_opt_t *ser_opt) {
+  char host[64];
+  char url[96];
+
+  if (ser_opt == NULL || !ser_opt->print_qr) return;
+
+  (void)server_get_connect_host(host, sizeof(host));
+  snprintf(url, sizeof(url), "hfile://%s:%u/", host, (unsigned)ser_opt->port);
+
+  fprintf(stdout, "  Connect URL  %s\n", url);
+  (void)qr_print_url(url, stdout);
   fflush(stdout);
 }
 
@@ -451,6 +502,7 @@ static int server_run_process(const server_opt_t *ser_opt) {
   }
 
   server_print_access_details(ser_opt, server_current_pid_long(), discovery_ok);
+  server_print_qr(ser_opt);
 
   exit_code = server_run_listener(tcp_sock, discovery_sock, ser_opt);
   if (shutdown_requested()) {

@@ -9,7 +9,7 @@ void usage(const char *argv0) {
     "HFile — fast file transfer over LAN\n"
     "\n"
     "usage:\n"
-    "  %s [<path>]  [-p <port>]    start receive server\n"
+    "  %s [<path>]  [-p <port>] [-q]  start receive server\n"
     "  %s -s <file> [-i <ip>] [-p <port>]  send a file\n"
     "\n"
     "options:\n"
@@ -17,6 +17,7 @@ void usage(const char *argv0) {
     "  -s <file>  file to send\n"
     "  -i <ip>    server address\n"
     "  -p <port>  port number (default 8888)\n"
+    "  -q         print server QR code\n"
     "  -h         show this help\n"
     "\n"
     "examples:\n"
@@ -59,6 +60,7 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->path = NULL;
   opt->ip = NULL;
   opt->port = 8888;
+  opt->print_qr = 0;
   opt->mode = MODE_SERVER;
 
   int send_seen = 0;
@@ -143,6 +145,10 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         break;
       }
 
+      case 'q':
+        opt->print_qr = 1;
+        break;
+
       default:
         fprintf(stderr, "invalid argument\n");
         return PARSE_ERR;
@@ -160,6 +166,11 @@ parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 
   if (ip_seen && opt->mode != MODE_CLIENT) {
     fprintf(stderr, "server mode does not accept -i\n");
+    return PARSE_ERR;
+  }
+
+  if (opt->print_qr && opt->mode != MODE_SERVER) {
+    fprintf(stderr, "client mode does not accept -q\n");
     return PARSE_ERR;
   }
 
