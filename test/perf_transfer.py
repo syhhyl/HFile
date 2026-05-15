@@ -269,8 +269,6 @@ def handle_server_batch(
                 f"expected file size {expected_size} for {label}, got {file_size}"
             )
 
-        server.stop(timeout=10.0)
-        server.start(startup_timeout=10.0)
         send_line(conn, "READY")
         elapsed = wait_for_completed_file(
             out_dir, file_name, expected_size, timeout, abort_event

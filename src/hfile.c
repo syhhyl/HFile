@@ -1,5 +1,4 @@
 #include "node.h"
-#include "shutdown.h"
 
 #include <errno.h>
 #include <stdint.h>
@@ -185,18 +184,13 @@ static parse_result_t parse_args(int argc, char **argv, Opt *opt) {
 int main(int argc, char **argv) {
   int ret = 1;
 
-  if (shutdown_init() != 0) {
-    fprintf(stderr, "failed to initialize shutdown handler\n");
-    goto CLEAN_UP;
-  }
-
   Opt opt = {0};
   parse_result_t res = parse_args(argc, argv, &opt);
 
   if (res == PARSE_HELP || res == PARSE_ERR) {
     usage(argv[0]);
     ret = (res == PARSE_HELP) ? 0 : 1;
-    goto CLEAN_UP;
+    return ret;
   }
 
   if (opt.mode == MODE_RECV) {
@@ -207,13 +201,6 @@ int main(int argc, char **argv) {
     usage(argv[0]);
     ret = 1;
   }
-
-  if (shutdown_signal_number() != 0) {
-    ret = shutdown_exit_code();
-  }
-
-CLEAN_UP:
-  shutdown_cleanup();
 
   return ret;
 }

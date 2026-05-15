@@ -5,12 +5,10 @@ project(HFile VERSION 0.0.1 LANGUAGES C)
 add_executable(hf
   src/hfile.c
   src/node.c
-  src/transfer_io.c
   src/discovery.c
   src/protocol.c
   src/net.c
   src/fs.c
-  src/shutdown.c
 )
 
 target_include_directories(hf PRIVATE

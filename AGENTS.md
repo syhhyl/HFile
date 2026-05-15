@@ -14,22 +14,15 @@
 - `src/hfile.c` is the only executable entrypoint. It parses args and dispatches to node send/recv.
 - Receive mode is `hf recv [<dir>] [-p <port>]`; send mode is `hf send <file> [-i <ip>] [-p <port>]`.
 - TCP `<port>` handles the native protocol in `src/node.c`; UDP discovery opens on `<port> + 1` when possible.
-- Native file receive goes through `src/transfer_io.c`; keep receive-to-temp-file and atomic finalize there.
+- Native file receive goes through `src/node.c`; keep receive-to-temp-file and atomic finalize out of `net.c`.
 - `src/net.c` is the socket/zero-copy layer: `sendfile` for sends on Linux/macOS and `splice` for receives on Linux, with buffered fallback. Do NOT move temp-file or atomic-finalize logic into `net.c`.
-
-## Shutdown And Exit Codes
-
-- `shutdown_signal_number()` returns the actual signal number (e.g. `SIGINT`) only when a real signal was caught. It is `0` when shutdown was triggered internally via `shutdown_request()`.
-- `shutdown_exit_code()` always returns `130`.
-- In `main()`, only override the exit code when `shutdown_signal_number() != 0`. This prevents internal cleanup paths from being misreported as signal exits.
-- `shutdown_request()` sets `g_shutdown_requested = 1` but does NOT set `g_shutdown_signal`. It is used to wake blocking threads such as the connection tracker during cleanup.
 
 ## Behavior That Tests Depend On
 
 - File transfer stays two-phase: validate header/prefix, send `READY`, stream body, then send `FINAL`.
 - Large uploads are streaming. Do not replace file-body receive paths with whole-body `recv_all` logic.
 - Filename validation is intentionally strict across CLI paths; update the matching tests if behavior changes.
-- `hf recv [<dir>] [-p <port>]` runs a foreground receive node. Stop it with the process signal or Ctrl-C.
+- `hf recv [<dir>] [-p <port>]` runs a foreground receive node and loops waiting for connections. Stop it manually with the process signal or Ctrl-C.
 
 ## Test Quirks
 

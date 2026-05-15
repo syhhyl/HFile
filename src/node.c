@@ -3,12 +3,9 @@
 #include "net.h"
 #include "node.h"
 #include "protocol.h"
-#include "shutdown.h"
-#include "transfer_io.h"
 
 #include <stddef.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,20 +17,8 @@
 #define SERVER_CONTROL_RECV_TIMEOUT_MS 15000u
 #define NODE_CONTROL_SOCKET_TIMEOUT_MS 30000u
 
-typedef struct {
-  char *file_name;
-  uint64_t content_size;
-} node_file_request_t;
-
-static protocol_result_t node_recv_file(
-  socket_t conn,
-  const char *path,
-  const protocol_header_t *proto_header);
-static protocol_result_t node_send_response(socket_t conn,
-                                            uint8_t phase,
-                                            uint8_t status,
-                                            protocol_result_t error_code);
-static void node_file_request_cleanup(node_file_request_t *request);
+static protocol_result_t node_recv_file(socket_t conn, const char *path,
+                                        const protocol_header_t *proto_header);
 
 static inline int create_listener_socket(
   uint16_t port,
@@ -85,6 +70,10 @@ static int node_handle_connection(socket_t conn, const char *path) {
   uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
   protocol_header_t proto_header = {0};
 
+  if (net_set_recv_timeout(conn, SERVER_CONTROL_RECV_TIMEOUT_MS) != 0) {
+    sock_perror("setsockopt(SO_RCVTIMEO)");
+  }
+
   protocol_result_t prefix_res = recv_header(conn, header_buf);
   if (prefix_res != PROTOCOL_OK) {
     if (prefix_res == PROTOCOL_ERR_EOF) {
@@ -109,14 +98,6 @@ static int node_handle_connection(socket_t conn, const char *path) {
   return 1;
 }
 
-static int node_handle_single_connection(socket_t conn, const char *path) {
-  if (net_set_recv_timeout(conn, SERVER_CONTROL_RECV_TIMEOUT_MS) != 0) {
-    sock_perror("setsockopt(SO_RCVTIMEO)");
-  }
-
-  return node_handle_connection(conn, path);
-}
-
 static protocol_result_t node_send_response(
   socket_t conn,
   uint8_t phase,
@@ -130,87 +111,122 @@ static protocol_result_t node_send_response(
   return send_res_frame(conn, &frame);
 }
 
-static void node_file_request_cleanup(node_file_request_t *request) {
-  if (request == NULL) {
-    return;
-  }
-  free(request->file_name);
-  request->file_name = NULL;
-  request->content_size = 0;
-}
-
-static protocol_result_t node_read_file_request(
-  socket_t conn,
-  const protocol_header_t *proto_header,
-  node_file_request_t *request) {
-  uint64_t prefix_size = 0;
+static protocol_result_t node_recv_socket_file(socket_t conn,
+                                               const char *base_dir,
+                                               const char *file_name,
+                                               uint64_t content_size) {
+  int fd = -1;
   protocol_result_t result = PROTOCOL_ERR_IO;
+  char full_path[4096];
+  char tmp_path[4096];
 
-  if (proto_header == NULL || request == NULL) {
+  if (base_dir == NULL || file_name == NULL) {
+    fprintf(stderr, "invalid receive file args\n");
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
 
-  request->file_name = NULL;
-  request->content_size = 0;
-
-  if (proto_header->payload_size <
-      (uint64_t)proto_file_transfer_prefix_size(1)) {
-    fprintf(stderr, "protocol error: payload size too small\n");
+  if (fs_join_relative_path(full_path, sizeof(full_path), base_dir, file_name) != 0) {
+    fprintf(stderr, "output path is too long\n");
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
 
-  result = proto_recv_file_transfer_prefix(
-    conn, &request->file_name, &request->content_size);
-  if (result != PROTOCOL_OK) {
-    if (result == PROTOCOL_ERR_FILE_NAME_LEN) {
-      fprintf(stderr, "protocol error: invalid file name length\n");
-    } else if (result == PROTOCOL_ERR_ALLOC) {
-      perror("malloc(file_name)");
-    } else if (result == PROTOCOL_ERR_EOF) {
-      fprintf(stderr,
-              "protocol error: unexpected EOF while receiving payload\n");
-    } else {
-      sock_perror("protocol_recv_file_transfer_prefix");
+  for (int attempt = 0; attempt < 3 && fd < 0; attempt++) {
+    if (fs_build_temp_path(tmp_path, sizeof(tmp_path), full_path,
+                           (int)getpid(), attempt) != 0) {
+      continue;
     }
-    return result;
+    fd = fs_open_temp_file(tmp_path);
+    if (fd < 0 && errno != EEXIST) {
+      perror("open temp file");
+      return PROTOCOL_ERR_IO;
+    }
+  }
+  if (fd < 0) {
+    perror("open temp file");
+    return PROTOCOL_ERR_IO;
   }
 
-  if (fs_validate_file_name(request->file_name) != 0) {
-    fprintf(stderr, "invalid file name: %s\n", request->file_name);
-    return PROTOCOL_ERR_INVALID_FILE_NAME;
+  net_recv_file_result_t recv_res = net_recv_file_best_effort(conn, fd, content_size);
+  if (recv_res == NET_RECV_FILE_OK) {
+    if (fs_close(fd) != 0) {
+      perror("close temp file");
+      fs_remove_ignore_error(tmp_path);
+      return PROTOCOL_ERR_IO;
+    }
+    if (fs_commit_temp_file(tmp_path, full_path, NULL) != 0) {
+      perror("finalize temp file");
+      fs_remove_ignore_error(tmp_path);
+      return PROTOCOL_ERR_IO;
+    }
+    return PROTOCOL_OK;
   }
 
-  prefix_size = (uint64_t)proto_file_transfer_prefix_size(
-    (uint16_t)strlen(request->file_name));
-  if (proto_header->payload_size != prefix_size + request->content_size) {
-    fprintf(stderr, "protocol error: payload size mismatch\n");
-    return PROTOCOL_ERR_PAYLOAD_SIZE_MISMATCH;
+  if (recv_res == NET_RECV_FILE_EOF) {
+    fprintf(stderr, "protocol error: unexpected EOF while receiving file\n");
+    result = PROTOCOL_ERR_EOF;
+  } else if (recv_res == NET_RECV_FILE_INVALID_ARGUMENT) {
+    fprintf(stderr, "invalid receive file arguments\n");
+    result = PROTOCOL_ERR_INVALID_ARGUMENT;
+  } else {
+    sock_perror("recv(file_body)");
+    result = PROTOCOL_ERR_IO;
   }
 
-  return PROTOCOL_OK;
+  fs_close(fd);
+  fs_remove_ignore_error(tmp_path);
+  return result;
 }
 
 static protocol_result_t node_recv_file(
   socket_t conn,
   const char *path,
   const protocol_header_t *proto_header) {
-  node_file_request_t request = {0};
-  char saved_path[4096];
+  char *file_name = NULL;
+  uint64_t content_size = 0;
   protocol_result_t result = PROTOCOL_ERR_IO;
 
-  if (path == NULL) {
+  if (path == NULL || proto_header == NULL) {
     fprintf(stderr, "invalid file transfer handler arguments\n");
     return PROTOCOL_ERR_INVALID_ARGUMENT;
   }
 
-  result = node_read_file_request(conn, proto_header, &request);
+  if (proto_header->payload_size <
+      (uint64_t)proto_file_transfer_prefix_size(1)) {
+    fprintf(stderr, "protocol error: payload size too small\n");
+    result = PROTOCOL_ERR_INVALID_ARGUMENT;
+    goto REJECT;
+  }
+
+  result = proto_recv_file_transfer_prefix(conn, &file_name, &content_size);
   if (result != PROTOCOL_OK) {
+    if (result == PROTOCOL_ERR_FILE_NAME_LEN) {
+      fprintf(stderr, "protocol error: invalid file name length\n");
+    } else if (result == PROTOCOL_ERR_ALLOC) {
+      perror("malloc(file_name)");
+    } else if (result == PROTOCOL_ERR_EOF) {
+      fprintf(stderr, "protocol error: unexpected EOF while receiving payload\n");
+    } else {
+      sock_perror("protocol_recv_file_transfer_prefix");
+    }
     if (result != PROTOCOL_ERR_EOF && result != PROTOCOL_ERR_IO &&
         result != PROTOCOL_ERR_ALLOC) {
-      (void)node_send_response(
-        conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED, result);
+      goto REJECT;
     }
     goto CLEANUP;
+  }
+
+  if (fs_validate_file_name(file_name) != 0) {
+    fprintf(stderr, "invalid file name: %s\n", file_name);
+    result = PROTOCOL_ERR_INVALID_FILE_NAME;
+    goto REJECT;
+  }
+
+  uint64_t prefix_size = (uint64_t)proto_file_transfer_prefix_size(
+    (uint16_t)strlen(file_name));
+  if (proto_header->payload_size != prefix_size + content_size) {
+    fprintf(stderr, "protocol error: payload size mismatch\n");
+    result = PROTOCOL_ERR_PAYLOAD_SIZE_MISMATCH;
+    goto REJECT;
   }
 
   result = node_send_response(
@@ -221,17 +237,13 @@ static protocol_result_t node_recv_file(
   }
 
   if (net_set_recv_timeout(
-        conn, net_transfer_timeout_ms(request.content_size)) != 0) {
+        conn, net_transfer_timeout_ms(content_size)) != 0) {
     sock_perror("setsockopt(SO_RCVTIMEO)");
     result = PROTOCOL_ERR_IO;
     goto CLEANUP;
   }
 
-  result = transfer_recv_socket_file(conn, path, request.file_name,
-                                     request.content_size,
-                                     "recv(file_body)",
-                                     "protocol error: unexpected EOF while receiving file",
-                                     saved_path, sizeof(saved_path));
+  result = node_recv_socket_file(conn, path, file_name, content_size);
   if (result != PROTOCOL_OK) {
     if (node_send_response(
           conn, PROTO_PHASE_FINAL, PROTO_STATUS_FAILED, result) != PROTOCOL_OK) {
@@ -248,28 +260,27 @@ static protocol_result_t node_recv_file(
   }
 
   fprintf(stdout, "received  %s  %llu bytes\n",
-          request.file_name, (unsigned long long)request.content_size);
+          file_name, (unsigned long long)content_size);
   fflush(stdout);
 
   result = PROTOCOL_OK;
   goto CLEANUP;
 
+REJECT:
+  (void)node_send_response(conn, PROTO_PHASE_READY,
+                           PROTO_STATUS_REJECTED, result);
+
 CLEANUP:
-  node_file_request_cleanup(&request);
+  free(file_name);
   return result;
 }
 
-static int node_recv_once(socket_t tcp_sock, socket_t discovery_sock,
+static int node_recv_loop(socket_t tcp_sock, socket_t discovery_sock,
                           const char *path, uint16_t port) {
   int exit_code = 0;
   int has_discovery = is_socket_invalid(discovery_sock) ? 0 : 1;
 
   for (;;) {
-    if (shutdown_requested()) {
-      exit_code = shutdown_exit_code();
-      break;
-    }
-
     fd_set readfds;
     FD_ZERO(&readfds);
 
@@ -278,91 +289,35 @@ static int node_recv_once(socket_t tcp_sock, socket_t discovery_sock,
       FD_SET(discovery_sock, &readfds);
     }
 
-    struct timeval tv;
-    tv.tv_sec = 0;
-    tv.tv_usec = 50000;
-
     int maxfd = (int)tcp_sock;
-    if (has_discovery) {
-      if (discovery_sock > maxfd) maxfd = discovery_sock;
-    }
+    if (has_discovery && discovery_sock > maxfd) maxfd = discovery_sock;
 
-    int rc = select(maxfd + 1, &readfds, NULL, NULL, &tv);
+    int rc = select(maxfd + 1, &readfds, NULL, NULL, NULL);
     if (rc < 0) {
       if (errno == EINTR) continue;
-      if (shutdown_requested()) {
-        exit_code = shutdown_exit_code();
-        break;
-      }
       sock_perror("select");
       exit_code = 1;
-      continue;
+      break;
     }
 
-    if (rc == 0) continue;
-
-    if (has_discovery) {
-      int disc_ready = FD_ISSET(discovery_sock, &readfds) ? 1 : 0;
-      if (disc_ready) {
-        discovery_handle_query(discovery_sock, port);
-      }
+    if (has_discovery && FD_ISSET(discovery_sock, &readfds)) {
+      discovery_handle_query(discovery_sock, port);
     }
 
-    int tcp_ready = FD_ISSET(tcp_sock, &readfds) ? 1 : 0;
-    if (!tcp_ready) continue;
+    if (!FD_ISSET(tcp_sock, &readfds)) continue;
 
     socket_t conn = accept(tcp_sock, NULL, NULL);
     if (is_socket_invalid(conn)) {
       if (errno == EINTR) continue;
-      if (shutdown_requested()) {
-        exit_code = shutdown_exit_code();
-        break;
-      }
       sock_perror("accept");
       continue;
     }
 
-    exit_code = node_handle_single_connection(conn, path);
+    (void)node_handle_connection(conn, path);
     socket_close(conn);
-    break;
   }
 
   return exit_code;
-}
-
-static long node_current_pid_long(void) {
-  return (long)getpid();
-}
-
-static void node_print_access_details(const char *path, uint16_t port,
-                                      long pid, int discovery_ok) {
-  if (path == NULL) {
-    return;
-  }
-
-  fprintf(stdout, "HFile node ready\n");
-  fprintf(stdout, "  Receive Dir  %s\n", path);
-  fprintf(stdout, "  Port         %u\n", (unsigned)port);
-  fprintf(stdout, "  PID          %ld\n", pid);
-  if (discovery_ok) {
-    fprintf(stdout, "  Discovery    on (port %u)\n",
-            (unsigned)(port + 1));
-  }
-  fflush(stdout);
-}
-
-static void node_print_shutdown_notice(void) {
-  int add_leading_newline = 0;
-
-  if (shutdown_signal_number() == SIGINT) {
-    add_leading_newline = isatty(fileno(stderr)) ? 1 : 0;
-  }
-
-  if (add_leading_newline) {
-    fprintf(stderr, "\nshutdown requested, stopping node\n");
-  } else {
-    fprintf(stderr, "shutdown requested, stopping node\n");
-  }
 }
 
 int node_recv(const char *path, uint16_t port) {
@@ -391,12 +346,16 @@ int node_recv(const char *path, uint16_t port) {
     }
   }
 
-  node_print_access_details(path, port, node_current_pid_long(), discovery_ok);
-
-  exit_code = node_recv_once(tcp_sock, discovery_sock, path, port);
-  if (shutdown_requested()) {
-    node_print_shutdown_notice();
+  fprintf(stdout, "HFile node ready\n");
+  fprintf(stdout, "  Receive Dir  %s\n", path);
+  fprintf(stdout, "  Port         %u\n", (unsigned)port);
+  fprintf(stdout, "  PID          %ld\n", (long)getpid());
+  if (discovery_ok) {
+    fprintf(stdout, "  Discovery    on (port %u)\n", (unsigned)(port + 1));
   }
+  fflush(stdout);
+
+  exit_code = node_recv_loop(tcp_sock, discovery_sock, path, port);
 
 CLOSE_SOCK:
   socket_close(tcp_sock);
@@ -409,42 +368,19 @@ CLEAN_UP:
 }
 
 static const char *node_protocol_result_name(protocol_result_t res) {
-  switch (res) {
-    case PROTOCOL_OK:
-      return "ok";
-    case PROTOCOL_ERR_HEADER_MAGIC:
-      return "header magic";
-    case PROTOCOL_ERR_HEADER_VERSION:
-      return "header version";
-    case PROTOCOL_ERR_HEADER_MSG_TYPE:
-      return "header msg type";
-    case PROTOCOL_ERR_HEADER_MSG_FLAG:
-      return "header msg flag";
-    case PROTOCOL_ERR_INVALID_ARGUMENT:
-      return "invalid argument";
-    case PROTOCOL_ERR_FILE_NAME_LEN:
-      return "file name length";
-    case PROTOCOL_ERR_INVALID_FILE_NAME:
-      return "invalid file name";
-    case PROTOCOL_ERR_PAYLOAD_SIZE_MISMATCH:
-      return "payload size mismatch";
-    case PROTOCOL_ERR_IO:
-      return "io";
-    case PROTOCOL_ERR_SHORT_WRITE:
-      return "short write";
-    case PROTOCOL_ERR_ALLOC:
-      return "alloc";
-    case PROTOCOL_ERR_EOF:
-      return "unexpected eof";
-    default:
-      return "unknown";
-  }
+  static const char *names[] = {
+    "ok", "header magic", "header version", "header msg type",
+    "header msg flag", "invalid argument", "file name length",
+    "invalid file name", "payload size mismatch", "io", "short write",
+    "alloc", "unexpected eof"
+  };
+  int i = (int)res;
+  return (i >= 0 && (size_t)i < sizeof(names) / sizeof(names[0])) ?
+    names[i] : "unknown";
 }
 
-static int node_recv_response_frame(socket_t sock,
-                                    uint8_t expected_phase,
-                                    const char *kind,
-                                    res_frame_t *frame_out) {
+static int node_recv_response(socket_t sock, uint8_t expected_phase,
+                              const char *kind) {
   res_frame_t frame = {0};
   protocol_result_t res = recv_res_frame(sock, &frame);
 
@@ -480,205 +416,60 @@ static int node_recv_response_frame(socket_t sock,
     return 1;
   }
 
-  if (frame_out != NULL) {
-    *frame_out = frame;
-  }
-  return 0;
-}
-
-static int node_check_response(const res_frame_t *frame,
-                               uint8_t expected_phase,
-                               const char *kind) {
-  if (frame == NULL) {
-    fprintf(stderr, "invalid %s response\n", kind);
-    return 1;
-  }
-
-  if (frame->status == PROTO_STATUS_OK) {
+  if (frame.status == PROTO_STATUS_OK) {
     return 0;
   }
 
-  if (expected_phase == PROTO_PHASE_READY) {
-    if (frame->status == PROTO_STATUS_REJECTED) {
-      fprintf(stderr, "node reported %s failure: %s\n",
-              kind,
-              node_protocol_result_name((protocol_result_t)frame->error_code));
-      return 1;
-    }
-
-    fprintf(stderr, "invalid %s ready response status=%u error=%s\n",
-            kind,
-            (unsigned)frame->status,
-            node_protocol_result_name((protocol_result_t)frame->error_code));
+  if ((expected_phase == PROTO_PHASE_READY &&
+       frame.status == PROTO_STATUS_REJECTED) ||
+      (expected_phase == PROTO_PHASE_FINAL &&
+       frame.status == PROTO_STATUS_FAILED)) {
+    fprintf(stderr, "node reported %s failure: %s\n", kind,
+            node_protocol_result_name((protocol_result_t)frame.error_code));
     return 1;
   }
 
-  if (expected_phase == PROTO_PHASE_FINAL) {
-    if (frame->status == PROTO_STATUS_FAILED) {
-      fprintf(stderr, "node reported %s failure: %s\n",
-              kind,
-              node_protocol_result_name((protocol_result_t)frame->error_code));
-      return 1;
-    }
-
-    fprintf(stderr, "invalid %s final response status=%u error=%s\n",
-            kind,
-            (unsigned)frame->status,
-            node_protocol_result_name((protocol_result_t)frame->error_code));
-    return 1;
-  }
-
-  fprintf(stderr, "invalid expected %s phase=%u\n", kind,
-          (unsigned)expected_phase);
+  fprintf(stderr, "invalid %s response status=%u error=%s\n", kind,
+          (unsigned)frame.status,
+          node_protocol_result_name((protocol_result_t)frame.error_code));
   return 1;
 }
 
-static int node_recv_checked_response(socket_t sock,
-                                      uint8_t expected_phase,
-                                      const char *kind,
-                                      res_frame_t *frame_out) {
-  res_frame_t frame = {0};
-
-  if (node_recv_response_frame(sock, expected_phase, kind, &frame) != 0) {
-    return 1;
-  }
-  if (node_check_response(&frame, expected_phase, kind) != 0) {
-    return 1;
-  }
-  if (frame_out != NULL) {
-    *frame_out = frame;
-  }
-  return 0;
-}
-
-static int node_send_header_payload(socket_t sock,
-                                    uint8_t msg_type,
-                                    uint64_t payload_size,
-                                    const uint8_t *payload,
-                                    size_t payload_len,
-                                    const char *send_ctx) {
+static int node_send_file_preamble(socket_t sock, const char *file_name,
+                                   uint16_t file_name_len,
+                                   uint64_t content_size) {
   protocol_header_t header = {0};
-  uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
   uint8_t preamble_buf[HF_PROTOCOL_HEADER_SIZE + sizeof(uint16_t) +
                        HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
   protocol_result_t proto_res = PROTOCOL_OK;
 
   init_header(&header);
-  header.msg_type = msg_type;
+  header.msg_type = HF_MSG_TYPE_SEND_FILE;
   header.flags = HF_MSG_FLAG_NONE;
-  header.payload_size = payload_size;
+  header.payload_size =
+    (uint64_t)proto_file_transfer_prefix_size(file_name_len) + content_size;
 
-  proto_res = encode_header(&header, header_buf);
+  proto_res = encode_header(&header, preamble_buf);
   if (proto_res != PROTOCOL_OK) {
     fprintf(stderr, "failed to encode protocol header\n");
     return 1;
   }
 
-  if (payload_len <= sizeof(preamble_buf) - sizeof(header_buf)) {
-    memcpy(preamble_buf, header_buf, sizeof(header_buf));
-    if (payload_len > 0) {
-      memcpy(preamble_buf + sizeof(header_buf), payload, payload_len);
-    }
-    proto_res = proto_send_payload(sock, preamble_buf,
-                                   sizeof(header_buf) + payload_len);
-    if (proto_res != PROTOCOL_OK) {
-      sock_perror(send_ctx);
-      return 1;
-    }
-    return 0;
-  }
-
-  proto_res = proto_send_payload(sock, header_buf, sizeof(header_buf));
+  size_t prefix_size = proto_file_transfer_prefix_size(file_name_len);
+  proto_res = encode_file_prefix(file_name, content_size,
+                                 preamble_buf + HF_PROTOCOL_HEADER_SIZE);
   if (proto_res != PROTOCOL_OK) {
-    sock_perror(send_ctx);
+    fprintf(stderr, "failed to encode file_prefix\n");
     return 1;
   }
-  if (payload_len > 0 &&
-      proto_send_payload(sock, payload, payload_len) != PROTOCOL_OK) {
-    sock_perror(send_ctx);
+
+  if (proto_send_payload(sock, preamble_buf,
+                         HF_PROTOCOL_HEADER_SIZE + prefix_size) != PROTOCOL_OK) {
+    sock_perror("send(file_preamble)");
     return 1;
   }
 
   return 0;
-}
-
-static int node_connect(const char *ip, uint16_t port, socket_t *sock_out) {
-  socket_t sock;
-
-  struct sockaddr_in addr;
-
-  socket_init(&sock);
-
-  sock = socket(AF_INET, SOCK_STREAM, 0);
-  if (is_socket_invalid(sock)) {
-    sock_perror("socket");
-    return 1;
-  }
-
-  memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(port);
-
-  if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
-    perror("inet_pton");
-    socket_close(sock);
-    return 1;
-  }
-
-  if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    sock_perror("connect");
-    socket_close(sock);
-    return 1;
-  }
-
-  if (net_set_socket_timeouts(sock, NODE_CONTROL_SOCKET_TIMEOUT_MS) != 0) {
-    sock_perror("setsockopt(node_timeout)");
-    socket_close(sock);
-    return 1;
-  }
-
-  *sock_out = sock;
-  return 0;
-}
-
-static int node_get_file_size(int in, uint64_t *content_size_out) {
-  struct stat st;
-
-  if (content_size_out == NULL) {
-    fprintf(stderr, "invalid file size output\n");
-    return 1;
-  }
-
-  if (fstat(in, &st) != 0) {
-    perror("fstat");
-    return 1;
-  }
-
-  if (!S_ISREG(st.st_mode) || st.st_size < 0) {
-    fprintf(stderr, "invalid source file\n");
-    return 1;
-  }
-
-  *content_size_out = (uint64_t)st.st_size;
-  return 0;
-}
-
-static int node_send_file_body(int in, socket_t sock, uint64_t content_size) {
-  net_send_file_result_t send_file_res =
-    net_send_file_best_effort(sock, in, content_size);
-  if (send_file_res == NET_SEND_FILE_OK) {
-    return 0;
-  }
-
-  if (send_file_res == NET_SEND_FILE_SOURCE_CHANGED) {
-    fprintf(stderr, "source file changed during transfer\n");
-  } else if (send_file_res == NET_SEND_FILE_INVALID_ARGUMENT) {
-    fprintf(stderr, "invalid raw transfer arguments\n");
-  } else {
-    sock_perror("sendfile");
-  }
-
-  return 1;
 }
 
 int node_send(const char *file_path, const char *ip, uint16_t port) {
@@ -690,6 +481,8 @@ int node_send(const char *file_path, const char *ip, uint16_t port) {
   const char *file_name = NULL;
   uint16_t file_name_len = 0;
   uint64_t content_size = 0;
+  struct stat st;
+  struct sockaddr_in addr;
 
   if (fs_basename_from_path(&path, &file_name) != 0) {
     fprintf(stderr, "invalid send path\n");
@@ -710,16 +503,17 @@ int node_send(const char *file_path, const char *ip, uint16_t port) {
     goto CLEAN_UP;
   }
 
-  if (proto_file_transfer_prefix_size(file_name_len) > CHUNK_SIZE) {
-    fprintf(stderr, "protocol payload prefix exceeds buffer size\n");
+  if (fstat(in, &st) != 0) {
+    perror("fstat");
     exit_code = 1;
     goto CLEAN_UP;
   }
-
-  if (node_get_file_size(in, &content_size) != 0) {
+  if (!S_ISREG(st.st_mode) || st.st_size < 0) {
+    fprintf(stderr, "invalid source file\n");
     exit_code = 1;
     goto CLEAN_UP;
   }
+  content_size = (uint64_t)st.st_size;
 
   if (content_size > HF_MAX_FILE_SIZE) {
     fprintf(stderr, "MAX_FILE_SIZE is 100GB\n");
@@ -744,33 +538,38 @@ int node_send(const char *file_path, const char *ip, uint16_t port) {
             (unsigned)connect_port);
   }
 
-  if (node_connect(connect_ip, connect_port, &sock) != 0) {
+  sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (is_socket_invalid(sock)) {
+    sock_perror("socket");
     exit_code = 1;
     goto CLEAN_UP;
   }
 
-  uint64_t payload_size =
-    (uint64_t)proto_file_transfer_prefix_size(file_name_len) + content_size;
-
-  uint8_t file_prefix_buf[sizeof(uint16_t) + HF_PROTOCOL_MAX_FILE_NAME_LEN + sizeof(uint64_t)];
-  protocol_result_t proto_res = encode_file_prefix(file_name, content_size,
-                                                    file_prefix_buf);
-  if (proto_res != PROTOCOL_OK) {
-    fprintf(stderr, "failed to encode file_prefix\n");
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(connect_port);
+  if (inet_pton(AF_INET, connect_ip, &addr.sin_addr) != 1) {
+    perror("inet_pton");
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+  if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    sock_perror("connect");
+    exit_code = 1;
+    goto CLEAN_UP;
+  }
+  if (net_set_socket_timeouts(sock, NODE_CONTROL_SOCKET_TIMEOUT_MS) != 0) {
+    sock_perror("setsockopt(node_timeout)");
     exit_code = 1;
     goto CLEAN_UP;
   }
 
-  size_t file_prefix_size = proto_file_transfer_prefix_size(file_name_len);
-  if (node_send_header_payload(sock, HF_MSG_TYPE_SEND_FILE, payload_size,
-                               file_prefix_buf, file_prefix_size,
-                               "send(file_preamble)") != 0) {
+  if (node_send_file_preamble(sock, file_name, file_name_len, content_size) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
 
-  res_frame_t r_f = {0};
-  if (node_recv_checked_response(sock, PROTO_PHASE_READY, "transfer", &r_f) != 0) {
+  if (node_recv_response(sock, PROTO_PHASE_READY, "transfer") != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
@@ -781,15 +580,21 @@ int node_send(const char *file_path, const char *ip, uint16_t port) {
     goto CLEAN_UP;
   }
 
-  if (node_send_file_body(in, sock, content_size) != 0) {
+  net_send_file_result_t send_file_res =
+    net_send_file_best_effort(sock, in, content_size);
+  if (send_file_res != NET_SEND_FILE_OK) {
+    if (send_file_res == NET_SEND_FILE_SOURCE_CHANGED) {
+      fprintf(stderr, "source file changed during transfer\n");
+    } else if (send_file_res == NET_SEND_FILE_INVALID_ARGUMENT) {
+      fprintf(stderr, "invalid raw transfer arguments\n");
+    } else {
+      sock_perror("sendfile");
+    }
     exit_code = 1;
     goto CLEAN_UP;
   }
 
-  if (shutdown(sock, SHUT_WR) < 0) {
-    sock_perror("shutdown(SHUT_WR)");
-  }
-  if (node_recv_checked_response(sock, PROTO_PHASE_FINAL, "transfer", &r_f) != 0) {
+  if (node_recv_response(sock, PROTO_PHASE_FINAL, "transfer") != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
