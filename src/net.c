@@ -1,9 +1,3 @@
-#ifdef __linux__
-  #ifndef _GNU_SOURCE
-    #define _GNU_SOURCE
-  #endif
-#endif
-
 #include "net.h"
 
 #include <errno.h>

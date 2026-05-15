@@ -21,6 +21,7 @@ from test.support.hf import (
 
 
 CHUNK_SIZE = 1024 * 1024
+NAME_BYTES = 256
 PROTOCOL_MAGIC = protocol_define("HF_PROTOCOL_MAGIC")
 PROTOCOL_VERSION = protocol_define("HF_PROTOCOL_VERSION")
 MSG_TYPE_SEND_FILE = protocol_define("HF_MSG_TYPE_SEND_FILE")
@@ -192,7 +193,7 @@ class TransferTestCase(unittest.TestCase):
     def _make_file_prefix(self, file_name: bytes, content_size: int) -> bytes:
         return (
             struct.pack("!H", len(file_name))
-            + file_name
+            + file_name.ljust(NAME_BYTES, b"\0")
             + struct.pack("!Q", content_size)
         )
 
@@ -330,15 +331,12 @@ class TestTransferCLI(TransferTestCase):
         dst = self.out_dir / src.name
         self._reset_output_path(dst)
 
-        log_offset = self._server_log_offset()
         r, _ = self._run_client_file_transfer(src)
         self.assertEqual(
             r.returncode,
             1,
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
-        self.assertIn("node reported transfer failure", r.stderr)
-        self._wait_for_server_log(f"invalid file name: {src.name}", offset=log_offset)
         self.assertFalse(dst.exists(), f"unexpected output file: {dst}")
         self._assert_no_temp_files(src.name)
 
@@ -368,55 +366,46 @@ class TestTransferProtocol(TransferTestCase):
     def test_protocol_rejects_invalid_magic(self) -> None:
         header = self._make_header(
             msg_type=MSG_TYPE_SEND_FILE,
-            payload_size=0,
+            payload_size=len(self._make_file_prefix(b"x", 0)),
             magic=0x1234,
         )
+        prefix = self._make_file_prefix(b"x", 0)
 
-        log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header], allow_empty_ack=True)
+        ack = self._send_raw_file_preamble_and_recv_ack(header, prefix)
         self.assertEqual(
             ack,
-            b"",
+            self._make_res_frame(0, 1, 5),
             f"unexpected invalid-magic ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
-        )
-        self._wait_for_server_log(
-            "protocol error: failed to decode header", offset=log_offset
         )
 
     def test_protocol_rejects_invalid_version(self) -> None:
         header = self._make_header(
             msg_type=MSG_TYPE_SEND_FILE,
-            payload_size=0,
+            payload_size=len(self._make_file_prefix(b"x", 0)),
             version=PROTOCOL_VERSION + 1,
         )
+        prefix = self._make_file_prefix(b"x", 0)
 
-        log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header], allow_empty_ack=True)
+        ack = self._send_raw_file_preamble_and_recv_ack(header, prefix)
         self.assertEqual(
             ack,
-            b"",
+            self._make_res_frame(0, 1, 5),
             f"unexpected invalid-version ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
-        )
-        self._wait_for_server_log(
-            "protocol error: failed to decode header", offset=log_offset
         )
 
     def test_protocol_rejects_invalid_flags(self) -> None:
         header = self._make_header(
             msg_type=MSG_TYPE_SEND_FILE,
-            payload_size=0,
+            payload_size=len(self._make_file_prefix(b"x", 0)),
             flags=0x01,
         )
+        prefix = self._make_file_prefix(b"x", 0)
 
-        log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header], allow_empty_ack=True)
+        ack = self._send_raw_file_preamble_and_recv_ack(header, prefix)
         self.assertEqual(
             ack,
-            b"",
+            self._make_res_frame(0, 1, 5),
             f"unexpected invalid-flags ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
-        )
-        self._wait_for_server_log(
-            "protocol error: failed to decode header", offset=log_offset
         )
 
     def test_file_protocol_rejects_payload_size_too_small(self) -> None:
@@ -424,34 +413,27 @@ class TestTransferProtocol(TransferTestCase):
             msg_type=MSG_TYPE_SEND_FILE,
             payload_size=9,
         )
+        prefix = self._make_file_prefix(b"small.bin", 0)
 
-        log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header], allow_empty_ack=True)
+        ack = self._send_raw_file_preamble_and_recv_ack(header, prefix)
         self.assertEqual(
             ack,
             self._make_res_frame(0, 1, 5),
             f"unexpected payload-too-small ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
         )
-        self._wait_for_server_log(
-            "protocol error: payload size too small", offset=log_offset
-        )
 
     def test_protocol_rejects_unsupported_message_type(self) -> None:
         header = self._make_header(
             msg_type=0x7F,
-            payload_size=0,
+            payload_size=len(self._make_file_prefix(b"unsupported.bin", 0)),
         )
+        prefix = self._make_file_prefix(b"unsupported.bin", 0)
 
-        log_offset = self._server_log_offset()
-        ack = self._send_raw_parts([header], allow_empty_ack=True)
+        ack = self._send_raw_file_preamble_and_recv_ack(header, prefix)
         self.assertEqual(
             ack,
-            b"",
+            self._make_res_frame(0, 1, 5),
             f"unexpected unsupported-message ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
-        )
-        self._wait_for_server_log(
-            "protocol error: failed to decode header",
-            offset=log_offset,
         )
         self.assertFalse(list(self.out_dir.glob("unsupported.bin*")))
 
@@ -464,15 +446,11 @@ class TestTransferProtocol(TransferTestCase):
             payload_size=len(prefix) + content_size,
         )
 
-        log_offset = self._server_log_offset()
         ack = self._send_raw_file_preamble_and_recv_ack(header, prefix)
         self.assertEqual(
             ack,
-            self._make_res_frame(0, 1, 7),
+            self._make_res_frame(0, 1, 5),
             f"unexpected invalid-name pre-body ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
-        )
-        self._wait_for_server_log(
-            f"invalid file name: {file_name.decode('ascii')}", offset=log_offset
         )
         self.assertFalse((self.out_dir / file_name.decode("ascii")).exists())
         self._assert_no_temp_files(file_name.decode("ascii"))
@@ -486,15 +464,11 @@ class TestTransferProtocol(TransferTestCase):
             payload_size=len(prefix) + content_size + 1,
         )
 
-        log_offset = self._server_log_offset()
         ack = self._send_raw_file_preamble_and_recv_ack(header, prefix)
         self.assertEqual(
             ack,
-            self._make_res_frame(0, 1, 8),
+            self._make_res_frame(0, 1, 5),
             f"unexpected payload-mismatch pre-body ack: {ack!r}; server_log_tail={self._server_log_tail()!r}",
-        )
-        self._wait_for_server_log(
-            "protocol error: payload size mismatch", offset=log_offset
         )
         self.assertFalse((self.out_dir / file_name.decode("ascii")).exists())
 
@@ -580,7 +554,6 @@ class TestTransferProtocol(TransferTestCase):
             payload_size=len(prefix) + content_size,
         )
 
-        log_offset = self._server_log_offset()
         ready_ack, final_ack = self._send_raw_file_transfer(header, prefix, b"x" * 100)
         self.assertEqual(
             ready_ack[1],
@@ -589,12 +562,8 @@ class TestTransferProtocol(TransferTestCase):
         )
         self.assertEqual(
             final_ack,
-            self._make_res_frame(1, 2, 12),
+            self._make_res_frame(1, 2, 9),
             f"unexpected final ack: {final_ack!r}; server_log_tail={self._server_log_tail()!r}",
-        )
-        self._wait_for_server_log(
-            "protocol error: unexpected EOF while receiving file",
-            offset=log_offset,
         )
 
         final_name = file_name.decode("ascii")

@@ -1,5 +1,3 @@
-#define _GNU_SOURCE
-
 #include "net.h"
 #include "node.h"
 #include "protocol.h"
@@ -22,6 +20,8 @@
 #endif
 
 #define CHUNK (1024 * 1024)
+#define NAME_BYTES 256
+#define PREAMBLE_BYTES (13 + 2 + NAME_BYTES + 8)
 
 /* helpers */
 
@@ -129,42 +129,12 @@ static int send_body(socket_t sock, int fd, uint64_t size) {
 #endif
 }
 
-/* zero-copy recv */
+/* buffered recv */
 
 static int recv_body(socket_t sock, int fd, uint64_t size) {
   if (size == 0) return 0;
   if (is_socket_invalid(sock) || fd < 0) return 1;
 
-#if defined(__linux__)
-  int pfd[2] = {-1, -1};
-  uint64_t remain = size;
-  int ok = 0;
-
-  if (pipe(pfd)) return 1;
-
-  while (remain) {
-    size_t n = (uint64_t)CHUNK < remain ? CHUNK : (size_t)remain;
-    ssize_t r = splice(sock, NULL, pfd[1], NULL, n, SPLICE_F_MOVE | SPLICE_F_MORE);
-    if (r < 0) { if (errno == EINTR) continue; goto done; }
-    if (r == 0) goto done;
-
-    ssize_t pleft = r;
-    while (pleft > 0) {
-      ssize_t w = splice(pfd[0], NULL, fd, NULL, (size_t)pleft, SPLICE_F_MOVE | SPLICE_F_MORE);
-      if (w < 0) { if (errno == EINTR) continue; goto done; }
-      if (w == 0) goto done;
-      pleft -= w;
-      remain -= (uint64_t)w;
-    }
-  }
-  ok = 1;
-
-done:
-  if (pfd[0] >= 0) close(pfd[0]);
-  if (pfd[1] >= 0) close(pfd[1]);
-  return ok ? 0 : 1;
-
-#else
   char stack[8192], *heap = NULL, *buf = stack;
 
   if (size > sizeof(stack)) {
@@ -195,7 +165,6 @@ done:
 done2:
   free(heap);
   return ok ? 0 : 1;
-#endif
 }
 
 /* node_recv */
@@ -240,54 +209,32 @@ int node_recv(const char *dir, uint16_t port) {
     if (conn < 0) continue;
 
     /* recv one file */
-    uint8_t hdr[13];
-    char *name = NULL;
+    uint8_t pre[PREAMBLE_BYTES];
+    char name[NAME_BYTES + 1];
     uint64_t fsize, hdr_payload;
     char path[4096], tmp[4096];
     int fd = -1, ok = 0;
 
-    if (recv_all(conn, hdr, 13) != 13) goto shut;
+    if (recv_all(conn, pre, sizeof(pre)) != (ssize_t)sizeof(pre)) goto shut;
 
-    if (((uint16_t)hdr[0] << 8 | hdr[1]) != HF_PROTOCOL_MAGIC) goto shut;
-    if (hdr[2] != HF_PROTOCOL_VERSION) goto shut;
-    if (hdr[3] != HF_MSG_TYPE_SEND_FILE) goto shut;
-    if (hdr[4] != HF_MSG_FLAG_NONE) goto shut;
-    hdr_payload = be64_read(hdr + 5);
-
-    if (hdr_payload < (uint64_t)(2 + 1 + 8)) {
-      reply(conn, &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_REJECTED, 5});
-      goto shut;
+    uint16_t nlen = ((uint16_t)pre[13] << 8) | pre[14];
+    hdr_payload = be64_read(pre + 5);
+    fsize = be64_read(pre + 13 + 2 + NAME_BYTES);
+    if (((uint16_t)pre[0] << 8 | pre[1]) != HF_PROTOCOL_MAGIC ||
+        pre[2] != HF_PROTOCOL_VERSION ||
+        pre[3] != HF_MSG_TYPE_SEND_FILE ||
+        pre[4] != HF_MSG_FLAG_NONE ||
+        nlen == 0 || nlen >= NAME_BYTES ||
+        hdr_payload != (uint64_t)(2 + NAME_BYTES + 8) + fsize) {
+      goto reject;
     }
 
-    /* read prefix: name_len(2B) + name + content_size(8B) */
-    {
-      uint16_t nbe;
-      if (recv_all(conn, &nbe, 2) != 2) goto shut;
-      uint16_t nlen = ntohs(nbe);
-      if (nlen == 0 || nlen > 255) goto shut;
-      name = malloc((size_t)nlen + 1);
-      if (!name) goto shut;
-      if (recv_all(conn, name, nlen) != (ssize_t)nlen) { free(name); name = NULL; goto shut; }
-      name[nlen] = '\0';
-
-      uint8_t s8[8];
-      if (recv_all(conn, s8, 8) != 8) { free(name); name = NULL; goto shut; }
-      fsize = be64_read(s8);
-
-      uint64_t prefix = 2 + nlen + 8;
-      if (hdr_payload != prefix + fsize) {
-        reply(conn, &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_REJECTED, 8});
-        goto free_name;
-      }
-    }
-
-    if (!ok_name(name)) {
-      reply(conn, &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_REJECTED, 7});
-      goto free_name;
-    }
+    memcpy(name, pre + 15, nlen);
+    name[nlen] = '\0';
+    if (!ok_name(name)) goto reject;
 
     if (reply(conn, &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_OK, 0}))
-      goto free_name;
+      goto shut;
 
     if (join_path(path, sizeof(path), dir, name)) goto fail;
 
@@ -309,10 +256,13 @@ int node_recv(const char *dir, uint16_t port) {
     reply(conn, &(res_frame_t){PROTO_PHASE_FINAL,
       ok ? PROTO_STATUS_OK : PROTO_STATUS_FAILED, ok ? 0 : 9});
 
-  free_name:
-    free(name);
     if (ok) fprintf(stdout, "received  %s  %llu bytes\n", name, (unsigned long long)fsize);
   shut:
+    socket_close(conn);
+    continue;
+
+  reject:
+    reply(conn, &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_REJECTED, 5});
     socket_close(conn);
   }
 
@@ -334,7 +284,7 @@ int node_send(const char *path, const char *ip, uint16_t port) {
   }
 
   size_t nlen = strlen(name);
-  if (nlen == 0 || nlen > 255) return 1;
+  if (nlen == 0 || nlen >= NAME_BYTES) return 1;
 
   src = open(path, O_RDONLY, 0);
   if (src < 0) return 1;
@@ -361,22 +311,21 @@ int node_send(const char *path, const char *ip, uint16_t port) {
 
   /* encode preamble: header(13B) + prefix(name_len+name+size) */
   {
-    size_t prefix = 2 + nlen + 8;
-    uint8_t buf[13 + 2 + 255 + 8], *p = buf;
+    uint8_t buf[PREAMBLE_BYTES] = {0}, *p = buf;
 
     uint16_t mg = htons(HF_PROTOCOL_MAGIC);
     memcpy(p, &mg, 2); p += 2;
     *p++ = HF_PROTOCOL_VERSION;
     *p++ = HF_MSG_TYPE_SEND_FILE;
     *p++ = HF_MSG_FLAG_NONE;
-    be64_write(p, (uint64_t)prefix + fsize); p += 8;
+    be64_write(p, (uint64_t)(2 + NAME_BYTES + 8) + fsize); p += 8;
 
     uint16_t nbe = htons((uint16_t)nlen);
     memcpy(p, &nbe, 2); p += 2;
-    memcpy(p, name, nlen); p += nlen;
+    memcpy(p, name, nlen); p += NAME_BYTES;
     be64_write(p, fsize);
 
-    if (send_all(sock, buf, 13 + prefix) < (ssize_t)(13 + prefix)) goto exit;
+    if (send_all(sock, buf, sizeof(buf)) < (ssize_t)sizeof(buf)) goto exit;
   }
 
   /* wait READY */
