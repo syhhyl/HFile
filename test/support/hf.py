@@ -265,10 +265,10 @@ def make_temp_dir(prefix: str = "hf_test_") -> tempfile.TemporaryDirectory[str]:
     return tempfile.TemporaryDirectory(prefix=prefix)
 
 
-class HFileServer:
-    """Manage an hf server process.
+class HFileNode:
+    """Manage an hf receive node process.
 
-    The server is started with stdout/stderr redirected to a log file. Readiness
+    The node is started with stdout/stderr redirected to a log file. Readiness
     is determined by waiting until the configured TCP port accepts connections.
     """
 
@@ -296,14 +296,14 @@ class HFileServer:
     @property
     def proc(self) -> subprocess.Popen[str]:
         if self._proc is None:
-            raise RuntimeError("server not started")
+            raise RuntimeError("node not started")
         return self._proc
 
     @property
     def pid(self) -> int:
         if self._pid is not None:
             return self._pid
-        raise RuntimeError("server pid is not available")
+        raise RuntimeError("node pid is not available")
 
     def start(self, *, startup_timeout: float = 5.0) -> None:
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -319,6 +319,7 @@ class HFileServer:
         )
         argv = [
             str(self.hf_path),
+            "recv",
             str(self.out_dir),
             "-p",
             str(self.port),
@@ -344,7 +345,7 @@ class HFileServer:
                 if os.name == "nt" or self._proc.returncode != 0:
                     tail = tail_text_file(self._startup_log_path or Path(""))
                     raise RuntimeError(
-                        f"hf server exited early (rc={self._proc.returncode}). log tail:\n{tail}"
+                        f"hf node exited early (rc={self._proc.returncode}). log tail:\n{tail}"
                     )
 
             try:
@@ -360,7 +361,7 @@ class HFileServer:
 
         tail = tail_text_file(self._startup_log_path or Path(""))
         raise TimeoutError(
-            f"hf server not ready after {timeout:.1f}s on {self.host}:{self.port}. "
+            f"hf node not ready after {timeout:.1f}s on {self.host}:{self.port}. "
             f"port did not accept connections. "
             f"log tail:\n{tail}"
         )
@@ -388,7 +389,7 @@ class HFileServer:
                 pass
             self._log_fh = None
 
-    def __enter__(self) -> "HFileServer":
+    def __enter__(self) -> "HFileNode":
         self.start()
         return self
 

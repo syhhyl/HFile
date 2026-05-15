@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from test.support.hf import HFileServer, resolve_hf_path, run_hf
+from test.support.hf import HFileNode, resolve_hf_path, run_hf
 
 
 KIB = 1024
@@ -294,7 +294,7 @@ def run_server(args: argparse.Namespace) -> int:
         out_dir = Path(tmp_dir) / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        server = HFileServer(hf_path=hf_path, out_dir=out_dir, port=args.hf_port)
+        server = HFileNode(hf_path=hf_path, out_dir=out_dir, port=args.hf_port)
         server.start(startup_timeout=10.0)
 
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -446,7 +446,7 @@ def run_client(args: argparse.Namespace) -> int:
                                 result = run_hf(
                                     hf_path,
                                     [
-                                        "-s",
+                                        "send",
                                         src,
                                         "-i",
                                         args.server_host,

@@ -9,7 +9,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-int discovery_server_open(socket_t *sock_out, uint16_t tcp_port) {
+int discovery_open(socket_t *sock_out, uint16_t tcp_port) {
   if (sock_out == NULL) return 1;
 
   socket_t sock;
@@ -53,11 +53,11 @@ int discovery_server_open(socket_t *sock_out, uint16_t tcp_port) {
   return 0;
 }
 
-void discovery_server_close(socket_t sock) {
+void discovery_close(socket_t sock) {
   socket_close(sock);
 }
 
-int discovery_server_handle(socket_t sock, uint16_t tcp_port) {
+int discovery_handle_query(socket_t sock, uint16_t tcp_port) {
   uint8_t buf[3];
   struct sockaddr_in from;
   socklen_t from_len = sizeof(from);
@@ -97,8 +97,8 @@ int discovery_server_handle(socket_t sock, uint16_t tcp_port) {
   return 0;
 }
 
-int discovery_client_find(uint16_t port, char *ip_out, size_t ip_out_len,
-                          uint16_t *port_out) {
+int discovery_find_node(uint16_t port, char *ip_out, size_t ip_out_len,
+                        uint16_t *port_out) {
   socket_t sock;
   socket_init(&sock);
 
@@ -106,7 +106,7 @@ int discovery_client_find(uint16_t port, char *ip_out, size_t ip_out_len,
 
   sock = socket(AF_INET, SOCK_DGRAM, 0);
   if (is_socket_invalid(sock)) {
-    sock_perror("discovery client socket");
+    sock_perror("discovery socket");
     return 1;
   }
 

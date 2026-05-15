@@ -1,9 +1,8 @@
-#include "net.h"
+#include "node.h"
 #include "shutdown.h"
-#include "server.h"
-#include "client.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,8 +14,8 @@ typedef enum {
 } parse_result_t;
 
 typedef enum {
-  MODE_SERVER,
-  MODE_CLIENT,
+  MODE_RECV,
+  MODE_SEND,
 } Mode;
 
 typedef struct {
@@ -24,29 +23,25 @@ typedef struct {
   const char *path;
   const char *ip;
   uint16_t port;
-  int print_qr;
 } Opt;
 
 static void usage(const char *argv0) {
   fprintf(stderr,
-    "HFile — fast file transfer over LAN\n"
+    "HFile - fast file transfer over LAN\n"
     "\n"
     "usage:\n"
-    "  %s [<path>]  [-p <port>] [-q]  start receive server\n"
-    "  %s -s <file> [-i <ip>] [-p <port>]  send a file\n"
+    "  %s recv [<dir>] [-p <port>]\n"
+    "  %s send <file> [-i <ip>] [-p <port>]\n"
     "\n"
     "options:\n"
-    "  <path>     receive directory (default .)\n"
-    "  -s <file>  file to send\n"
-    "  -i <ip>    server address\n"
+    "  -i <ip>    target node address\n"
     "  -p <port>  port number (default 8888)\n"
-    "  -q         print server QR code\n"
     "  -h         show this help\n"
     "\n"
     "examples:\n"
-    "  %s /tmp/receive\n"
-    "  %s -s ./foo.txt\n"
-    "  %s -s ./bar.bin -p 7777\n",
+    "  %s recv /tmp/receive\n"
+    "  %s send ./foo.txt\n"
+    "  %s send ./bar.bin -i 192.168.1.10 -p 7777\n",
     argv0, argv0, argv0, argv0, argv0);
 }
 
@@ -83,14 +78,30 @@ static parse_result_t parse_args(int argc, char **argv, Opt *opt) {
   opt->path = NULL;
   opt->ip = NULL;
   opt->port = 8888;
-  opt->print_qr = 0;
-  opt->mode = MODE_SERVER;
+  opt->mode = MODE_RECV;
 
-  int send_seen = 0;
   int ip_seen = 0;
   int positional_seen = 0;
 
-  for (int i = 1; i < argc; i++) {
+  if (argc < 2 || argv[1] == NULL) {
+    fprintf(stderr, "missing command\n");
+    return PARSE_ERR;
+  }
+
+  if (strcmp(argv[1], "-h") == 0) {
+    return PARSE_HELP;
+  }
+
+  if (strcmp(argv[1], "recv") == 0) {
+    opt->mode = MODE_RECV;
+  } else if (strcmp(argv[1], "send") == 0) {
+    opt->mode = MODE_SEND;
+  } else {
+    fprintf(stderr, "unknown command\n");
+    return PARSE_ERR;
+  }
+
+  for (int i = 2; i < argc; i++) {
     const char *a = argv[i];
     if (a == NULL) {
       fprintf(stderr, "invalid argument\n");
@@ -98,10 +109,6 @@ static parse_result_t parse_args(int argc, char **argv, Opt *opt) {
     }
 
     if (a[0] != '-' || a[1] == '\0') {
-      if (send_seen) {
-        fprintf(stderr, "unexpected positional argument\n");
-        return PARSE_ERR;
-      }
       if (positional_seen) {
         fprintf(stderr, "unexpected extra argument\n");
         return PARSE_ERR;
@@ -125,28 +132,12 @@ static parse_result_t parse_args(int argc, char **argv, Opt *opt) {
       case 'h':
         return PARSE_HELP;
 
-      case 's': {
-        const char *v = NULL;
-        if (send_seen) {
-          fprintf(stderr, "duplicate -s\n");
-          return PARSE_ERR;
-        }
-        if (positional_seen) {
-          fprintf(stderr, "cannot use server path with -s\n");
-          return PARSE_ERR;
-        }
-        if (take_value(argc, argv, &i, "invalid file path", &v) != 0) {
-          return PARSE_ERR;
-        }
-
-        opt->mode = MODE_CLIENT;
-        opt->path = v;
-        send_seen = 1;
-        break;
-      }
-
       case 'i': {
         const char *v = NULL;
+        if (opt->mode == MODE_RECV) {
+          fprintf(stderr, "recv mode does not accept -i\n");
+          return PARSE_ERR;
+        }
         if (take_value(argc, argv, &i, "invalid address", &v) != 0) {
           return PARSE_ERR;
         }
@@ -168,32 +159,23 @@ static parse_result_t parse_args(int argc, char **argv, Opt *opt) {
         break;
       }
 
-      case 'q':
-        opt->print_qr = 1;
-        break;
-
       default:
         fprintf(stderr, "invalid argument\n");
         return PARSE_ERR;
     }
   }
 
-  if (opt->mode == MODE_SERVER && opt->path == NULL) {
+  if (opt->mode == MODE_RECV && opt->path == NULL) {
     opt->path = ".";
   }
 
-  if (opt->mode == MODE_CLIENT && opt->path == NULL) {
+  if (opt->mode == MODE_SEND && opt->path == NULL) {
     fprintf(stderr, "missing file to send\n");
     return PARSE_ERR;
   }
 
-  if (ip_seen && opt->mode != MODE_CLIENT) {
-    fprintf(stderr, "server mode does not accept -i\n");
-    return PARSE_ERR;
-  }
-
-  if (opt->print_qr && opt->mode != MODE_SERVER) {
-    fprintf(stderr, "client mode does not accept -q\n");
+  if (ip_seen && opt->mode != MODE_SEND) {
+    fprintf(stderr, "recv mode does not accept -i\n");
     return PARSE_ERR;
   }
 
@@ -217,16 +199,10 @@ int main(int argc, char **argv) {
     goto CLEAN_UP;
   }
 
-  if (opt.mode == MODE_SERVER) {
-    server_opt_t server_opt = {
-      .path = opt.path,
-      .port = opt.port,
-      .print_qr = opt.print_qr
-    };
-    ret = server(&server_opt);
-  } else if (opt.mode == MODE_CLIENT) {
-    client_opt_t client_opt = { .path = opt.path, .ip = opt.ip, .port = opt.port };
-    ret = client(&client_opt);
+  if (opt.mode == MODE_RECV) {
+    ret = node_recv(opt.path, opt.port);
+  } else if (opt.mode == MODE_SEND) {
+    ret = node_send(opt.path, opt.ip, opt.port);
   } else {
     usage(argv[0]);
     ret = 1;

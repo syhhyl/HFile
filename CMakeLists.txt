@@ -4,13 +4,11 @@ project(HFile VERSION 0.0.1 LANGUAGES C)
 
 add_executable(hf
   src/hfile.c
-  src/server.c
-  src/server_conn_tracker.c
+  src/node.c
+  src/node_conn_tracker.c
   src/transfer_io.c
-  src/client.c
   src/discovery.c
   src/protocol.c
-  src/qr.c
   src/net.c
   src/fs.c
   src/shutdown.c

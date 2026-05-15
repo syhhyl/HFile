@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from test.support.hf import (
-    HFileServer,
+    HFileNode,
     assert_files_equal,
     make_temp_dir,
     protocol_define,
@@ -45,7 +45,7 @@ class TransferTestCase(unittest.TestCase):
         cls.in_dir.mkdir(parents=True, exist_ok=True)
         cls.out_dir.mkdir(parents=True, exist_ok=True)
 
-        cls.server = HFileServer(hf_path=cls.hf_path, out_dir=cls.out_dir)
+        cls.server = HFileNode(hf_path=cls.hf_path, out_dir=cls.out_dir)
         cls.server.start(startup_timeout=5.0)
 
     @classmethod
@@ -96,7 +96,7 @@ class TransferTestCase(unittest.TestCase):
         r = run_hf(
             self.hf_path,
             [
-                "-s",
+                "send",
                 src,
                 "-i",
                 self.server.host,
@@ -300,7 +300,7 @@ class TestTransferCLI(TransferTestCase):
         dst = self._send_and_assert_ok(src)
         assert_files_equal(self, src, dst)
 
-    def test_server_rejects_invalid_file_name_from_client(self) -> None:
+    def test_node_rejects_invalid_file_name_from_sender(self) -> None:
         src = self._write_input_file("bad..name.txt", b"bad name\n")
         dst = self.out_dir / src.name
         self._reset_output_path(dst)
@@ -312,7 +312,7 @@ class TestTransferCLI(TransferTestCase):
             1,
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
-        self.assertIn("server reported transfer failure", r.stderr)
+        self.assertIn("node reported transfer failure", r.stderr)
         self._wait_for_server_log(f"invalid file name: {src.name}", offset=log_offset)
         self.assertFalse(dst.exists(), f"unexpected output file: {dst}")
         self._assert_no_temp_files(src.name)
@@ -578,7 +578,7 @@ class TestTransferProtocol(TransferTestCase):
         self.assertFalse((self.out_dir / final_name).exists())
         self._assert_no_temp_files(final_name)
 
-    def test_server_graceful_shutdown_on_signal(self) -> None:
+    def test_node_graceful_shutdown_on_signal(self) -> None:
         shared_server = self.__class__.server
         shared_server.stop()
 
@@ -588,7 +588,7 @@ class TestTransferProtocol(TransferTestCase):
             out_dir.mkdir(parents=True, exist_ok=True)
             log_path = base_dir / "hf_server_shutdown.log"
 
-            server = HFileServer(
+            server = HFileNode(
                 hf_path=self.hf_path,
                 out_dir=out_dir,
                 log_path=log_path,
@@ -599,7 +599,7 @@ class TestTransferProtocol(TransferTestCase):
                 server.proc.wait(timeout=5.0)
 
                 log_text = tail_text_file(server.log_path or Path(""))
-                self.assertIn("shutdown requested, stopping server", log_text)
+                self.assertIn("shutdown requested, stopping node", log_text)
 
                 leftovers = [p.name for p in out_dir.iterdir() if ".tmp." in p.name]
                 self.assertFalse(
