@@ -11,7 +11,6 @@ add_executable(hf
   src/discovery.c
   src/protocol.c
   src/qr.c
-  src/cli.c
   src/net.c
   src/fs.c
   src/shutdown.c
