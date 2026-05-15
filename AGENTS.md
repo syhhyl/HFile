@@ -2,20 +2,20 @@
 
 ## Build And Verify
 
-- Default local build: `./build.sh` (CMake + Ninja, exports `build/compile_commands.json`).
+- Default local build: `./build.sh` (Debug CMake + Ninja, exports `build/compile_commands.json`). Use `BUILD_TYPE=Release ./build.sh` or `./build.sh -t Release` for Release.
 - `./test.sh` does NOT build first. Build before running tests.
-- CI uses raw CMake: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`, `cmake --build build`, then `python -m unittest -v test.test_hf`.
-- Focused test shortcuts:
-  - `./test.sh cli|transfer|support` — suite shortcuts
-  - `./test.sh -v test.test_transfer.TestTransferCLI.test_common_file` — single test
-  - `python3 -m unittest -v test.test_cli test.test_transfer` — parallel suites
+- CI builds on Ubuntu/macOS/Windows with raw CMake: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`, `cmake --build build`, then `python -m unittest -v test.test_hf`.
+- Focused suites: `./test.sh cli`, `./test.sh transfer`, `./test.sh support`.
+- Single/focused tests pass through to `unittest`, e.g. `./test.sh -v test.test_transfer.TestTransferCLI.test_common_file`.
+- Perf shortcuts in `./test.sh` (`perf`, `perf-server`, `perf-client`) run `test/perf_transfer.py`; do not use them as routine verification.
 
 ## Architecture
 
 - `src/hfile.c` is the only executable entrypoint. `src/cli.c` parses args, dispatches to client/server.
-- One server port handles the native protocol. Top-level dispatch lives in `src/server.c`.
+- Server mode is `hf [<path>] [-p <port>]`; client upload mode is `hf -s <file> [-i <ip>] [-p <port>]`. There is no `-d` server flag.
+- TCP `<port>` handles the native protocol in `src/server.c`; UDP discovery opens on `<port> + 1` when possible.
 - Native file receive goes through `src/transfer_io.c`; keep receive-to-temp-file and atomic finalize there.
-- `src/net.c` is the zero-copy/socket layer: `splice` (uploads, Linux). Cross-platform I/O goes through buffered `fs.c` fallback. Do NOT move receive-to-disk logic into `net.c`.
+- `src/net.c` is the socket/zero-copy layer: `sendfile` for sends on Linux/macOS and `splice` for receives on Linux, with buffered fallback. Do NOT move temp-file or atomic-finalize logic into `net.c`.
 
 ## Shutdown And Exit Codes
 
@@ -29,12 +29,11 @@
 - File transfer stays two-phase: validate header/prefix, send `READY`, stream body, then send `FINAL`.
 - Large uploads are streaming. Do not replace file-body receive paths with whole-body `recv_all` logic.
 - Filename validation is intentionally strict across CLI paths; update the matching tests if behavior changes.
-- `hf -d <path>` is the only server start command.
-- `hf -d <path>` runs a foreground server. Stop it with the process signal or Ctrl-C.
+- `hf [<path>] [-p <port>]` runs a foreground server. Stop it with the process signal or Ctrl-C.
 
 ## Test Quirks
 
-- `test/support/hf.py` starts foreground servers with `-d` and waits until the TCP port accepts connections.
+- `test/support/hf.py` starts foreground servers as `build/hf <out_dir> -p <port>` and waits until the TCP port accepts connections.
 - The helper captures subprocess output as UTF-8; keep that in mind when changing non-ASCII output such as paths.
 - `test/test_hf.py` is the full-suite entry point referenced by CI; all other suites (`test_cli`, `test_transfer`, etc.) can be run independently.
 
