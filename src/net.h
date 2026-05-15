@@ -1,7 +1,6 @@
 #ifndef HF_NET_H
 #define HF_NET_H
 
-
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -13,7 +12,7 @@
 
 typedef int socket_t;
 
-#define CHUNK_SIZE 1024 * 1024
+#define CHUNK_SIZE (1024 * 1024)
 
 bool is_socket_invalid(socket_t sock);
 
@@ -41,24 +40,16 @@ ssize_t recv_all(
   socket_t sock,
   void *buf, size_t len);
 
-
 void sock_perror(const char *msg);
 
 void socket_init(socket_t *s);
 int socket_close(socket_t s);
-
-uint32_t net_transfer_timeout_ms(uint64_t content_size);
-int net_set_recv_timeout(socket_t sock, uint32_t timeout_ms);
-int net_set_send_timeout(socket_t sock, uint32_t timeout_ms);
-int net_set_socket_timeouts(socket_t sock, uint32_t timeout_ms);
-int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out);
 
 net_send_file_result_t net_send_file_best_effort(socket_t sock,
                                                   int in_fd,
                                                   uint64_t content_size);
 net_recv_file_result_t net_recv_file_best_effort(socket_t sock,
                                                   int out_fd,
-                                                  uint64_t content_size);
-
+                                                   uint64_t content_size);
 
 #endif  // HF_NET_H

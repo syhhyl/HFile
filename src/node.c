@@ -14,9 +14,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define SERVER_CONTROL_RECV_TIMEOUT_MS 15000u
-#define NODE_CONTROL_SOCKET_TIMEOUT_MS 30000u
-
 static protocol_result_t node_recv_file(socket_t conn, const char *path,
                                         const protocol_header_t *proto_header);
 
@@ -69,10 +66,6 @@ static inline int create_listener_socket(
 static int node_handle_connection(socket_t conn, const char *path) {
   uint8_t header_buf[HF_PROTOCOL_HEADER_SIZE];
   protocol_header_t proto_header = {0};
-
-  if (net_set_recv_timeout(conn, SERVER_CONTROL_RECV_TIMEOUT_MS) != 0) {
-    sock_perror("setsockopt(SO_RCVTIMEO)");
-  }
 
   protocol_result_t prefix_res = recv_header(conn, header_buf);
   if (prefix_res != PROTOCOL_OK) {
@@ -233,13 +226,6 @@ static protocol_result_t node_recv_file(
     conn, PROTO_PHASE_READY, PROTO_STATUS_OK, PROTOCOL_OK);
   if (result != PROTOCOL_OK) {
     sock_perror("send_res_frame(file_transfer_ready)");
-    goto CLEANUP;
-  }
-
-  if (net_set_recv_timeout(
-        conn, net_transfer_timeout_ms(content_size)) != 0) {
-    sock_perror("setsockopt(SO_RCVTIMEO)");
-    result = PROTOCOL_ERR_IO;
     goto CLEANUP;
   }
 
@@ -558,24 +544,12 @@ int node_send(const char *file_path, const char *ip, uint16_t port) {
     exit_code = 1;
     goto CLEAN_UP;
   }
-  if (net_set_socket_timeouts(sock, NODE_CONTROL_SOCKET_TIMEOUT_MS) != 0) {
-    sock_perror("setsockopt(node_timeout)");
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
-
   if (node_send_file_preamble(sock, file_name, file_name_len, content_size) != 0) {
     exit_code = 1;
     goto CLEAN_UP;
   }
 
   if (node_recv_response(sock, PROTO_PHASE_READY, "transfer") != 0) {
-    exit_code = 1;
-    goto CLEAN_UP;
-  }
-
-  if (net_set_socket_timeouts(sock, net_transfer_timeout_ms(content_size)) != 0) {
-    sock_perror("setsockopt(node_transfer_timeout)");
     exit_code = 1;
     goto CLEAN_UP;
   }

@@ -14,10 +14,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#define NET_MIN_TRANSFER_TIMEOUT_MS 60000u
-#define NET_MAX_TRANSFER_TIMEOUT_MS 300000u
-#define NET_TIMEOUT_BYTES_PER_MS (10u * 1024u)
-
 #if defined(__linux__)
   #include <sys/sendfile.h>
 #elif defined(__APPLE__)
@@ -25,11 +21,10 @@
   #include <sys/uio.h>
 #endif
 
-
 bool is_socket_invalid(socket_t sock) {
-  if (sock < 0) return true;
-  return false;
+  return sock < 0;
 }
+
 ssize_t send_all(
   socket_t sock,
   const void *data, size_t len) {
@@ -50,7 +45,7 @@ ssize_t send_all(
     if (n == 0) return (ssize_t)total;
     total += (size_t)n;
   }
-  
+
   return (ssize_t)total;
 }
 
@@ -72,9 +67,6 @@ ssize_t recv_all(
   return (ssize_t)total;
 }
 
-
-
-
 void sock_perror(const char *msg) {
   perror(msg);
 }
@@ -86,84 +78,6 @@ void socket_init(socket_t *s) {
 int socket_close(socket_t s) {
   if (is_socket_invalid(s)) return 0;
   return close(s);
-}
-
-uint32_t net_transfer_timeout_ms(uint64_t content_size) {
-  uint64_t scaled = content_size / NET_TIMEOUT_BYTES_PER_MS;
-
-  if (scaled < NET_MIN_TRANSFER_TIMEOUT_MS) {
-    return NET_MIN_TRANSFER_TIMEOUT_MS;
-  }
-  if (scaled > NET_MAX_TRANSFER_TIMEOUT_MS) {
-    return NET_MAX_TRANSFER_TIMEOUT_MS;
-  }
-  return (uint32_t)scaled;
-}
-
-int net_set_recv_timeout(socket_t sock, uint32_t timeout_ms) {
-  struct timeval tv;
-
-  if (is_socket_invalid(sock)) {
-    return 1;
-  }
-
-  tv.tv_sec = (time_t)(timeout_ms / 1000u);
-  tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
-  return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0 ? 1 : 0;
-}
-
-int net_set_send_timeout(socket_t sock, uint32_t timeout_ms) {
-  struct timeval tv;
-
-  if (is_socket_invalid(sock)) {
-    return 1;
-  }
-
-  tv.tv_sec = (time_t)(timeout_ms / 1000u);
-  tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
-  return setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0 ? 1 : 0;
-}
-
-int net_set_socket_timeouts(socket_t sock, uint32_t timeout_ms) {
-  if (net_set_recv_timeout(sock, timeout_ms) != 0) {
-    return 1;
-  }
-  return net_set_send_timeout(sock, timeout_ms);
-}
-
-int net_wait_readable(socket_t sock, uint32_t timeout_ms, int *ready_out) {
-  if (ready_out == NULL) {
-    return 1;
-  }
-
-  *ready_out = 0;
-
-  if (is_socket_invalid(sock)) {
-    return 1;
-  }
-
-  fd_set readfds;
-  FD_ZERO(&readfds);
-  FD_SET(sock, &readfds);
-
-  struct timeval tv;
-  tv.tv_sec = (long)(timeout_ms / 1000u);
-  tv.tv_usec = (long)((timeout_ms % 1000u) * 1000u);
-
-  int rc = select(sock + 1, &readfds, NULL, NULL, &tv);
-  if (rc < 0) {
-    if (errno == EINTR) {
-      return 0;
-    }
-    return 1;
-  }
-
-  if (rc == 0) {
-    return 0;
-  }
-
-  *ready_out = FD_ISSET(sock, &readfds) ? 1 : 0;
-  return 0;
 }
 
 static net_send_file_result_t net_send_file_all(socket_t sock,
