@@ -12,10 +12,7 @@
 int discovery_open(socket_t *sock_out, uint16_t tcp_port) {
   if (sock_out == NULL) return 1;
 
-  socket_t sock;
-  socket_init(&sock);
-
-  sock = socket(AF_INET, SOCK_DGRAM, 0);
+  socket_t sock = socket(AF_INET, SOCK_DGRAM, 0);
   if (is_socket_invalid(sock)) {
     sock_perror("discovery socket");
     return 1;
@@ -99,12 +96,9 @@ int discovery_handle_query(socket_t sock, uint16_t tcp_port) {
 
 int discovery_find_node(uint16_t port, char *ip_out, size_t ip_out_len,
                         uint16_t *port_out) {
-  socket_t sock;
-  socket_init(&sock);
-
   if (ip_out == NULL || ip_out_len == 0 || port_out == NULL) return 1;
 
-  sock = socket(AF_INET, SOCK_DGRAM, 0);
+  socket_t sock = socket(AF_INET, SOCK_DGRAM, 0);
   if (is_socket_invalid(sock)) {
     sock_perror("discovery socket");
     return 1;

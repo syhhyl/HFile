@@ -6,7 +6,6 @@ add_executable(hf
   src/hfile.c
   src/node.c
   src/discovery.c
-  src/protocol.c
   src/net.c
   src/fs.c
 )

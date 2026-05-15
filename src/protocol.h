@@ -1,8 +1,6 @@
 #ifndef HF_PROTOCOL_H
 #define HF_PROTOCOL_H
 
-#include "net.h"
-
 #include <stdint.h>
 #include <stddef.h>
 
@@ -18,9 +16,8 @@
 
 #define HF_MSG_FLAG_NONE 0x00u
 
-// protocol header struct
 typedef struct {
-  uint16_t magic; 
+  uint16_t magic;
   uint8_t version;
   uint8_t msg_type;
   uint8_t flags;
@@ -60,25 +57,4 @@ typedef struct {
   uint16_t error_code;
 } res_frame_t;
 
-void init_header(protocol_header_t *header);
-
-protocol_result_t encode_header(const protocol_header_t *header, uint8_t *out);
-protocol_result_t decode_header(protocol_header_t *header, const uint8_t *in);
-protocol_result_t recv_header(socket_t sock, uint8_t *out);
-
-protocol_result_t send_res_frame(socket_t sock, const res_frame_t *frame);
-protocol_result_t recv_res_frame(socket_t sock, res_frame_t *frame);
-
-int proto_get_file_name_len(const char *file_name, uint16_t *out_len);
-size_t proto_file_transfer_prefix_size(uint16_t file_name_len);
-protocol_result_t encode_file_prefix(const char *file_name,
-                                     uint64_t content_size,
-                                     uint8_t *out);
-protocol_result_t proto_send_payload(socket_t sock,
-                                     const uint8_t *in,
-                                     size_t len);
-protocol_result_t proto_recv_file_transfer_prefix(socket_t sock,
-                                                       char **file_name_out,
-                                                       uint64_t *content_size_out);
-
-#endif  // HF_PROTOCOL_H
+#endif  /* HF_PROTOCOL_H */
