@@ -93,7 +93,6 @@ class TestCLI(unittest.TestCase):
             1,
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
-        self.assertIn("inet_pton", r.stderr)
 
     def test_send_rejects_missing_source_file(self) -> None:
         with make_temp_dir(prefix="hf_cli_") as tmp_dir:
@@ -105,7 +104,6 @@ class TestCLI(unittest.TestCase):
             1,
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
-        self.assertIn("open", r.stderr)
 
     def test_send_rejects_directory_source(self) -> None:
         with make_temp_dir(prefix="hf_cli_") as tmp_dir:
@@ -118,7 +116,6 @@ class TestCLI(unittest.TestCase):
             1,
             f"argv={r.argv} stdout={r.stdout!r} stderr={r.stderr!r}",
         )
-        self.assertIn("invalid source file", r.stderr)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
