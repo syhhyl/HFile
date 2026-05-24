@@ -21,11 +21,6 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
       - name: Configure CMake
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
@@ -33,4 +28,4 @@ jobs:
         run: cmake --build build
 
       - name: Run test suite
-        run: python -m unittest -v test.test_hf
+        run: ctest --test-dir build --output-on-failure

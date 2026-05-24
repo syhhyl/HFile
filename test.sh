@@ -4,29 +4,25 @@ set -e
 usage() {
   cat <<EOF
 Usage: ./test.sh [suite]
-Usage: ./test.sh [unittest args...]
+Usage: ./test.sh [ctest args...]
 
 Short suites:
-  full      Run the full documented test suite
-  support   Run shared test helper tests
-  cli       Run CLI tests
-  transfer  Run transfer tests
-  perf      Run local benchmark end-to-end (prefer LAN IPv4, fallback localhost)
-  perf-server  Run benchmark receive server
-  perf-client  Run benchmark send client
+  full         Run all tests (unit + integration)
+  unit         Run unit tests only
+  integration  Run integration tests only
+  cli          Run integration tests (CLI + transfer + protocol)
+  transfer     Run integration tests (CLI + transfer + protocol)
 
 Examples:
   ./test.sh
-  ./test.sh transfer
-  ./test.sh perf --sizes 256MiB --runs 1
-  ./test.sh perf-server
-  ./test.sh perf-client --server-host 192.168.1.10
-  ./test.sh -v test.test_transfer
+  ./test.sh unit
+  ./test.sh integration
+  ./test.sh --output-on-failure
 EOF
 }
 
 if [ $# -eq 0 ]; then
-  exec python3 -m unittest -v test.test_hf
+  exec ctest --test-dir build --output-on-failure
 fi
 
 case "$1" in
@@ -36,32 +32,20 @@ case "$1" in
     ;;
   full)
     shift
-    exec python3 -m unittest -v test.test_hf "$@"
+    exec ctest --test-dir build --output-on-failure "$@"
     ;;
-  support)
+  unit)
     shift
-    exec python3 -m unittest -v test.test_support "$@"
+    exec ctest --test-dir build -R unit --output-on-failure "$@"
     ;;
-  cli)
+  integration)
     shift
-    exec python3 -m unittest -v test.test_cli "$@"
+    exec ctest --test-dir build -R integration --output-on-failure "$@"
     ;;
-  transfer)
+  cli|transfer)
     shift
-    exec python3 -m unittest -v test.test_transfer "$@"
-    ;;
-  perf)
-    shift
-    exec python3 test/perf_transfer.py local "$@"
-    ;;
-  perf-server)
-    shift
-    exec python3 test/perf_transfer.py server "$@"
-    ;;
-  perf-client)
-    shift
-    exec python3 test/perf_transfer.py client "$@"
+    exec ctest --test-dir build -R integration --output-on-failure "$@"
     ;;
 esac
 
-exec python3 -m unittest "$@"
+exec ctest --test-dir build "$@"

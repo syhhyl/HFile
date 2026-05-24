@@ -4,10 +4,8 @@
 
 - Default local build: `./build.sh` (Debug CMake + Ninja, exports `build/compile_commands.json`). Use `BUILD_TYPE=Release ./build.sh` or `./build.sh -t Release` for Release.
 - `./test.sh` does NOT build first. Build before running tests.
-- CI builds on Ubuntu/macOS/Windows with raw CMake: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`, `cmake --build build`, then `python -m unittest -v test.test_hf`.
-- Focused suites: `./test.sh cli`, `./test.sh transfer`, `./test.sh support`.
-- Single/focused tests pass through to `unittest`, e.g. `./test.sh -v test.test_transfer.TestTransferCLI.test_common_file`.
-- Perf shortcuts in `./test.sh` (`perf`, `perf-server`, `perf-client`) run `test/perf_transfer.py`; do not use them as routine verification.
+- CI builds on Ubuntu/macOS with raw CMake: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`, `cmake --build build`, then `ctest --test-dir build --output-on-failure`.
+- Focused suites: `./test.sh unit`, `./test.sh integration`.
 
 ## Architecture
 
@@ -24,14 +22,16 @@
 - Filename validation is intentionally strict across CLI paths; update the matching tests if behavior changes.
 - `hf recv [<dir>] [-p <port>]` runs a foreground receive node and loops waiting for connections. Stop it manually with the process signal or Ctrl-C.
 
-## Test Quirks
+## Test Infrastructure
 
-- `test/support/hf.py` starts foreground nodes as `build/hf recv <out_dir> -p <port>` and waits until the TCP port accepts connections.
-- The helper captures subprocess output as UTF-8; keep that in mind when changing non-ASCII output such as paths.
-- `test/test_hf.py` is the full-suite entry point referenced by CI; all other suites (`test_cli`, `test_transfer`, etc.) can be run independently.
+- Tests are written in C using a minimal framework (`test/test.h`). No external test dependencies.
+- `test/test_unit.c`: white-box unit tests for internal functions (includes `src/*.c` directly to access static functions).
+- `test/test_integration.c`: black-box integration tests (spawns `hf` binary, tests CLI, transfer, and raw protocol).
+- Integration tests find the `hf` binary via `$HF_PATH` or default to `./build/hf`.
+- `test/fixtures/transfer/`: checked-in payloads used by transfer tests.
 
 ## Editing Guidance
 
 - Follow existing C style: 2-space indent, same-line braces, explicit `#ifdef _WIN32` branches.
-- When changing CLI parsing, protocol framing, or filesystem rules, update the corresponding unittest module and run the smallest relevant suite.
-- Minimum verification for non-trivial C changes: `cmake --build build` plus the most relevant `python3 -m unittest ...` target.
+- When changing CLI parsing, protocol framing, or filesystem rules, update `test/test_unit.c` and/or `test/test_integration.c`.
+- Minimum verification for non-trivial C changes: `cmake --build build && ctest --test-dir build --output-on-failure`.
