@@ -147,8 +147,6 @@ int main(int argc, char **argv) {
 usage:
   if (show_usage || parse_error) {
     fprintf(stderr,
-      "HFile - fast file transfer over LAN\n"
-      "\n"
       "usage:\n"
       "  %s recv [<dir>] [-p <port>]\n"
       "  %s send <file> [-i <ip>] [-p <port>]\n"
@@ -157,12 +155,7 @@ usage:
       "  -i <ip>    target node address\n"
       "  -p <port>  port number (default 8888)\n"
       "  -h         show this help\n"
-      "\n"
-      "examples:\n"
-      "  %s recv /tmp/receive\n"
-      "  %s send ./foo.txt\n"
-      "  %s send ./bar.bin -i 192.168.1.10 -p 7777\n",
-      argv[0], argv[0], argv[0], argv[0], argv[0]);
+      , argv[0], argv[0]);
   }
   return show_usage ? 0 : 1;
 }
