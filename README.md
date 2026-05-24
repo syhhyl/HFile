@@ -1,8 +1,5 @@
 # HFile
-HFile is a LAN file transfer tool focused on CLI-based file upload.
-
-## HFile idea
-This project was inspired by [chfs](https://github.com/amorphobia/chfs). HFile now focuses on native client support and accelerated file transfers using platform-specific system functions.
+HFile is a LAN file transfer tool
 
 ## Advantages of HFile
 - Single-binary deployment with no external dependencies and minimal resource usage
