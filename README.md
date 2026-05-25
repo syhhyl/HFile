@@ -1,16 +1,23 @@
 # HFile
-HFile is a LAN file transfer tool
 
-## Advantages of HFile
-- Single-binary deployment with no external dependencies and minimal resource usage
-- Uses a custom native protocol for CLI file upload
-- On Linux, leverages zero-copy mechanisms such as sendfile and splice to accelerate transfers, reducing user/kernel data copies and context switches
-- Streaming transfer with segmented disk writes to avoid loading large files entirely into memory, lowering peak memory usage
-- Cross-platform implementation (POSIX / Windows) with consistent core capabilities and interface semantics
+HFile is a small LAN file transfer prototype.
 
-## How to use HFile
-Run the following command to view available options and usage details:
-`hf -h`
+This repository is kept as a compact systems programming sample rather than an
+actively developed product. It demonstrates a simple TCP file transfer protocol,
+UDP discovery, streaming disk writes, atomic receive-side finalize with a temp
+file and `rename()`, and `sendfile()` on supported platforms.
+
+## Usage
+
+```sh
+hf -h
+```
+
+## Status
+
+Development is stopped. The implementation is useful as a reference or learning
+project, but it is not intended to become a general-purpose file transfer tool.
 
 ## License
+
 Apache License 2.0. See `LICENSE`.
