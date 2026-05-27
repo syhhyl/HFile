@@ -120,7 +120,9 @@ int discovery_find_node(uint16_t port, char *ip_out, size_t ip_out_len,
   if (sendto(sock, req, sizeof(req), 0,
              (struct sockaddr *)&broadcast_addr,
               sizeof(broadcast_addr)) < 0) {
-    perror("discovery broadcast sendto");
+    fprintf(stderr, "discovery broadcast failed: %s\n"
+                    "  (specify target address with -i <ip> to skip discovery)\n",
+            strerror(errno));
     goto done;
   }
 
