@@ -4,8 +4,8 @@ HFile is a small LAN file transfer prototype.
 
 This repository is kept as a compact systems programming sample rather than an
 actively developed product. It demonstrates a simple TCP file transfer protocol,
-UDP discovery, streaming disk writes, atomic receive-side finalize with a temp
-file and `rename()`, and `sendfile()` on supported platforms.
+streaming disk writes, atomic receive-side finalize with a temp file and
+`rename()`, and `sendfile()` on supported platforms.
 
 ## Usage
 

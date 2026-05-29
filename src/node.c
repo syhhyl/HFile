@@ -1,7 +1,6 @@
 #include "net.h"
 #include "node.h"
 #include "protocol.h"
-#include "discovery.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -9,7 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/select.h>
 #include <sys/stat.h>
 
 #if defined(__linux__)
@@ -172,7 +170,7 @@ done2:
 int node_recv(const char *dir, uint16_t port) {
   int opt = 1;
   struct sockaddr_in addr = {0};
-  socket_t tcp, disc = -1;
+  socket_t tcp;
 
   if (!dir || !*dir) return 1;
 
@@ -184,27 +182,11 @@ int node_recv(const char *dir, uint16_t port) {
   bind(tcp, (struct sockaddr *)&addr, sizeof(addr));
   listen(tcp, 1);
 
-  int disc_ok = (port < 65535u && discovery_open(&disc, (uint16_t)(port + 1u)) == 0);
-
   fprintf(stdout, "HFile node ready\n  Receive Dir  %s\n  Port  %u\n  PID  %ld\n",
           dir, (unsigned)port, (long)getpid());
-  if (disc_ok) fprintf(stdout, "  Discovery on %u\n", (unsigned)(port + 1));
   fflush(stdout);
 
   for (;;) {
-    fd_set rfds;
-    FD_ZERO(&rfds); FD_SET(tcp, &rfds);
-    int nfds = (int)tcp + 1;
-    if (disc_ok) { FD_SET(disc, &rfds); if (disc > nfds - 1) nfds = (int)disc + 1; }
-
-    if (select(nfds, &rfds, NULL, NULL, NULL) < 0) {
-      if (errno == EINTR) continue;
-      break;
-    }
-    if (disc_ok && FD_ISSET(disc, &rfds))
-      discovery_handle_query(disc, port);
-    if (!FD_ISSET(tcp, &rfds)) continue;
-
     socket_t conn = accept(tcp, NULL, NULL);
     if (conn < 0) continue;
 
@@ -267,7 +249,6 @@ int node_recv(const char *dir, uint16_t port) {
   }
 
   socket_close(tcp);
-  if (disc_ok) discovery_close(disc);
   return 0;
 }
 
@@ -296,10 +277,9 @@ int node_send(const char *path, const char *ip, uint16_t port) {
 
   const char *peer = ip;
   uint16_t pport = port;
-  if (!peer) {
-    char found[64];
-    if (discovery_find_node((uint16_t)(port + 1), found, sizeof(found), &pport)) goto exit;
-    peer = found;
+  if (!peer || !*peer) {
+    fprintf(stderr, "missing target address\n");
+    goto exit;
   }
 
   sock = socket(AF_INET, SOCK_STREAM, 0);

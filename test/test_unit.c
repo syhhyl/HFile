@@ -4,7 +4,6 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <unistd.h>
-#include <sys/select.h>
 #include <sys/stat.h>
 #include <arpa/inet.h>
 
@@ -16,7 +15,6 @@
 #endif
 
 #include "../src/net.c"
-#include "../src/discovery.c"
 #include "../src/node.c"
 
 /* --- be64_read / be64_write --- */

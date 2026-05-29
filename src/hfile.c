@@ -136,6 +136,12 @@ int main(int argc, char **argv) {
     goto usage;
   }
 
+  if (mode == MODE_SEND && ip == NULL) {
+    fprintf(stderr, "missing target address\n");
+    parse_error = 1;
+    goto usage;
+  }
+
   if (ip_seen && mode != MODE_SEND) {
     fprintf(stderr, "recv mode does not accept -i\n");
     parse_error = 1;
@@ -149,7 +155,7 @@ usage:
     fprintf(stderr,
       "usage:\n"
       "  %s recv [<dir>] [-p <port>]\n"
-      "  %s send <file> [-i <ip>] [-p <port>]\n"
+      "  %s send <file> -i <ip> [-p <port>]\n"
       "\n"
       "options:\n"
       "  -i <ip>    target node address\n"

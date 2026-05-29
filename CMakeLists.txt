@@ -5,7 +5,6 @@ project(HFile VERSION 0.0.1 LANGUAGES C)
 add_executable(hf
   src/hfile.c
   src/node.c
-  src/discovery.c
   src/net.c
 )
 

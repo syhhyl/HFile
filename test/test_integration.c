@@ -410,15 +410,28 @@ TEST(cli_send_no_file) {
   ASSERT(strstr(err, "missing file") != NULL, "reports missing file");
 }
 
+TEST(cli_send_requires_i) {
+  char src[512];
+  make_tmp_path(src, sizeof(src), "requires_i.txt");
+  write_file(src, "x", 1);
+
+  char *argv[] = {hf_path, "send", src, NULL};
+  char err[OUT_CAP];
+  int rc = spawn_hf(argv, NULL, err);
+  ASSERT_NE(rc, 0);
+  ASSERT(strstr(err, "missing target address") != NULL,
+         "send requires target address");
+}
+
 TEST(cli_send_nonexistent) {
-  char *argv[] = {hf_path, "send", "/nonexistent/file_xyz", NULL};
+  char *argv[] = {hf_path, "send", "/nonexistent/file_xyz", "-i", "127.0.0.1", NULL};
   char err[OUT_CAP];
   int rc = spawn_hf(argv, NULL, err);
   ASSERT_NE(rc, 0);
 }
 
 TEST(cli_send_dir) {
-  char *argv[] = {hf_path, "send", "/tmp", NULL};
+  char *argv[] = {hf_path, "send", "/tmp", "-i", "127.0.0.1", NULL};
   char err[OUT_CAP];
   int rc = spawn_hf(argv, NULL, err);
   ASSERT_NE(rc, 0);
@@ -459,7 +472,7 @@ TEST(transfer_common_file) {
 
   char port_str[16];
   snprintf(port_str, sizeof(port_str), "%u", (unsigned)transfer_port);
-  char *argv[] = {hf_path, "send", src, "-p", port_str, NULL};
+  char *argv[] = {hf_path, "send", src, "-i", "127.0.0.1", "-p", port_str, NULL};
   int rc = spawn_hf(argv, NULL, NULL);
   ASSERT_EQ(rc, 0);
 
@@ -480,7 +493,7 @@ TEST(transfer_empty_file) {
 
   char port_str[16];
   snprintf(port_str, sizeof(port_str), "%u", (unsigned)transfer_port);
-  char *argv[] = {hf_path, "send", src, "-p", port_str, NULL};
+  char *argv[] = {hf_path, "send", src, "-i", "127.0.0.1", "-p", port_str, NULL};
   int rc = spawn_hf(argv, NULL, NULL);
   ASSERT_EQ(rc, 0);
 
@@ -501,7 +514,7 @@ TEST(transfer_fixture_ascii) {
 
   char port_str[16];
   snprintf(port_str, sizeof(port_str), "%u", (unsigned)transfer_port);
-  char *argv[] = {hf_path, "send", src, "-p", port_str, NULL};
+  char *argv[] = {hf_path, "send", src, "-i", "127.0.0.1", "-p", port_str, NULL};
   int rc = spawn_hf(argv, NULL, NULL);
   ASSERT_EQ(rc, 0);
 
@@ -531,11 +544,11 @@ TEST(transfer_overwrite) {
   char port_str[16];
   snprintf(port_str, sizeof(port_str), "%u", (unsigned)transfer_port);
 
-  char *argv1[] = {hf_path, "send", src1, "-p", port_str, NULL};
+  char *argv1[] = {hf_path, "send", src1, "-i", "127.0.0.1", "-p", port_str, NULL};
   ASSERT_EQ(spawn_hf(argv1, NULL, NULL), 0);
 
   /* overwrite — same filename from different dir */
-  char *argv2[] = {hf_path, "send", src2, "-p", port_str, NULL};
+  char *argv2[] = {hf_path, "send", src2, "-i", "127.0.0.1", "-p", port_str, NULL};
   ASSERT_EQ(spawn_hf(argv2, NULL, NULL), 0);
 
   char dst[512];
@@ -796,6 +809,7 @@ int main(int argc, char **argv) {
     T(cli_port_overflow),
     T(cli_recv_rejects_i),
     T(cli_send_no_file),
+    T(cli_send_requires_i),
     T(cli_send_nonexistent),
     T(cli_send_dir),
     T(transfer_common_file),
