@@ -2,20 +2,19 @@
 
 ## Build
 
-- Default: `./build.sh` (Debug, CMake+Ninja, exports `build/compile_commands.json` for LSP).
-- Release: `BUILD_TYPE=Release ./build.sh` or `./build.sh -t Release`.
-- CI (Ubuntu/macOS, no Windows): `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build && ctest --test-dir build --output-on-failure`.
+- Default build: `./build.sh` (Debug, CMake + Ninja, writes `build/compile_commands.json`).
+- Release build: `BUILD_TYPE=Release ./build.sh` or `./build.sh -t Release`.
+- Manual equivalent: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build`.
 
 ## Test
 
-- `./test.sh` runs all tests but does NOT build first — always build first.
-- `./test.sh unit`, `./test.sh integration` for focused runs.
-- `ctest --test-dir build -R <name> --output-on-failure` works directly.
-- Tests use a minimal C harness (`test/test.h`) with `TEST`/`ASSERT`/`ASSERT_EQ`/`ASSERT_STREQ` macros. No external test dependencies.
-- `test/test_unit.c` exercises static functions by `#include`-ing the source `.c` files directly (`#include "../src/net.c"` etc.) — this is how private helpers get tested.
-- `test/test_integration.c` fork/execs the `hf` binary. It allocates TCP ports sequentially from 19900 without locking — do not run integration tests in parallel.
-- Integration tests resolve the binary via `$HF_PATH` (default `./build/hf`). When run via CTest, `hf_int_test` receives the binary path and project root as argv.
-- `test/fixtures/transfer/` contains checked-in payloads used by transfer tests.
+- Build first; `./test.sh` only runs CTest and does not compile.
+- All tests: `cmake --build build && ctest --test-dir build --output-on-failure`.
+- Focused suites: `./test.sh unit` or `./test.sh integration`; `cli` and `transfer` are aliases for the full integration test binary.
+- There is no per-`TEST` filter in the C harness; the practical smallest granularity is CTest `unit` vs `integration`.
+- Unit tests include source files directly (`#include "../src/net.c"`, `#include "../src/node.c"`) to reach `static` helpers.
+- Integration tests fork/exec `hf`, allocate localhost TCP ports sequentially from 19900, and are not safe to run in parallel.
+- Integration tests use `$HF_PATH` when set; CTest passes the built `hf` path and project root explicitly.
 
 ## CLI
 
@@ -30,11 +29,11 @@
 - Wire format: `header(13B) + prefix(266B) + body`. Total preamble = **279 bytes**.
 - Header: magic(2) + version(1) + msg_type(1) + flags(1) + payload_size(8). `magic=0x0429`, `version=0x03`, `msg_type=0x01`, `flags=0x00`.
 - Prefix: name_len(2) + name(256B padded) + file_size(8).
-- Two-phase: validate preamble → `READY(4B)` → stream body → `FINAL(4B)`. Response frames: phase(1) + status(1) + error_code(2). Max filename length 255.
+- Two-phase transfer: validate preamble -> `READY(4B)` -> stream body -> `FINAL(4B)`. Response frames are phase(1) + status(1) + error_code(2).
 - Node sends file body via `sendfile()` (Linux/macOS) with buffered fallback; receives via chunked `recv`+`write`.
 - Received files go through temp paths (`<name>.tmp.<pid>.<attempt>`) then `rename()` for atomic finalize. This logic lives in `src/node.c`, NOT in `src/net.c`.
 
-## Architecture Boundaries
+## Boundaries
 
 | Layer | File | Role |
 |-------|------|------|
@@ -47,12 +46,9 @@
 ## Style
 
 - 2-space indent, same-line braces, explicit `#ifdef _WIN32` branches.
-- `src/node.c` uses `static` helpers (`be64_read`, `be64_write`, `ok_name`, `join_path`, `tmp_path`, `reply`, `send_body`, `recv_body`). These are tested via `test_unit.c`'s `#include` trick only.
+- Keep protocol/transfer helpers in `src/node.c` as `static`; expose them to tests via `test/test_unit.c` includes, not headers.
 
 ## Verification
 
-For any non-trivial C change:
-```
-cmake --build build && ctest --test-dir build --output-on-failure
-```
-When changing CLI parsing, protocol framing, or filename rules, update both `test/test_unit.c` and `test/test_integration.c`.
+- For non-trivial C changes, run `cmake --build build && ctest --test-dir build --output-on-failure`.
+- When changing CLI parsing, protocol framing, or filename rules, update both `test/test_unit.c` and `test/test_integration.c`.
