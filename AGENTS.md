@@ -21,7 +21,7 @@
 
 - Entrypoint: `src/hfile.c` → dispatches to `node_recv()` or `node_send()` in `src/node.c`.
 - `hf recv [<dir>] [-p <port>]` — foreground receive loop (stop with SIGTERM/Ctrl-C). Default dir is `.`, default port is **8888**.
-- `hf send <file> [-i <ip>] [-p <port>]` — `-i` is optional; when omitted, discovery broadcasts a UDP probe on `<port>+1` to find the receiver.
+- `hf send <file> -i <ip> [-p <port>]` — `-i` is required; discovery is not supported.
 - Port validation rejects 0 and >65535.
 - Filename validation (`ok_name` in `src/node.c`): rejects empty, `/`, `\`, any name containing `..` (including `a..b`). This is intentionally strict.
 
@@ -41,11 +41,8 @@
 | CLI entrypoint | `src/hfile.c` | Arg parsing, dispatch |
 | Protocol & transfer | `src/node.c` | File recv/send, preamble, reply, streaming, temp-file + rename |
 | Socket I/O | `src/net.c` | `send_all`, `recv_all`, `socket_close`, `is_socket_invalid` |
-| UDP discovery | `src/discovery.c` | Broadcast query / response on TCP port + 1 |
 
 - `src/net.c` must NOT contain temp-file or atomic-finalize logic — those stay in `src/node.c`.
-- UDP discovery only opens when port < 65535 (so port+1 fits in uint16_t). Not guaranteed.
-- Discovery protocol: `magic(2) + version(1)`, response adds `tcp_port(2)`. Timeout 3s.
 
 ## Style
 
