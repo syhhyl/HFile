@@ -152,7 +152,8 @@ int main(int argc, char **argv) {
 
 usage:
   if (show_usage || parse_error) {
-    fprintf(stderr,
+    FILE *usage_stream = show_usage ? stdout : stderr;
+    fprintf(usage_stream,
       "usage:\n"
       "  %s recv [<dir>] [-p <port>]\n"
       "  %s send <file> -i <ip> [-p <port>]\n"
