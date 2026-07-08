@@ -324,16 +324,18 @@ TEST(cli_help) {
   char out[OUT_CAP], err[OUT_CAP];
   int rc = spawn_hf(argv, out, err);
   ASSERT_EQ(rc, 0);
-  ASSERT(strstr(out, "usage:") != NULL || strstr(err, "usage:") != NULL,
-         "help prints usage");
+  ASSERT(strstr(out, "usage:") != NULL, "help prints usage to stdout");
+  ASSERT(strstr(err, "usage:") == NULL, "help does not print usage to stderr");
 }
 
 TEST(cli_no_args) {
   char *argv[] = {hf_path, NULL};
-  char err[OUT_CAP];
-  int rc = spawn_hf(argv, NULL, err);
+  char out[OUT_CAP], err[OUT_CAP];
+  int rc = spawn_hf(argv, out, err);
   ASSERT_NE(rc, 0);
   ASSERT(strstr(err, "missing command") != NULL, "reports missing command");
+  ASSERT(strstr(err, "usage:") != NULL, "parse errors print usage to stderr");
+  ASSERT(strstr(out, "usage:") == NULL, "parse errors do not print usage to stdout");
 }
 
 TEST(cli_unknown_cmd) {
