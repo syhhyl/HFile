@@ -268,7 +268,10 @@ int node_send(const char *path, const char *ip, uint16_t port) {
   if (nlen == 0 || nlen >= NAME_BYTES) return 1;
 
   src = open(path, O_RDONLY, 0);
-  if (src < 0) return 1;
+  if (src < 0) {
+    fprintf(stderr, "failed to open file: %s\n", path);
+    return 1;
+  }
 
   struct stat st;
   fstat(src, &st);
