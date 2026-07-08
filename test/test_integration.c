@@ -404,6 +404,15 @@ TEST(cli_recv_rejects_i) {
          "recv rejects -i");
 }
 
+TEST(cli_recv_rejects_dir_after_port) {
+  char *argv[] = {hf_path, "recv", "-p", "19999", ".", NULL};
+  char err[OUT_CAP];
+  int rc = spawn_hf(argv, NULL, err);
+  ASSERT_NE(rc, 0);
+  ASSERT(strstr(err, "unexpected extra argument") != NULL,
+         "recv rejects dir after port");
+}
+
 TEST(cli_send_no_file) {
   char *argv[] = {hf_path, "send", NULL};
   char err[OUT_CAP];
@@ -423,6 +432,19 @@ TEST(cli_send_requires_i) {
   ASSERT_NE(rc, 0);
   ASSERT(strstr(err, "missing target address") != NULL,
          "send requires target address");
+}
+
+TEST(cli_send_rejects_port_before_i) {
+  char src[512];
+  make_tmp_path(src, sizeof(src), "port_before_i.txt");
+  write_file(src, "x", 1);
+
+  char *argv[] = {hf_path, "send", src, "-p", "19999", "-i", "127.0.0.1", NULL};
+  char err[OUT_CAP];
+  int rc = spawn_hf(argv, NULL, err);
+  ASSERT_NE(rc, 0);
+  ASSERT(strstr(err, "invalid argument order") != NULL,
+         "send rejects port before ip");
 }
 
 TEST(cli_send_rejects_invalid_i) {
@@ -823,8 +845,10 @@ int main(int argc, char **argv) {
     T(cli_port_zero),
     T(cli_port_overflow),
     T(cli_recv_rejects_i),
+    T(cli_recv_rejects_dir_after_port),
     T(cli_send_no_file),
     T(cli_send_requires_i),
+    T(cli_send_rejects_port_before_i),
     T(cli_send_rejects_invalid_i),
     T(cli_send_nonexistent),
     T(cli_send_dir),
