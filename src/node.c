@@ -257,7 +257,22 @@ int node_recv(const char *dir, uint16_t port) {
 int node_send(const char *path, const char *ip, uint16_t port) {
   socket_t sock = -1;
   int src = -1, ret = 1;
+  struct sockaddr_in addr = {0};
   const char *name;
+  const char *peer = ip;
+  uint16_t pport = port;
+
+  if (!peer || !*peer) {
+    fprintf(stderr, "missing target address\n");
+    return 1;
+  }
+
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(pport);
+  if (inet_pton(AF_INET, peer, &addr.sin_addr) != 1) {
+    fprintf(stderr, "invalid address\n");
+    return 1;
+  }
 
   {
     const char *slash = strrchr(path, '/');
@@ -278,19 +293,8 @@ int node_send(const char *path, const char *ip, uint16_t port) {
   if (!S_ISREG(st.st_mode) || st.st_size < 0) goto exit;
   uint64_t fsize = (uint64_t)st.st_size;
 
-  const char *peer = ip;
-  uint16_t pport = port;
-  if (!peer || !*peer) {
-    fprintf(stderr, "missing target address\n");
-    goto exit;
-  }
-
   sock = socket(AF_INET, SOCK_STREAM, 0);
-  { struct sockaddr_in addr = {0};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(pport);
-    inet_pton(AF_INET, peer, &addr.sin_addr);
-    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) goto exit; }
+  if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) goto exit;
 
   /* encode preamble: header(13B) + prefix(name_len+name+size) */
   {

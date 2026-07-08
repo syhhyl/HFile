@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
           goto usage;
         }
         if (i + 1 >= argc) {
-          fprintf(stderr, "invalid address\n");
+          fprintf(stderr, "invalid address: missing value for -i\n");
           parse_error = 1;
           goto usage;
         }
