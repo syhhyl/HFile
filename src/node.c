@@ -218,23 +218,23 @@ int node_recv(const char *dir, uint16_t port) {
     if (reply(conn, PROTO_PHASE_READY, PROTO_STATUS_OK))
       goto shut;
 
-    if (join_path(path, sizeof(path), dir, name)) goto fail;
+    if (join_path(path, sizeof(path), dir, name)) goto final;
 
     for (int i = 0; i < 3 && fd < 0; i++) {
       tmp_path(tmp, sizeof(tmp), path, (int)getpid(), i);
       fd = open(tmp, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL, 0644);
     }
-    if (fd < 0) goto fail;
+    if (fd < 0) goto final;
 
     if (recv_body(conn, fd, fsize)) {
-      close(fd); remove(tmp); goto fail;
+      close(fd); remove(tmp); goto final;
     }
     close(fd); fd = -1;
-    if (rename(tmp, path)) { remove(tmp); goto fail; }
+    if (rename(tmp, path)) { remove(tmp); goto final; }
 
     ok = 1;
 
-  fail:
+  final:
     reply(conn, PROTO_PHASE_FINAL, ok ? PROTO_STATUS_OK : PROTO_STATUS_FAILED);
 
     if (ok) fprintf(stdout, "received  %s  %llu bytes\n", name, (unsigned long long)fsize);
@@ -245,6 +245,7 @@ int node_recv(const char *dir, uint16_t port) {
   reject:
     reply(conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED);
     socket_close(conn);
+    continue;
   }
 
   socket_close(tcp);
