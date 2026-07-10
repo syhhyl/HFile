@@ -248,8 +248,6 @@ int node_recv(const char *dir, uint16_t port) {
     continue;
   }
 
-  socket_close(tcp);
-  return 0;
 }
 
 /* node_send */
