@@ -259,17 +259,16 @@ int node_send(const char *path, const char *ip, uint16_t port) {
   int src = -1, ret = 1;
   struct sockaddr_in addr = {0};
   const char *name;
-  const char *peer = ip;
   uint16_t pport = port;
 
-  if (!peer || !*peer) {
+  if (!ip || !*ip) {
     fprintf(stderr, "missing target address\n");
     return 1;
   }
 
   addr.sin_family = AF_INET;
   addr.sin_port = htons(pport);
-  if (inet_pton(AF_INET, peer, &addr.sin_addr) != 1) {
+  if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
     fprintf(stderr, "invalid address\n");
     return 1;
   }
