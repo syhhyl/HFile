@@ -171,8 +171,12 @@ int node_recv(const char *dir, uint16_t port) {
   int opt = 1;
   struct sockaddr_in addr = {0};
   socket_t tcp;
+  struct stat st;
 
-  if (!dir || !*dir) return 1;
+  if (stat(dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    fprintf(stderr, "invalid receive directory\n");
+    return 1;
+  }
 
   tcp = socket(AF_INET, SOCK_STREAM, 0);
   setsockopt(tcp, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));

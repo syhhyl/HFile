@@ -413,6 +413,18 @@ TEST(cli_recv_rejects_dir_after_port) {
          "recv rejects dir after port");
 }
 
+TEST(cli_recv_rejects_missing_dir) {
+  char missing[512];
+  snprintf(missing, sizeof(missing), "%s/missing-recv-dir", test_dir);
+
+  char *argv[] = {hf_path, "recv", missing, NULL};
+  char err[OUT_CAP];
+  int rc = spawn_hf(argv, NULL, err);
+  ASSERT_NE(rc, 0);
+  ASSERT(strstr(err, "invalid receive directory") != NULL,
+         "reports invalid receive directory");
+}
+
 TEST(cli_send_no_file) {
   char *argv[] = {hf_path, "send", NULL};
   char err[OUT_CAP];
@@ -846,6 +858,7 @@ int main(int argc, char **argv) {
     T(cli_port_overflow),
     T(cli_recv_rejects_i),
     T(cli_recv_rejects_dir_after_port),
+    T(cli_recv_rejects_missing_dir),
     T(cli_send_no_file),
     T(cli_send_requires_i),
     T(cli_send_rejects_port_before_i),
