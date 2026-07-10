@@ -283,7 +283,7 @@ int node_send(const char *path, const char *ip, uint16_t port) {
   }
 
   struct stat st;
-  fstat(src, &st);
+  if (fstat(src, &st) != 0) goto exit;
   if (!S_ISREG(st.st_mode) || st.st_size < 0) goto exit;
   uint64_t fsize = (uint64_t)st.st_size;
 
