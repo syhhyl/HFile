@@ -261,11 +261,6 @@ int node_send(const char *path, const char *ip, uint16_t port) {
   const char *name;
   uint16_t pport = port;
 
-  if (!ip || !*ip) {
-    fprintf(stderr, "missing target address\n");
-    return 1;
-  }
-
   addr.sin_family = AF_INET;
   addr.sin_port = htons(pport);
   if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
