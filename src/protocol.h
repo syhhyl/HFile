@@ -15,13 +15,6 @@
 #define HF_MSG_TYPE_SEND_FILE 0x01U
 #define HF_MSG_FLAG_NONE 0x00U
 
-typedef struct {
-  uint16_t magic;
-  uint8_t version;
-  uint8_t msg_type;
-  uint8_t flags;
-  uint64_t payload_size;
-} protocol_header_t;
 
 typedef enum {
   PROTOCOL_OK = 0,
