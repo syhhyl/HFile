@@ -205,16 +205,12 @@ static int send_preamble(int sock, uint16_t magic, uint8_t ver,
   return 0;
 }
 
-/* read response frame (4 B) */
-static int recv_response(int sock, uint8_t *phase, uint8_t *status,
-                          uint16_t *ec) {
-  uint8_t buf[4];
-  if (recv_exact(sock, buf, 4) != 4) return 1;
+/* read response frame (2 B) */
+static int recv_response(int sock, uint8_t *phase, uint8_t *status) {
+  uint8_t buf[2];
+  if (recv_exact(sock, buf, sizeof(buf)) != (ssize_t)sizeof(buf)) return 1;
   *phase = buf[0];
   *status = buf[1];
-  uint16_t e;
-  memcpy(&e, buf + 2, 2);
-  *ec = ntohs(e);
   return 0;
 }
 
@@ -642,8 +638,8 @@ TEST(proto_invalid_magic) {
   send_preamble(sock, 0x9999,
                 HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
                 2 + 256 + 8 + 5, "f.txt", 5, 5);
-  uint8_t ph, st; uint16_t ec;
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  uint8_t ph, st;
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(ph, PROTO_PHASE_READY);
   ASSERT_EQ(st, PROTO_STATUS_REJECTED);
   close(sock);
@@ -658,8 +654,8 @@ TEST(proto_invalid_version) {
   send_preamble(sock, HF_PROTOCOL_MAGIC,
                 0xFF, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
                 2 + 256 + 8 + 3, "a", 1, 3);
-  uint8_t ph, st; uint16_t ec;
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  uint8_t ph, st;
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(st, PROTO_STATUS_REJECTED);
   close(sock);
   teardown_proto();
@@ -673,8 +669,8 @@ TEST(proto_invalid_msg_type) {
   send_preamble(sock, HF_PROTOCOL_MAGIC,
                 HF_PROTOCOL_VERSION, 0xFF, HF_MSG_FLAG_NONE,
                 2 + 256 + 8 + 3, "a", 1, 3);
-  uint8_t ph, st; uint16_t ec;
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  uint8_t ph, st;
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(st, PROTO_STATUS_REJECTED);
   close(sock);
   teardown_proto();
@@ -688,8 +684,8 @@ TEST(proto_zero_name_len) {
   send_preamble(sock, HF_PROTOCOL_MAGIC,
                 HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
                 2 + 256 + 8 + 5, "", 0, 5);
-  uint8_t ph, st; uint16_t ec;
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  uint8_t ph, st;
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(st, PROTO_STATUS_REJECTED);
   close(sock);
   teardown_proto();
@@ -703,8 +699,8 @@ TEST(proto_invalid_file_name) {
   send_preamble(sock, HF_PROTOCOL_MAGIC,
                 HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
                 2 + 256 + 8 + 3, "a/b", 3, 3);
-  uint8_t ph, st; uint16_t ec;
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  uint8_t ph, st;
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(st, PROTO_STATUS_REJECTED);
   close(sock);
   teardown_proto();
@@ -718,8 +714,8 @@ TEST(proto_payload_size_mismatch) {
   send_preamble(sock, HF_PROTOCOL_MAGIC,
                 HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
                 2 + 256 + 8 + 100, "ok.txt", 3, 50);
-  uint8_t ph, st; uint16_t ec;
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  uint8_t ph, st;
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(st, PROTO_STATUS_REJECTED);
   close(sock);
   teardown_proto();
@@ -733,14 +729,14 @@ TEST(proto_empty_body_transfer) {
   send_preamble(sock, HF_PROTOCOL_MAGIC,
                 HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
                 2 + 256 + 8 + 0, "empty.txt", 9, 0);
-  uint8_t ph, st; uint16_t ec;
+  uint8_t ph, st;
   /* READY */
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(ph, PROTO_PHASE_READY);
   ASSERT_EQ(st, PROTO_STATUS_OK);
   /* no body */
   /* FINAL */
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(ph, PROTO_PHASE_FINAL);
   ASSERT_EQ(st, PROTO_STATUS_OK);
 
@@ -763,9 +759,9 @@ TEST(proto_successful_transfer) {
   send_preamble(sock, HF_PROTOCOL_MAGIC,
                 HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
                 2 + 256 + 8 + dlen, "pro.txt", 7, dlen);
-  uint8_t ph, st; uint16_t ec;
+  uint8_t ph, st;
   /* READY */
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(ph, PROTO_PHASE_READY);
   ASSERT_EQ(st, PROTO_STATUS_OK);
   /* send body */
@@ -776,7 +772,7 @@ TEST(proto_successful_transfer) {
     off += (size_t)n;
   }
   /* FINAL */
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(ph, PROTO_PHASE_FINAL);
   ASSERT_EQ(st, PROTO_STATUS_OK);
 
@@ -802,8 +798,8 @@ TEST(proto_partial_body_cleanup) {
   send_preamble(sock, HF_PROTOCOL_MAGIC,
                 HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
                 2 + 256 + 8 + 100, "partial.bin", 10, 100);
-  uint8_t ph, st; uint16_t ec;
-  ASSERT_EQ(recv_response(sock, &ph, &st, &ec), 0);
+  uint8_t ph, st;
+  ASSERT_EQ(recv_response(sock, &ph, &st), 0);
   ASSERT_EQ(st, PROTO_STATUS_OK);
 
   /* send only part of body then close */

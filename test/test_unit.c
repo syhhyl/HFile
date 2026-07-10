@@ -234,37 +234,17 @@ TEST(tmp_path_overflow) {
 /* --- reply validation --- */
 
 TEST(reply_invalid_socket) {
-  int rc = reply(-1, &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_OK, 0});
-  ASSERT_NE(rc, 0);
-}
-
-TEST(reply_null_frame) {
-  int rc = reply(1, NULL);
+  int rc = reply(-1, PROTO_PHASE_READY, PROTO_STATUS_OK);
   ASSERT_NE(rc, 0);
 }
 
 TEST(reply_invalid_phase) {
-  int rc = reply(-1, &(res_frame_t){2, PROTO_STATUS_OK, 0});
+  int rc = reply(1, 2, PROTO_STATUS_OK);
   ASSERT_NE(rc, 0);
 }
 
 TEST(reply_invalid_status) {
-  int rc = reply(-1, &(res_frame_t){PROTO_PHASE_READY, 3, 0});
-  ASSERT_NE(rc, 0);
-}
-
-TEST(reply_invalid_error_code) {
-  int rc = reply(-1, &(res_frame_t){PROTO_PHASE_FINAL, PROTO_STATUS_FAILED, 99});
-  ASSERT_NE(rc, 0);
-}
-
-TEST(reply_ok_status_nonzero_error) {
-  int rc = reply(-1, &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_OK, PROTOCOL_ERR_IO});
-  ASSERT_NE(rc, 0);
-}
-
-TEST(reply_rejected_status_zero_error) {
-  int rc = reply(-1, &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_REJECTED, 0});
+  int rc = reply(1, PROTO_PHASE_READY, 3);
   ASSERT_NE(rc, 0);
 }
 
@@ -299,17 +279,14 @@ TEST(recv_all_zero_len) {
 TEST(reply_frame_format) {
   int sv[2];
   ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
-  int rc = reply(sv[0], &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_OK, 0});
+  int rc = reply(sv[0], PROTO_PHASE_READY, PROTO_STATUS_OK);
   ASSERT_EQ(rc, 0);
 
-  uint8_t buf[4];
-  ssize_t n = recv(sv[1], buf, 4, 0);
-  ASSERT_EQ((long long)n, 4);
+  uint8_t buf[2];
+  ssize_t n = recv(sv[1], buf, sizeof(buf), 0);
+  ASSERT_EQ((long long)n, (long long)sizeof(buf));
   ASSERT_EQ(buf[0], PROTO_PHASE_READY);
   ASSERT_EQ(buf[1], PROTO_STATUS_OK);
-  uint16_t ec;
-  memcpy(&ec, buf + 2, 2);
-  ASSERT_EQ(ntohs(ec), 0);
 
   close(sv[0]);
   close(sv[1]);
@@ -318,16 +295,13 @@ TEST(reply_frame_format) {
 TEST(reply_frame_format_rejected) {
   int sv[2];
   ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
-  int rc = reply(sv[0], &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_REJECTED, 5});
+  int rc = reply(sv[0], PROTO_PHASE_READY, PROTO_STATUS_REJECTED);
   ASSERT_EQ(rc, 0);
-  uint8_t buf[4];
-  ssize_t n = recv(sv[1], buf, 4, 0);
-  ASSERT_EQ((long long)n, 4);
+  uint8_t buf[2];
+  ssize_t n = recv(sv[1], buf, sizeof(buf), 0);
+  ASSERT_EQ((long long)n, (long long)sizeof(buf));
   ASSERT_EQ(buf[0], PROTO_PHASE_READY);
   ASSERT_EQ(buf[1], PROTO_STATUS_REJECTED);
-  uint16_t ec;
-  memcpy(&ec, buf + 2, 2);
-  ASSERT_EQ(ntohs(ec), 5);
 
   close(sv[0]);
   close(sv[1]);
@@ -402,12 +376,8 @@ int main(void) {
     T(tmp_path_format),
     T(tmp_path_overflow),
     T(reply_invalid_socket),
-    T(reply_null_frame),
     T(reply_invalid_phase),
     T(reply_invalid_status),
-    T(reply_invalid_error_code),
-    T(reply_ok_status_nonzero_error),
-    T(reply_rejected_status_zero_error),
     T(socket_invalid_negative),
     T(socket_valid_zero),
     T(socket_valid_positive),

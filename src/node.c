@@ -55,21 +55,17 @@ static int tmp_path(char *out, size_t cap, const char *final, int pid, int attem
 
 /* response frame */
 
-static int reply(socket_t sock, const res_frame_t *f) {
-  if (is_socket_invalid(sock) || !f) return 1;
-  if (f->phase != PROTO_PHASE_READY && f->phase != PROTO_PHASE_FINAL) return 1;
-  if (f->status != PROTO_STATUS_OK &&
-      f->status != PROTO_STATUS_REJECTED &&
-      f->status != PROTO_STATUS_FAILED) return 1;
-  if (f->error_code > PROTOCOL_ERR_EOF) return 1;
-  if ((f->status == PROTO_STATUS_OK) != (f->error_code == PROTOCOL_OK)) return 1;
+static int reply(socket_t sock, uint8_t phase, uint8_t status) {
+  if (is_socket_invalid(sock)) return 1;
+  if (phase != PROTO_PHASE_READY && phase != PROTO_PHASE_FINAL) return 1;
+  if (status != PROTO_STATUS_OK &&
+      status != PROTO_STATUS_REJECTED &&
+      status != PROTO_STATUS_FAILED) return 1;
 
-  uint8_t buf[4];
-  buf[0] = f->phase;
-  buf[1] = f->status;
-  uint16_t ec = htons(f->error_code);
-  memcpy(buf + 2, &ec, 2);
-  return send_all(sock, buf, 4) == 4 ? 0 : 1;
+  uint8_t buf[2];
+  buf[0] = phase;
+  buf[1] = status;
+  return send_all(sock, buf, sizeof(buf)) == (ssize_t)sizeof(buf) ? 0 : 1;
 }
 
 /* zero-copy send */
@@ -219,7 +215,7 @@ int node_recv(const char *dir, uint16_t port) {
     name[nlen] = '\0';
     if (!ok_name(name)) goto reject;
 
-    if (reply(conn, &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_OK, 0}))
+    if (reply(conn, PROTO_PHASE_READY, PROTO_STATUS_OK))
       goto shut;
 
     if (join_path(path, sizeof(path), dir, name)) goto fail;
@@ -239,8 +235,7 @@ int node_recv(const char *dir, uint16_t port) {
     ok = 1;
 
   fail:
-    reply(conn, &(res_frame_t){PROTO_PHASE_FINAL,
-      ok ? PROTO_STATUS_OK : PROTO_STATUS_FAILED, ok ? 0 : 9});
+    reply(conn, PROTO_PHASE_FINAL, ok ? PROTO_STATUS_OK : PROTO_STATUS_FAILED);
 
     if (ok) fprintf(stdout, "received  %s  %llu bytes\n", name, (unsigned long long)fsize);
   shut:
@@ -248,7 +243,7 @@ int node_recv(const char *dir, uint16_t port) {
     continue;
 
   reject:
-    reply(conn, &(res_frame_t){PROTO_PHASE_READY, PROTO_STATUS_REJECTED, 5});
+    reply(conn, PROTO_PHASE_READY, PROTO_STATUS_REJECTED);
     socket_close(conn);
   }
 
@@ -315,8 +310,8 @@ int node_send(const char *path, const char *ip, uint16_t port) {
 
   /* wait READY */
   {
-    uint8_t res[4];
-    if (recv_all(sock, res, 4) != 4) goto exit;
+    uint8_t res[2];
+    if (recv_all(sock, res, sizeof(res)) != (ssize_t)sizeof(res)) goto exit;
     if (res[0] != PROTO_PHASE_READY || res[1] != PROTO_STATUS_OK) goto exit;
   }
 
@@ -324,8 +319,8 @@ int node_send(const char *path, const char *ip, uint16_t port) {
 
   /* wait FINAL */
   {
-    uint8_t res[4];
-    if (recv_all(sock, res, 4) != 4) goto exit;
+    uint8_t res[2];
+    if (recv_all(sock, res, sizeof(res)) != (ssize_t)sizeof(res)) goto exit;
     if (res[0] != PROTO_PHASE_FINAL || res[1] != PROTO_STATUS_OK) goto exit;
   }
 
