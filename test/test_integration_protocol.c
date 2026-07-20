@@ -28,7 +28,7 @@ TEST(proto_invalid_magic) {
   ASSERT(sock >= 0, "connect ok");
 
   send_preamble(sock, 0x9999,
-                HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
+                HF_PROTOCOL_VERSION, HF_PROTOCOL_MSG_TYPE_SEND_FILE, HF_PROTOCOL_MSG_FLAG_NONE,
                 2 + 256 + 8 + 5, "f.txt", 5, 5);
   uint8_t ph, st;
   ASSERT_EQ(recv_response(sock, &ph, &st), 0);
@@ -42,7 +42,7 @@ TEST(proto_invalid_version) {
   ASSERT(sock >= 0, "connect ok");
 
   send_preamble(sock, HF_PROTOCOL_MAGIC,
-                0xFF, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
+                0xFF, HF_PROTOCOL_MSG_TYPE_SEND_FILE, HF_PROTOCOL_MSG_FLAG_NONE,
                 2 + 256 + 8 + 3, "a", 1, 3);
   uint8_t ph, st;
   ASSERT_EQ(recv_response(sock, &ph, &st), 0);
@@ -55,7 +55,7 @@ TEST(proto_invalid_msg_type) {
   ASSERT(sock >= 0, "connect ok");
 
   send_preamble(sock, HF_PROTOCOL_MAGIC,
-                HF_PROTOCOL_VERSION, 0xFF, HF_MSG_FLAG_NONE,
+                HF_PROTOCOL_VERSION, 0xFF, HF_PROTOCOL_MSG_FLAG_NONE,
                 2 + 256 + 8 + 3, "a", 1, 3);
   uint8_t ph, st;
   ASSERT_EQ(recv_response(sock, &ph, &st), 0);
@@ -68,7 +68,7 @@ TEST(proto_zero_name_len) {
   ASSERT(sock >= 0, "connect ok");
 
   send_preamble(sock, HF_PROTOCOL_MAGIC,
-                HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
+                HF_PROTOCOL_VERSION, HF_PROTOCOL_MSG_TYPE_SEND_FILE, HF_PROTOCOL_MSG_FLAG_NONE,
                 2 + 256 + 8 + 5, "", 0, 5);
   uint8_t ph, st;
   ASSERT_EQ(recv_response(sock, &ph, &st), 0);
@@ -81,7 +81,7 @@ TEST(proto_invalid_file_name) {
   ASSERT(sock >= 0, "connect ok");
 
   send_preamble(sock, HF_PROTOCOL_MAGIC,
-                HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
+                HF_PROTOCOL_VERSION, HF_PROTOCOL_MSG_TYPE_SEND_FILE, HF_PROTOCOL_MSG_FLAG_NONE,
                 2 + 256 + 8 + 3, "a/b", 3, 3);
   uint8_t ph, st;
   ASSERT_EQ(recv_response(sock, &ph, &st), 0);
@@ -94,7 +94,7 @@ TEST(proto_payload_size_mismatch) {
   ASSERT(sock >= 0, "connect ok");
 
   send_preamble(sock, HF_PROTOCOL_MAGIC,
-                HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
+                HF_PROTOCOL_VERSION, HF_PROTOCOL_MSG_TYPE_SEND_FILE, HF_PROTOCOL_MSG_FLAG_NONE,
                 2 + 256 + 8 + 100, "ok.txt", 3, 50);
   uint8_t ph, st;
   ASSERT_EQ(recv_response(sock, &ph, &st), 0);
@@ -107,7 +107,7 @@ TEST(proto_empty_body_transfer) {
   ASSERT(sock >= 0, "connect ok");
 
   send_preamble(sock, HF_PROTOCOL_MAGIC,
-                HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
+                HF_PROTOCOL_VERSION, HF_PROTOCOL_MSG_TYPE_SEND_FILE, HF_PROTOCOL_MSG_FLAG_NONE,
                 2 + 256 + 8 + 0, "empty.txt", 9, 0);
   uint8_t ph, st;
   ASSERT_EQ(recv_response(sock, &ph, &st), 0);
@@ -132,7 +132,7 @@ TEST(proto_successful_transfer) {
   const char *data = "hello protocol test\n";
   uint64_t dlen = (uint64_t)strlen(data);
   send_preamble(sock, HF_PROTOCOL_MAGIC,
-                HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
+                HF_PROTOCOL_VERSION, HF_PROTOCOL_MSG_TYPE_SEND_FILE, HF_PROTOCOL_MSG_FLAG_NONE,
                 2 + 256 + 8 + dlen, "pro.txt", 7, dlen);
   uint8_t ph, st;
   ASSERT_EQ(recv_response(sock, &ph, &st), 0);
@@ -166,7 +166,7 @@ TEST(proto_partial_body_cleanup) {
   ASSERT(sock >= 0, "connect ok");
 
   send_preamble(sock, HF_PROTOCOL_MAGIC,
-                HF_PROTOCOL_VERSION, HF_MSG_TYPE_SEND_FILE, HF_MSG_FLAG_NONE,
+                HF_PROTOCOL_VERSION, HF_PROTOCOL_MSG_TYPE_SEND_FILE, HF_PROTOCOL_MSG_FLAG_NONE,
                 2 + 256 + 8 + 100, "partial.bin", 10, 100);
   uint8_t ph, st;
   ASSERT_EQ(recv_response(sock, &ph, &st), 0);

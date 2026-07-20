@@ -212,8 +212,8 @@ int node_recv(const char *dir, uint16_t port) {
     fsize = be64_read(pre + 13 + 2 + NAME_BYTES);
     if (((uint16_t)pre[0] << 8 | pre[1]) != HF_PROTOCOL_MAGIC ||
         pre[2] != HF_PROTOCOL_VERSION ||
-        pre[3] != HF_MSG_TYPE_SEND_FILE ||
-        pre[4] != HF_MSG_FLAG_NONE ||
+        pre[3] != HF_PROTOCOL_MSG_TYPE_SEND_FILE ||
+        pre[4] != HF_PROTOCOL_MSG_FLAG_NONE ||
         nlen == 0 || nlen >= NAME_BYTES ||
         hdr_payload != (uint64_t)(2 + NAME_BYTES + 8) + fsize) {
       goto reject;
@@ -303,8 +303,8 @@ int node_send(const char *path, const char *ip, uint16_t port) {
     uint16_t mg = htons(HF_PROTOCOL_MAGIC);
     memcpy(p, &mg, 2); p += 2;
     *p++ = HF_PROTOCOL_VERSION;
-    *p++ = HF_MSG_TYPE_SEND_FILE;
-    *p++ = HF_MSG_FLAG_NONE;
+    *p++ = HF_PROTOCOL_MSG_TYPE_SEND_FILE;
+    *p++ = HF_PROTOCOL_MSG_FLAG_NONE;
     be64_write(p, (uint64_t)(2 + NAME_BYTES + 8) + fsize); p += 8;
 
     uint16_t nbe = htons((uint16_t)nlen);
