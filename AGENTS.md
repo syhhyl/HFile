@@ -10,10 +10,10 @@
 
 - Build first; `./test.sh` only runs CTest and does not compile.
 - All tests: `cmake --build build && ctest --test-dir build --output-on-failure`.
-- Focused suites: `./test.sh unit` or `./test.sh integration`; `cli` and `transfer` are aliases for the full integration test binary.
-- There is no per-`TEST` filter in the C harness; the practical smallest granularity is CTest `unit` vs `integration`.
+- Focused suites: `./test.sh unit`, `integration`, `cli`, `transfer`, or `protocol`.
+- There is no per-`TEST` filter in the C harness; the practical smallest granularity is one of the six CTest suite executables.
 - Unit tests include source files directly (`#include "../src/net.c"`, `#include "../src/node.c"`) to reach `static` helpers.
-- Integration tests fork/exec `hf`, allocate localhost TCP ports sequentially from 19900, and are not safe to run in parallel.
+- Integration tests fork/exec `hf`, request available localhost TCP ports from the OS, and retry if receiver startup loses a selected port.
 - Integration tests use `$HF_PATH` when set; CTest passes the built `hf` path and project root explicitly.
 
 ## CLI
@@ -29,7 +29,7 @@
 - Wire format: `header(13B) + prefix(266B) + body`. Total preamble = **279 bytes**.
 - Header: magic(2) + version(1) + msg_type(1) + flags(1) + payload_size(8). `magic=0x0429`, `version=0x03`, `msg_type=0x01`, `flags=0x00`.
 - Prefix: name_len(2) + name(256B padded) + file_size(8).
-- Two-phase transfer: validate preamble -> `READY(4B)` -> stream body -> `FINAL(4B)`. Response frames are phase(1) + status(1) + error_code(2).
+- Two-phase transfer: validate preamble -> `READY(2B)` -> stream body -> `FINAL(2B)`. Response frames are phase(1) + status(1).
 - Node sends file body via `sendfile()` (Linux/macOS) with buffered fallback; receives via chunked `recv`+`write`.
 - Received files go through temp paths (`<name>.tmp.<pid>.<attempt>`) then `rename()` for atomic finalize. This logic lives in `src/node.c`, NOT in `src/net.c`.
 
@@ -46,9 +46,9 @@
 ## Style
 
 - 2-space indent, same-line braces, explicit `#ifdef _WIN32` branches.
-- Keep protocol/transfer helpers in `src/node.c` as `static`; expose them to tests via `test/test_unit.c` includes, not headers.
+- Keep protocol/transfer helpers in `src/node.c` as `static`; expose them through direct source includes in the relevant `test/test_unit_*.c` file, not headers.
 
 ## Verification
 
 - For non-trivial C changes, run `cmake --build build && ctest --test-dir build --output-on-failure`.
-- When changing CLI parsing, protocol framing, or filename rules, update both `test/test_unit.c` and `test/test_integration.c`.
+- When changing CLI parsing, protocol framing, or filename rules, update the relevant unit and integration suite files under `test/`.

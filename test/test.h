@@ -20,7 +20,7 @@ typedef struct {
 
 static test_runner_t _runner;
 
-static void _fail(const char *file, int line, const char *msg) {
+static inline void _fail(const char *file, int line, const char *msg) {
   if (!_runner.test_aborted) {
     _runner.test_aborted = 1;
     _runner.failed++;
@@ -81,24 +81,44 @@ static void _fail(const char *file, int line, const char *msg) {
 #define TEST(name) \
   static void test_##name(void)
 
+typedef int (*test_setup_fn)(void);
+typedef void (*test_teardown_fn)(void);
+
+static inline void _run_tests(test_entry_t *entries, int count,
+                              test_setup_fn setup,
+                              test_teardown_fn teardown) {
+  _runner.total = count;
+  _runner.passed = 0;
+  _runner.failed = 0;
+  for (int i = 0; i < count; i++) {
+    _runner.current = entries[i].name;
+    _runner.test_aborted = 0;
+    if (setup == NULL || setup() == 0) {
+      entries[i].fn();
+    } else {
+      _fail(__FILE__, __LINE__, "fixture setup failed");
+    }
+    if (teardown != NULL) teardown();
+    if (!_runner.test_aborted) {
+      _runner.passed++;
+      printf("  [PASS] %s\n", entries[i].name);
+    }
+  }
+  printf("\n%d/%d passed", _runner.passed, _runner.total);
+  if (_runner.failed > 0) printf(", %d failed", _runner.failed);
+  printf("\n");
+}
+
 #define RUN_TESTS(...) do { \
   test_entry_t _entries[] = { __VA_ARGS__ }; \
   int _n = (int)(sizeof(_entries) / sizeof(_entries[0])); \
-  _runner.total = _n; \
-  _runner.passed = 0; \
-  _runner.failed = 0; \
-  for (int _i = 0; _i < _n; _i++) { \
-    _runner.current = _entries[_i].name; \
-    _runner.test_aborted = 0; \
-    _entries[_i].fn(); \
-    if (!_runner.test_aborted) { \
-      _runner.passed++; \
-      printf("  [PASS] %s\n", _entries[_i].name); \
-    } \
-  } \
-  printf("\n%d/%d passed", _runner.passed, _runner.total); \
-  if (_runner.failed > 0) printf(", %d failed", _runner.failed); \
-  printf("\n"); \
+  _run_tests(_entries, _n, NULL, NULL); \
+} while (0)
+
+#define RUN_TESTS_WITH_FIXTURE(setup, teardown, ...) do { \
+  test_entry_t _entries[] = { __VA_ARGS__ }; \
+  int _n = (int)(sizeof(_entries) / sizeof(_entries[0])); \
+  _run_tests(_entries, _n, setup, teardown); \
 } while (0)
 
 #define T(name) { #name, test_##name }

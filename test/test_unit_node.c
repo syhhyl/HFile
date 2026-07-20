@@ -1,102 +1,11 @@
 #include "test.h"
 
-#include <errno.h>
-#include <fcntl.h>
 #include <stdint.h>
-#include <unistd.h>
-#include <sys/stat.h>
-#include <arpa/inet.h>
-
-#if defined(__linux__)
-#include <sys/sendfile.h>
-#elif defined(__APPLE__)
 #include <sys/socket.h>
-#include <sys/uio.h>
-#endif
+#include <unistd.h>
 
 #include "../src/net.c"
 #include "../src/node.c"
-
-#define HF_CLI_NO_MAIN
-#include "../src/hfile.c"
-#undef HF_CLI_NO_MAIN
-
-/* --- CLI parsing --- */
-
-TEST(cli_parse_recv_defaults) {
-  char *argv[] = {"hf", "recv", NULL};
-  CliArgs args;
-
-  ASSERT_EQ(parse_cli(2, argv, &args), 0);
-  ASSERT_EQ(args.mode, MODE_RECV);
-  ASSERT_STREQ(args.path, ".");
-  ASSERT_EQ(args.port, DEFAULT_PORT);
-  ASSERT_NULL(args.ip);
-}
-
-TEST(cli_parse_recv_port_without_dir) {
-  char *argv[] = {"hf", "recv", "-p", "19999", NULL};
-  CliArgs args;
-
-  ASSERT_EQ(parse_cli(4, argv, &args), 0);
-  ASSERT_EQ(args.mode, MODE_RECV);
-  ASSERT_STREQ(args.path, ".");
-  ASSERT_EQ(args.port, 19999);
-}
-
-TEST(cli_parse_recv_dir_then_port) {
-  char *argv[] = {"hf", "recv", "downloads", "-p", "19999", NULL};
-  CliArgs args;
-
-  ASSERT_EQ(parse_cli(5, argv, &args), 0);
-  ASSERT_EQ(args.mode, MODE_RECV);
-  ASSERT_STREQ(args.path, "downloads");
-  ASSERT_EQ(args.port, 19999);
-}
-
-TEST(cli_parse_recv_rejects_dir_after_port) {
-  char *argv[] = {"hf", "recv", "-p", "19999", "downloads", NULL};
-  CliArgs args;
-
-  ASSERT_NE(parse_cli(5, argv, &args), 0);
-  ASSERT_STREQ(args.error, "unexpected extra argument");
-}
-
-TEST(cli_parse_send_default_port) {
-  char *argv[] = {"hf", "send", "file.txt", "-i", "127.0.0.1", NULL};
-  CliArgs args;
-
-  ASSERT_EQ(parse_cli(5, argv, &args), 0);
-  ASSERT_EQ(args.mode, MODE_SEND);
-  ASSERT_STREQ(args.path, "file.txt");
-  ASSERT_STREQ(args.ip, "127.0.0.1");
-  ASSERT_EQ(args.port, DEFAULT_PORT);
-}
-
-TEST(cli_parse_send_file_ip_port_order) {
-  char *argv[] = {
-    "hf", "send", "file.txt", "-i", "127.0.0.1", "-p", "19999", NULL
-  };
-  CliArgs args;
-
-  ASSERT_EQ(parse_cli(7, argv, &args), 0);
-  ASSERT_EQ(args.mode, MODE_SEND);
-  ASSERT_STREQ(args.path, "file.txt");
-  ASSERT_STREQ(args.ip, "127.0.0.1");
-  ASSERT_EQ(args.port, 19999);
-}
-
-TEST(cli_parse_send_rejects_port_before_ip) {
-  char *argv[] = {
-    "hf", "send", "file.txt", "-p", "19999", "-i", "127.0.0.1", NULL
-  };
-  CliArgs args;
-
-  ASSERT_NE(parse_cli(7, argv, &args), 0);
-  ASSERT_STREQ(args.error, "invalid argument order");
-}
-
-/* --- be64_read / be64_write --- */
 
 TEST(be64_zero) {
   uint8_t buf[] = {0,0,0,0,0,0,0,0};
@@ -145,8 +54,6 @@ TEST(be64_byte_order) {
   ASSERT_EQ(buf[7], 0x08);
 }
 
-/* --- ok_name --- */
-
 TEST(ok_name_null) {
   ASSERT(!ok_name(NULL), "null name invalid");
 }
@@ -187,8 +94,6 @@ TEST(ok_name_dotdot_path) {
   ASSERT(!ok_name("foo/../bar"), "dotdot path rejected");
 }
 
-/* --- join_path --- */
-
 TEST(join_path_trailing_slash) {
   char buf[256];
   int overflow = join_path(buf, sizeof(buf), "/tmp/", "file.txt");
@@ -216,8 +121,6 @@ TEST(join_path_exact_fit) {
   ASSERT_STREQ(buf, "/a/bc");
 }
 
-/* --- tmp_path --- */
-
 TEST(tmp_path_format) {
   char buf[256];
   int overflow = tmp_path(buf, sizeof(buf), "/tmp/file.txt", 12345, 3);
@@ -230,8 +133,6 @@ TEST(tmp_path_overflow) {
   int overflow = tmp_path(buf, sizeof(buf), "/tmp/file.txt", 12345, 3);
   ASSERT(overflow, "overflow expected");
 }
-
-/* --- reply validation --- */
 
 TEST(reply_invalid_socket) {
   int rc = reply(-1, PROTO_PHASE_READY, PROTO_STATUS_OK);
@@ -247,34 +148,6 @@ TEST(reply_invalid_status) {
   int rc = reply(1, PROTO_PHASE_READY, 3);
   ASSERT_NE(rc, 0);
 }
-
-/* --- is_socket_invalid --- */
-
-TEST(socket_invalid_negative) {
-  ASSERT(is_socket_invalid(-1), "-1 is invalid");
-}
-
-TEST(socket_valid_zero) {
-  ASSERT(!is_socket_invalid(0), "0 is valid");
-}
-
-TEST(socket_valid_positive) {
-  ASSERT(!is_socket_invalid(5), "5 is valid");
-}
-
-/* --- send_all / recv_all zero-length --- */
-
-TEST(send_all_zero_len) {
-  ssize_t r = send_all(-1, "x", 0);
-  ASSERT_EQ((long long)r, 0);
-}
-
-TEST(recv_all_zero_len) {
-  ssize_t r = recv_all(-1, NULL, 0);
-  ASSERT_EQ((long long)r, 0);
-}
-
-/* --- reply wire format via socketpair --- */
 
 TEST(reply_frame_format) {
   int sv[2];
@@ -307,51 +180,8 @@ TEST(reply_frame_format_rejected) {
   close(sv[1]);
 }
 
-/* --- send_all / recv_all via socketpair --- */
-
-TEST(send_all_recv_all_roundtrip) {
-  int sv[2];
-  ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
-
-  const char *msg = "hello world";
-  size_t len = strlen(msg);
-  ssize_t sent = send_all(sv[0], msg, len);
-  ASSERT_EQ((long long)sent, (long long)len);
-
-  char buf[64] = {0};
-  ssize_t recvd = recv_all(sv[1], buf, len);
-  ASSERT_EQ((long long)recvd, (long long)len);
-  ASSERT_STREQ(buf, msg);
-
-  close(sv[0]);
-  close(sv[1]);
-}
-
-TEST(recv_all_partial) {
-  int sv[2];
-  ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
-
-  send(sv[0], "ab", 2, 0);
-  close(sv[0]);
-
-  char buf[64] = {0};
-  ssize_t r = recv_all(sv[1], buf, 5);
-  ASSERT_EQ((long long)r, 2);
-  ASSERT_EQ(buf[0], 'a');
-  ASSERT_EQ(buf[1], 'b');
-
-  close(sv[1]);
-}
-
 int main(void) {
   RUN_TESTS(
-    T(cli_parse_recv_defaults),
-    T(cli_parse_recv_port_without_dir),
-    T(cli_parse_recv_dir_then_port),
-    T(cli_parse_recv_rejects_dir_after_port),
-    T(cli_parse_send_default_port),
-    T(cli_parse_send_file_ip_port_order),
-    T(cli_parse_send_rejects_port_before_ip),
     T(be64_zero),
     T(be64_max),
     T(be64_one),
@@ -378,15 +208,8 @@ int main(void) {
     T(reply_invalid_socket),
     T(reply_invalid_phase),
     T(reply_invalid_status),
-    T(socket_invalid_negative),
-    T(socket_valid_zero),
-    T(socket_valid_positive),
-    T(send_all_zero_len),
-    T(recv_all_zero_len),
     T(reply_frame_format),
-    T(reply_frame_format_rejected),
-    T(send_all_recv_all_roundtrip),
-    T(recv_all_partial)
+    T(reply_frame_format_rejected)
   );
   return _runner.failed ? 1 : 0;
 }

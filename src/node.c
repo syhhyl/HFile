@@ -175,12 +175,20 @@ int node_recv(const char *dir, uint16_t port) {
   }
 
   tcp = socket(AF_INET, SOCK_STREAM, 0);
-  setsockopt(tcp, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+  if (is_socket_invalid(tcp)) {
+    fprintf(stderr, "failed to start receiver\n");
+    return 1;
+  }
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  bind(tcp, (struct sockaddr *)&addr, sizeof(addr));
-  listen(tcp, 1);
+  if (setsockopt(tcp, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) != 0 ||
+      bind(tcp, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
+      listen(tcp, 1) != 0) {
+    fprintf(stderr, "failed to start receiver\n");
+    socket_close(tcp);
+    return 1;
+  }
 
   fprintf(stdout, "HFile node ready\n  Receive Dir  %s\n  Port  %u\n  PID  %ld\n",
           dir, (unsigned)port, (long)getpid());
