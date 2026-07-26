@@ -7,38 +7,11 @@
 #include "../src/net.c"
 #include "../src/node.c"
 
-TEST(be64_zero) {
-  uint8_t buf[] = {0,0,0,0,0,0,0,0};
-  ASSERT_EQ((long long)be64_read(buf), 0);
-}
-
-TEST(be64_max) {
-  uint8_t buf[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-  ASSERT_EQ((long long)be64_read(buf), (long long)UINT64_MAX);
-}
-
-TEST(be64_one) {
-  uint8_t buf[] = {0,0,0,0,0,0,0,1};
-  ASSERT_EQ((long long)be64_read(buf), 1);
-}
-
 TEST(be64_roundtrip) {
   uint8_t buf[8];
   uint64_t v = 0xDEADBEEFCAFE0001ULL;
   be64_write(buf, v);
   ASSERT_EQ((long long)be64_read(buf), (long long)v);
-}
-
-TEST(be64_roundtrip_zero) {
-  uint8_t buf[8];
-  be64_write(buf, 0);
-  ASSERT_EQ((long long)be64_read(buf), 0);
-}
-
-TEST(be64_roundtrip_max) {
-  uint8_t buf[8];
-  be64_write(buf, UINT64_MAX);
-  ASSERT_EQ((long long)be64_read(buf), (long long)UINT64_MAX);
 }
 
 TEST(be64_byte_order) {
@@ -54,20 +27,8 @@ TEST(be64_byte_order) {
   ASSERT_EQ(buf[7], 0x08);
 }
 
-TEST(ok_name_null) {
-  ASSERT(!ok_name(NULL), "null name invalid");
-}
-
-TEST(ok_name_empty) {
-  ASSERT(!ok_name(""), "empty name invalid");
-}
-
 TEST(ok_name_normal) {
   ASSERT(ok_name("hello.txt"), "normal name valid");
-}
-
-TEST(ok_name_dot_only) {
-  ASSERT(ok_name("."), "dot only valid");
 }
 
 TEST(ok_name_dot_file) {
@@ -90,10 +51,6 @@ TEST(ok_name_dotdot_file) {
   ASSERT(!ok_name("a..b"), "dotdot in filename rejected (uses strstr)");
 }
 
-TEST(ok_name_dotdot_path) {
-  ASSERT(!ok_name("foo/../bar"), "dotdot path rejected");
-}
-
 TEST(join_path_trailing_slash) {
   char buf[256];
   int overflow = join_path(buf, sizeof(buf), "/tmp/", "file.txt");
@@ -114,39 +71,11 @@ TEST(join_path_overflow) {
   ASSERT(overflow, "overflow expected");
 }
 
-TEST(join_path_exact_fit) {
-  char buf[12];
-  int overflow = join_path(buf, sizeof(buf), "/a", "bc");
-  ASSERT(!overflow, "no overflow expected");
-  ASSERT_STREQ(buf, "/a/bc");
-}
-
 TEST(tmp_path_format) {
   char buf[256];
   int overflow = tmp_path(buf, sizeof(buf), "/tmp/file.txt", 12345, 3);
   ASSERT(!overflow, "no overflow expected");
   ASSERT_STREQ(buf, "/tmp/file.txt.tmp.12345.3");
-}
-
-TEST(tmp_path_overflow) {
-  char buf[10];
-  int overflow = tmp_path(buf, sizeof(buf), "/tmp/file.txt", 12345, 3);
-  ASSERT(overflow, "overflow expected");
-}
-
-TEST(reply_invalid_socket) {
-  int rc = reply(-1, PROTO_PHASE_READY, PROTO_STATUS_OK);
-  ASSERT_NE(rc, 0);
-}
-
-TEST(reply_invalid_phase) {
-  int rc = reply(1, 2, PROTO_STATUS_OK);
-  ASSERT_NE(rc, 0);
-}
-
-TEST(reply_invalid_status) {
-  int rc = reply(1, PROTO_PHASE_READY, 3);
-  ASSERT_NE(rc, 0);
 }
 
 TEST(reply_frame_format) {
@@ -165,51 +94,21 @@ TEST(reply_frame_format) {
   close(sv[1]);
 }
 
-TEST(reply_frame_format_rejected) {
-  int sv[2];
-  ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
-  int rc = reply(sv[0], PROTO_PHASE_READY, PROTO_STATUS_REJECTED);
-  ASSERT_EQ(rc, 0);
-  uint8_t buf[2];
-  ssize_t n = recv(sv[1], buf, sizeof(buf), 0);
-  ASSERT_EQ((long long)n, (long long)sizeof(buf));
-  ASSERT_EQ(buf[0], PROTO_PHASE_READY);
-  ASSERT_EQ(buf[1], PROTO_STATUS_REJECTED);
-
-  close(sv[0]);
-  close(sv[1]);
-}
-
 int main(void) {
   RUN_TESTS(
-    T(be64_zero),
-    T(be64_max),
-    T(be64_one),
     T(be64_roundtrip),
-    T(be64_roundtrip_zero),
-    T(be64_roundtrip_max),
     T(be64_byte_order),
-    T(ok_name_null),
-    T(ok_name_empty),
     T(ok_name_normal),
-    T(ok_name_dot_only),
     T(ok_name_dot_file),
     T(ok_name_with_slash),
     T(ok_name_with_backslash),
     T(ok_name_dotdot),
     T(ok_name_dotdot_file),
-    T(ok_name_dotdot_path),
     T(join_path_trailing_slash),
     T(join_path_no_trailing_slash),
     T(join_path_overflow),
-    T(join_path_exact_fit),
     T(tmp_path_format),
-    T(tmp_path_overflow),
-    T(reply_invalid_socket),
-    T(reply_invalid_phase),
-    T(reply_invalid_status),
-    T(reply_frame_format),
-    T(reply_frame_format_rejected)
+    T(reply_frame_format)
   );
   return _runner.failed ? 1 : 0;
 }

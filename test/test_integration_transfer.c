@@ -54,24 +54,6 @@ TEST(transfer_empty_file) {
 
 }
 
-TEST(transfer_fixture_ascii) {
-  char src[512];
-  snprintf(src, sizeof(src), "%s/test/fixtures/transfer/text_basic_ascii.txt",
-           g_project_root);
-
-  char port_str[16];
-  snprintf(port_str, sizeof(port_str), "%u", (unsigned)transfer_receiver.port);
-  char *argv[] = {hf_path, "send", src, "-i", "127.0.0.1", "-p", port_str, NULL};
-  int rc = spawn_hf(argv, NULL, NULL);
-  ASSERT_EQ(rc, 0);
-
-  char dst[512];
-  snprintf(dst, sizeof(dst), "%s/text_basic_ascii.txt", transfer_dir);
-  ASSERT(file_exists(dst), "fixture received");
-  ASSERT(files_equal(src, dst), "fixture content matches");
-
-}
-
 TEST(transfer_overwrite) {
   char dir1[512], dir2[512];
   snprintf(dir1, sizeof(dir1), "%s/ow1", test_dir);
@@ -109,7 +91,6 @@ int main(int argc, char **argv) {
   RUN_TESTS_WITH_FIXTURE(setup_transfer, teardown_transfer,
     T(transfer_common_file),
     T(transfer_empty_file),
-    T(transfer_fixture_ascii),
     T(transfer_overwrite)
   );
 

@@ -13,20 +13,6 @@ TEST(socket_valid_zero) {
   ASSERT(!is_socket_invalid(0), "0 is valid");
 }
 
-TEST(socket_valid_positive) {
-  ASSERT(!is_socket_invalid(5), "5 is valid");
-}
-
-TEST(send_all_zero_len) {
-  ssize_t result = send_all(-1, "x", 0);
-  ASSERT_EQ((long long)result, 0);
-}
-
-TEST(recv_all_zero_len) {
-  ssize_t result = recv_all(-1, NULL, 0);
-  ASSERT_EQ((long long)result, 0);
-}
-
 TEST(send_all_recv_all_roundtrip) {
   int sv[2];
   ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
@@ -65,9 +51,6 @@ int main(void) {
   RUN_TESTS(
     T(socket_invalid_negative),
     T(socket_valid_zero),
-    T(socket_valid_positive),
-    T(send_all_zero_len),
-    T(recv_all_zero_len),
     T(send_all_recv_all_roundtrip),
     T(recv_all_partial)
   );

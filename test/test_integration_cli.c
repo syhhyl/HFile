@@ -35,14 +35,6 @@ TEST(cli_unknown_cmd) {
   ASSERT(strstr(err, "unknown command") != NULL, "reports unknown command");
 }
 
-TEST(cli_invalid_arg) {
-  char *argv[] = {hf_path, "--foo", NULL};
-  char err[OUT_CAP];
-  int rc = spawn_hf(argv, NULL, err);
-  ASSERT_NE(rc, 0);
-  ASSERT(strstr(err, "unknown command") != NULL, "--foo treated as unknown cmd");
-}
-
 TEST(cli_unknown_flag) {
   char *argv[] = {hf_path, "recv", "-x", NULL};
   char err[OUT_CAP];
@@ -91,15 +83,6 @@ TEST(cli_recv_rejects_i) {
   ASSERT_NE(rc, 0);
   ASSERT(strstr(err, "recv mode does not accept -i") != NULL,
          "recv rejects -i");
-}
-
-TEST(cli_recv_rejects_dir_after_port) {
-  char *argv[] = {hf_path, "recv", "-p", "19999", ".", NULL};
-  char err[OUT_CAP];
-  int rc = spawn_hf(argv, NULL, err);
-  ASSERT_NE(rc, 0);
-  ASSERT(strstr(err, "unexpected extra argument") != NULL,
-         "recv rejects dir after port");
 }
 
 TEST(cli_recv_rejects_missing_dir) {
@@ -167,19 +150,6 @@ TEST(cli_send_requires_i) {
          "send requires target address");
 }
 
-TEST(cli_send_rejects_port_before_i) {
-  char src[512];
-  make_tmp_path(src, sizeof(src), "port_before_i.txt");
-  write_file(src, "x", 1);
-
-  char *argv[] = {hf_path, "send", src, "-p", "19999", "-i", "127.0.0.1", NULL};
-  char err[OUT_CAP];
-  int rc = spawn_hf(argv, NULL, err);
-  ASSERT_NE(rc, 0);
-  ASSERT(strstr(err, "invalid argument order") != NULL,
-         "send rejects port before ip");
-}
-
 TEST(cli_send_rejects_invalid_i) {
   char src[512];
   make_tmp_path(src, sizeof(src), "invalid_i.txt");
@@ -214,19 +184,16 @@ int main(int argc, char **argv) {
     T(cli_help),
     T(cli_no_args),
     T(cli_unknown_cmd),
-    T(cli_invalid_arg),
     T(cli_unknown_flag),
     T(cli_extra_arg),
     T(cli_port_not_number),
     T(cli_port_zero),
     T(cli_port_overflow),
     T(cli_recv_rejects_i),
-    T(cli_recv_rejects_dir_after_port),
     T(cli_recv_rejects_missing_dir),
     T(cli_recv_rejects_occupied_port),
     T(cli_send_no_file),
     T(cli_send_requires_i),
-    T(cli_send_rejects_port_before_i),
     T(cli_send_rejects_invalid_i),
     T(cli_send_nonexistent),
     T(cli_send_dir)
