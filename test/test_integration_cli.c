@@ -41,6 +41,8 @@ TEST(cli_unknown_flag) {
   int rc = spawn_hf(argv, NULL, err);
   ASSERT_NE(rc, 0);
   ASSERT(strstr(err, "invalid argument") != NULL, "reports invalid flag");
+  ASSERT(strncmp(err, "invalid argument\nusage:\n", 24) == 0,
+         "does not print getopt diagnostics");
 }
 
 TEST(cli_extra_arg) {

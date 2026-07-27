@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef enum {
   MODE_RECV,
@@ -58,42 +59,40 @@ static int parse_recv_args(int argc, char **argv, CliArgs *args) {
 
   if (argc == 2) return 0;
 
-  int i = 2;
-  if (argv[i] == NULL) return cli_error(args, "invalid argument");
-
-  if (strcmp(argv[i], "-p") == 0) {
-    i++;
-    if (i >= argc) return cli_error(args, "invalid port");
-    if (parse_port_arg(args, argv[i]) != 0) return 1;
-    i++;
-    if (i != argc) return cli_error(args, "unexpected extra argument");
-    return 0;
-  }
-
-  if (is_flag(argv[i])) {
-    if (strcmp(argv[i], "-i") == 0) {
-      return cli_error(args, "recv mode does not accept -i");
-    }
+  int option_index = 2;
+  if (argv[option_index] == NULL) {
     return cli_error(args, "invalid argument");
   }
 
-  args->path = argv[i++];
-  if (i == argc) return 0;
-  if (argv[i] == NULL) return cli_error(args, "invalid argument");
+  if (!is_flag(argv[option_index])) {
+    args->path = argv[option_index++];
+    if (option_index == argc) return 0;
+    if (argv[option_index] == NULL) {
+      return cli_error(args, "invalid argument");
+    }
+  }
 
-  if (strcmp(argv[i], "-p") != 0) {
-    if (strcmp(argv[i], "-i") == 0) {
+  if (strcmp(argv[option_index], "-p") != 0) {
+    if (strcmp(argv[option_index], "-i") == 0) {
       return cli_error(args, "recv mode does not accept -i");
     }
-    if (is_flag(argv[i])) return cli_error(args, "invalid argument");
+    if (is_flag(argv[option_index])) {
+      return cli_error(args, "invalid argument");
+    }
     return cli_error(args, "unexpected extra argument");
   }
 
-  i++;
-  if (i >= argc) return cli_error(args, "invalid port");
-  if (parse_port_arg(args, argv[i]) != 0) return 1;
-  i++;
-  if (i != argc) return cli_error(args, "unexpected extra argument");
+  if (option_index + 1 >= argc || argv[option_index + 1] == NULL) {
+    return cli_error(args, "invalid port");
+  }
+
+  int option_argc = argc - option_index + 1;
+  char **option_argv = argv + option_index - 1;
+  int option = getopt(option_argc, option_argv, ":i:p:");
+  if (option != 'p' || parse_port_arg(args, optarg) != 0) return 1;
+  if (optind != option_argc) {
+    return cli_error(args, "unexpected extra argument");
+  }
   return 0;
 }
 
@@ -113,16 +112,29 @@ static int parse_send_args(int argc, char **argv, CliArgs *args) {
   if (argc < 5 || argv[4] == NULL || argv[4][0] == '\0' || is_flag(argv[4])) {
     return cli_error(args, "missing target address");
   }
-  args->ip = argv[4];
 
-  if (argc == 5) return 0;
-  if (argv[5] == NULL || strcmp(argv[5], "-p") != 0) {
+  int option_argc = argc - 2;
+  char **option_argv = argv + 2;
+  int option = getopt(option_argc, option_argv, ":i:p:");
+  if (option != 'i' || optarg == NULL || optarg[0] == '\0' || is_flag(optarg)) {
+    return cli_error(args, "missing target address");
+  }
+  args->ip = optarg;
+
+  if (optind == option_argc) return 0;
+  if (option_argv[optind] == NULL || strcmp(option_argv[optind], "-p") != 0) {
     return cli_error(args, "invalid argument order");
   }
 
-  if (argc < 7) return cli_error(args, "invalid port");
-  if (parse_port_arg(args, argv[6]) != 0) return 1;
-  if (argc != 7) return cli_error(args, "unexpected extra argument");
+  if (optind + 1 >= option_argc || option_argv[optind + 1] == NULL) {
+    return cli_error(args, "invalid port");
+  }
+
+  option = getopt(option_argc, option_argv, ":i:p:");
+  if (option != 'p' || parse_port_arg(args, optarg) != 0) return 1;
+  if (optind != option_argc) {
+    return cli_error(args, "unexpected extra argument");
+  }
   return 0;
 }
 
@@ -130,6 +142,8 @@ static int parse_cli(int argc, char **argv, CliArgs *args) {
   memset(args, 0, sizeof(*args));
   args->mode = MODE_RECV;
   args->port = DEFAULT_PORT;
+  opterr = 0;
+  optind = 1;
 
   if (argc < 2 || argv == NULL || argv[1] == NULL) {
     return cli_error(args, "missing command");
